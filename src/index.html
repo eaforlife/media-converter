@@ -1,0 +1,34 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <title>EA's Media Converter</title>
+
+  </head>
+  <body>
+    <h1>Welcome</h1>
+    <div class="top-content">
+        <label for="status">Browse File:</label> 
+        <input type="text" id="status" name="status" disabled/>
+        <button id="pickBtn">Browse</button>
+    </div>
+
+    <div class="main-content">
+
+    </div>
+
+
+    <div id="modal-file-prompt">
+      <div class="modal-content">
+        <h2>Select Mode:</h2>
+        <div id="modal-mode">
+          <button id="batchBtn">Folder Select</button>
+          <button id="singleBtn">Single File</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Scripts at bottom for fast loading --> 
+    <script src="renderer.js" defer></script>
+  </body>
+</html>
