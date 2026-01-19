@@ -7,5 +7,6 @@ const { contextBridge, ipcRenderer } = require('electron');
 contextBridge.exposeInMainWorld('electronAPI', {
   onFileSelected: (callback) => ipcRenderer.on('file-selected', (event, path) => callback(path)),
   pickFile: () => ipcRenderer.invoke('dialog:openFile'),
-  pickFolder: () => ipcRenderer.invoke('dialog:openFolder')
+  pickFolder: () => ipcRenderer.invoke('dialog:openFolder'),
+  getFfmpegInfo: () => ipcRenderer.invoke('ffmpeg-info')
 });

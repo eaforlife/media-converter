@@ -38,13 +38,15 @@ body {
   border: 1px dashed blue;
 }
 
-#fileForm {
+.main-content {
   display: flex;
-  flex: 1;
-  gap: 0.5rem;
-  background: rgba(96, 219, 158, 0.1);
-  margin: 0;
+  width: 100%;
+  min-height: 100px;
+  padding: 1rem;
+  border: 1px line black;
+  border-top: 30rem;
 }
+
 #status {
   flex: 1;
   min-width: 0;

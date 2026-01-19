@@ -1,5 +1,57 @@
 const { app, BrowserWindow, dialog, ipcMain } = require('electron');
 const path = require('node:path');
+const { spawn } = require('child_process');
+const ffmpegPath = require('@ffmpeg-installer/ffmpeg').path;
+// Helper to run ffmpeg command and capture output
+function runFfmpegCommand(args) {
+  return new Promise((resolve) => {
+    let output = '';
+    const proc = spawn(ffmpegPath, args);
+
+    proc.stdout.on('data', (data) => output += data.toString());
+    proc.stderr.on('data', (data) => output += data.toString());
+
+    proc.on('close', () => resolve(output));
+  });
+}
+
+// Probe if a hardware encoder works
+async function testCodec(codec) {
+  return new Promise((resolve) => {
+    console.log(`[DEBUG] Testing codec: ${codec}`);
+    const args = [
+      '-hide_banner',
+      '-f', 'lavfi',
+      '-i', 'testsrc=duration=1:size=1280x720:rate=90',
+      '-c:v', codec,
+      '-f', 'null', '-'
+    ];
+    const proc = spawn(ffmpegPath, args);
+    let stderr = '';
+    proc.stderr.on('data', (data) => {
+      const msg = data.toString();
+      stderr += msg;
+      console.log(`[DEBUG:${codec}] ${msg}`); // live log of ffmpeg output
+    });
+    proc.on('close', () => {
+      let usable = false;
+
+      // Global override: if preset error appears, assume true
+      if (/Cannot get the preset configuration: unsupported param/i.test(stderr)) {
+        usable = true;
+      }
+
+      console.log(`[DEBUG] Codec ${codec} usable: ${usable}`);
+      resolve(usable);
+    });
+    
+    proc.on('error', (err) => {
+      console.error(`[DEBUG] Codec ${codec} spawn error:`, err);
+      resolve(false);
+    });
+  });
+}
+
 
 // Handle creating/removing shortcuts on Windows when installing/uninstalling.
 if (require('electron-squirrel-startup')) {
@@ -20,7 +72,24 @@ const createWindow = () => {
   mainWindow.loadURL(MAIN_WINDOW_WEBPACK_ENTRY);
   // Open the DevTools.
   //mainWindow.webContents.openDevTools();
-  
+  // IPC handler: renderer requests ffmpeg info
+  ipcMain.handle('ffmpeg-info', async () => {
+    const versionOutput = await runFfmpegCommand(['-version']);
+    const versionTag = versionOutput.split('\n')[0].split(' ')[2];
+
+    const nvenc = await testCodec('h264_nvenc');
+    const qsv   = await testCodec('h264_qsv');
+    const amf   = await testCodec('h264_amf');
+
+    return {
+      version: versionTag,
+      capabilities: {
+        nvenc,
+        qsv,
+        amf
+      }
+    };
+  });
 };
 
 // Open file dialog

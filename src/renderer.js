@@ -27,10 +27,21 @@
  */
 import './index.css';
 
-window.addEventListener('DOMContentLoaded', () => {
+window.addEventListener('DOMContentLoaded', async() => {
   const status = document.getElementById('status');
   const pickBtn = document.getElementById('pickBtn');
   const modal = document.getElementById('modal-file-prompt');
+  const info = await window.electronAPI.getFfmpegInfo();
+
+  console.log('FFmpeg Version:', info.version);
+  console.log('NVENC available:', info.capabilities.nvenc);
+  console.log('QSV available:', info.capabilities.qsv);
+  console.log('AMF available:', info.capabilities.amf);
+
+  // Example: show in console
+  console.log('FFmpeg Version:', info.version);
+
+  modal.style.display = 'block'; // Show modal first
 
   // Show modal when Browse button is clicked
   pickBtn.addEventListener('click', (e) => {
