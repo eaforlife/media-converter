@@ -3,10 +3,9 @@
   <head>
     <meta charset="UTF-8" />
     <title>EA's Media Converter</title>
-
+    
   </head>
   <body>
-    <h1>Welcome</h1>
     <div class="top-content">
         <label for="status">Browse File:</label> 
         <input type="text" id="status" name="status" disabled/>
@@ -15,6 +14,26 @@
 
     <div class="main-content">
 
+      <div id="main-window"><!-- top part of content div --></div>
+
+      <div id="image-scroller">
+        <div class="image-wrapper">
+          <img id="scroller-image" src="" alt="Frame preview">
+          <span class="preview-label">Preview</span>
+        </div>
+        <div class="scroller-controls">
+          <button id="prev-btn">◀</button>
+          <span id="image-count">1 / 9</span>
+          <button id="next-btn">▶</button>
+        </div>
+      </div>
+
+
+      <div id="content-logs" class="content-logs"><!-- console log --></div>
+    </div>
+
+    <div class="status-content">
+      <span class="status-text" id="status-text">&nbsp;</span>
     </div>
 
 
@@ -27,6 +46,13 @@
         </div>
       </div>
     </div>
+
+    <!-- Modal overlay -->
+    <div id="loading-modal" class="loading-modal">
+      <div class="loading-spinner"></div>
+      <div class="loading-text">Loading...</div>
+    </div>
+
 
     <!-- Scripts at bottom for fast loading --> 
     <script src="renderer.js" defer></script>

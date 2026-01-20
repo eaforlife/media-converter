@@ -1,9 +1,10 @@
 {
   "name": "my-app",
   "productName": "EA Media Conversion Tool",
-  "version": "0.0.2",
+  "version": "0.0.4",
   "description": "My Electron application description",
   "main": ".webpack/main",
+  "devContentSecurityPolicy": "default-src 'self' 'unsafe-inline' data:; script-src 'self' 'unsafe-eval' 'unsafe-inline' data:; media-src 'self' data: file:;",
   "private": true,
   "scripts": {
     "start": "electron-forge start",

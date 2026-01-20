@@ -8,5 +8,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   onFileSelected: (callback) => ipcRenderer.on('file-selected', (event, path) => callback(path)),
   pickFile: () => ipcRenderer.invoke('dialog:openFile'),
   pickFolder: () => ipcRenderer.invoke('dialog:openFolder'),
-  getFfmpegInfo: () => ipcRenderer.invoke('ffmpeg-info')
+  getFfmpegInfo: () => ipcRenderer.invoke('ffmpeg-info'),
+  extractFrames: (videoPath) => ipcRenderer.invoke('extract-frames', videoPath),
+  getMetadata: (filePath) => ipcRenderer.invoke('getMetadata', filePath)
 });
