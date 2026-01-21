@@ -27,7 +27,11 @@ module.exports = {
   plugins: [
     {
       name: '@electron-forge/plugin-auto-unpack-natives',
-      config: {},
+      config: {
+        forgeUnpack: [
+          '@ffmpeg-installer/ffmpeg'
+        ]
+      },
     },
     {
       name: '@electron-forge/plugin-webpack',
