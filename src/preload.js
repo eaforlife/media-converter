@@ -12,3 +12,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   extractFrames: (videoPath) => ipcRenderer.invoke('extract-frames', videoPath),
   getMetadata: (filePath) => ipcRenderer.invoke('getMetadata', filePath)
 });
+
+contextBridge.exposeInMainWorld('gpuAPI', {
+  getGpuInfo: () => ipcRenderer.invoke('get-gpu-info')
+});

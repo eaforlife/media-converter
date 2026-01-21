@@ -14,7 +14,25 @@
 
     <div class="main-content">
 
-      <div id="main-window"><!-- top part of content div --></div>
+      <div id="main-window">
+        <div id="media-details">
+          <span id="hw-accel"></span>
+          <p><label for="vid-container">Container:</label>
+            <select name="vid-container" id="vid-container">
+            </select>
+          </p>
+          <p>
+            <label for="vid-codec">Select Codec:</label>
+            <select name="vid-codec" id="vid-codec"></select>
+          </p>
+          <p>
+            <label for="vid-downscale">Downscale Resolution:</label>
+            <select name="vid-downscale" id="vid-downscale"></select>
+          </p>
+        </div>
+
+
+      </div>
 
       <div id="image-scroller">
         <div class="image-wrapper">

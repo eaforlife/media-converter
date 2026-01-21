@@ -3,9 +3,18 @@ import './index.css';
 let ffEncoder = "CPU";
 const consolelog = document.getElementById("content-logs");
 const bodyTag = document.getElementById("body");
+// Encoder variables. Index 0=cpu, 1=nvidia, 2=intel, 3=amd
+const vendor = ['cpu','nvidia','intel','amd'];
+const h264enc = ['libx264','h264_nvenc','h264_qsv','h264_amf'];
+const h265enc = ['libx265','hevc_nvenc','hevc_qsv','hevc_amf'];
+const av1enc = ['null','av1_nvenc','av1_qsv','av1_amf'];
+let availableEnc = [];
+let containerVid = ['mkv'];
 // For Preview Box
 let currentIndex = 0;
 let framePaths = [];
+
+
 
 showLoading();
 
@@ -83,6 +92,7 @@ window.addEventListener('DOMContentLoaded', async () => {
       console.log("[Debug] Array video stream:",video);
       setLogs(`Video Streams:\nCodec: ${video[0]['codec_name']} ${video[0]['profile']}\nColor: ${video[0]['pix_fmt']}\n\tDimensions: ${video[0]['width']} x ${video[0]['height']}`);
       setLogs(`Audio Streams: ${audio}`);
+      populateForm();
     }
   });
 });
@@ -104,8 +114,28 @@ function resetImageHolder() {
 
 function setEncoder(enc, available) {
   if (available) {
-    ffEncoder = enc;
-    setLogs(`Hardware encoder available: ${enc}`);
+    const encName = [''];
+    const spanHwAccel = document.getElementById('hw-accel');
+    getGPU().then(result => {
+      console.log("[Debug][getGPU] getGPU async: ",result);
+      if (result !== "cpu") {
+        spanHwAccel.textContent = `Hardware encoder detected. Using ${result}`;
+        spanHwAccel.style.color = "green";
+        setLogs(`Hardware encoder available: ${enc}`);
+        ffEncoder = result;
+      } else {
+        spanHwAccel.textContent = `No hardware encoder detected. Using software.`;
+        spanHwAccel.style.color = "red";
+        setLogs(`No hardware encoder detected. Using software.`);
+        ffEncoder = enc;
+      } 
+    }).catch(encErr => {
+      spanHwAccel.textContent = `Error looking for encoder. Using software.`;
+      spanHwAccel.style.color = "red";
+      ffEncoder = "CPU";
+      consolelog("[Debug][setEncoder] Error in getGPU().");
+      console.log("[Debug][setEncoder] Error in getGPU():\m",encErr);
+    });    
   }
 }
 
@@ -121,6 +151,17 @@ function setLogs(msg) {
 function updateStatusBar(msg) {
   const statusText = document.getElementById('status-text');
   if (msg) statusText.textContent = msg;
+}
+
+async function getGPU() {
+  const gpuinfo = await window.gpuAPI.getGpuInfo();
+  const gpuname = gpuinfo.gpuDevice[0]?.deviceString;
+  console.log(`[Debug] GPU Name: ${gpuname}`);
+  console.log("[Debug] GPU Info:");
+  console.log(gpuinfo);
+  const encIndex = vendor.findIndex(e => gpuname.toLowerCase().includes(e));
+  console.log(`[Debug][getGPU] GPU index: ${encIndex}`);
+  return encIndex !== -1 ? vendor[encIndex] : "cpu";
 }
 
 async function pickVideo(filePath) {
@@ -186,5 +227,49 @@ function splitStreams(metadata) {
   };
 }
 
+
+function populateForm() {
+  const frmContainer = document.getElementById('vid-container');
+  const frmCodec = document.getElementById('vid-codec');
+
+  // set variable
+  // todo: add logic from stream mapping
+  containerVid = ['mkv','mp4','m4v'];
+  removeSelect(frmContainer);
+  removeSelect(frmCodec);
+  const codecIx = vendor.findIndex(e => ffEncoder.toLowerCase().includes(e));
+  console.log("[Debug][Popform] vendor is ",vendor);
+  console.log("[Debug][Popform] setEncoder is ",ffEncoder);
+  const frmSelCodec = [];
+  console.log("[Debug][Popform] Index of codec",codecIx);
+  
+  frmSelCodec.push(h264enc[codecIx]);
+  frmSelCodec.push(h265enc[codecIx]);
+  av1enc[codecIx] !== "null" && frmSelCodec.push(av1enc[codecIx]); 
+  console.log("[Debug][Popform] frmSelCodec values",frmSelCodec);
+
+  // set form
+  fillSelect(frmContainer,containerVid);
+  fillSelect(frmCodec,frmSelCodec);
+
+  // autofill form
+  frmContainer.selectedIndex = 0;
+}
+
+function fillSelect(frm,ob) {
+  ob.forEach(i => {
+    const x = document.createElement("option");
+    x.value = ob;
+    x.textContent = i.toUpperCase();
+    frm.appendChild(x);
+  })
+}
+
+function removeSelect(el) {
+  var i, L = el.options.length - 1;
+  for(i = L; i >= 0; i--) {
+      el.remove(i);
+   }
+}
 
 console.log('👋 Renderer loaded');

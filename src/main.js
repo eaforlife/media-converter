@@ -141,9 +141,11 @@ ipcMain.handle('dialog:openFolder', async () => {
 // This method will be called when Electron has finished
 // initialization and is ready to create browser windows.
 // Some APIs can only be used after this event occurs.
-app.whenReady().then(() => {
+app.whenReady().then(async() => {
   createWindow();
-
+  // Get GPU details
+  const completeInfo = await app.getGPUInfo('basic');
+  ipcMain.handle('get-gpu-info', () => completeInfo);
   // On OS X it's common to re-create a window in the app when the
   // dock icon is clicked and there are no other windows open.
   app.on('activate', () => {
