@@ -3,7 +3,21 @@ const path = require('path');
 const fs = require('fs');
 const os = require('os');
 const { spawn } = require('child_process');
-const ffmpegPath = require('@ffmpeg-installer/ffmpeg').path;
+const ffmpegStatic = require('ffmpeg-static');
+const ffprobeStatic = require('ffprobe-static');
+const tmpDir = path.join(os.tmpdir(), 'video-frames');
+
+// to properly ship ffmpeg and ffprobe to binaries
+let ffmpegPath = ffmpegStatic;
+let ffprobePath = ffprobeStatic.path;
+if (ffmpegPath.includes('app.asar')) { 
+  ffmpegPath = ffmpegPath.replace('app.asar', 'app.asar.unpacked'); 
+}
+if (ffprobePath.includes('app.asar')) { 
+  ffprobePath = ffprobePath.replace('app.asar', 'app.asar.unpacked'); 
+}
+
+console.log("[debug][mainjs] ffmpeg: ",ffmpegPath);
 
 // Helper to run ffmpeg command and capture output
 function runFfmpegCommand(args) {
@@ -192,7 +206,6 @@ app.on('quit', () => {
 // In this file you can include the rest of your app's specific main process
 // code. You can also put them in separate files and import them here.
 ipcMain.handle('extract-frames', async (e, videoPath) => {
-const tmpDir = path.join(os.tmpdir(), 'video-frames');
 
 // Always reset the temp directory
   if (fs.existsSync(tmpDir)) {
@@ -215,7 +228,7 @@ const tmpDir = path.join(os.tmpdir(), 'video-frames');
   // Step 1: probe duration
   const duration = await new Promise((resolve, reject) => {
     debugLog('Running ffprobe...');
-    const ffprobe = spawn('ffprobe', [
+    const ffprobe = spawn(ffprobePath, [
       '-v', 'error',
       '-show_entries', 'format=duration',
       '-of', 'default=noprint_wrappers=1:nokey=1',
@@ -251,7 +264,7 @@ const tmpDir = path.join(os.tmpdir(), 'video-frames');
     debugLog(`Extracting frame ${i} at ${timestamps[i]}s -> ${outPath}`);
 
     await new Promise((resolve, reject) => {
-      const ffmpeg = spawn('ffmpeg', [
+      const ffmpeg = spawn(ffmpegPath, [
         '-ss', timestamps[i].toString(),
         '-i', videoPath,
         '-vf', 'scale=960:-1',
@@ -272,7 +285,7 @@ const tmpDir = path.join(os.tmpdir(), 'video-frames');
 // Step 4: Get Metadata when called
 ipcMain.handle('getMetadata', async (event, filePath) => {
   return new Promise((resolve, reject) => {
-    const ffprobe = spawn('ffprobe', [
+    const ffprobe = spawn(ffprobePath, [
       '-v', 'error',
       '-show_format',
       '-show_streams',

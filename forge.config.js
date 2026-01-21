@@ -3,7 +3,9 @@ const { FuseV1Options, FuseVersion } = require('@electron/fuses');
 
 module.exports = {
   packagerConfig: {
-    asar: true,
+    asar: {
+      unpack: "**/node_modules/{ffmpeg-static,ffprobe-static}/**"
+    },
   },
   rebuildConfig: {},
   makers: [
@@ -27,11 +29,7 @@ module.exports = {
   plugins: [
     {
       name: '@electron-forge/plugin-auto-unpack-natives',
-      config: {
-        forgeUnpack: [
-          '@ffmpeg-installer/ffmpeg'
-        ]
-      },
+      config: {},
     },
     {
       name: '@electron-forge/plugin-webpack',
