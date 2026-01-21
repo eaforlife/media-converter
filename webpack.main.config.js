@@ -8,4 +8,7 @@ module.exports = {
   module: {
     rules: require('./webpack.rules'),
   },
+  externals: {
+    "@ffmpeg-installer/ffmpeg": "commonjs @ffmpeg-installer/ffmpeg"
+  },
 };
