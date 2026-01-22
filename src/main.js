@@ -1,23 +1,61 @@
-const { app, BrowserWindow, dialog, ipcMain, protocol } = require('electron');
+const { app, Menu, BrowserWindow, dialog, ipcMain, protocol } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
+const extract = require('extract-zip');
 const { spawn } = require('child_process');
-const ffmpegStatic = require('ffmpeg-static');
-const ffprobeStatic = require('ffprobe-static');
 const tmpDir = path.join(os.tmpdir(), 'video-frames');
 
+// --- Hybrid ffmpeg/ffprobe path resolution ---
+const binDir = path.join(process.resourcesPath, 'bin');
+const zipPath = path.join(process.resourcesPath, 'prereq.zip');
 // to properly ship ffmpeg and ffprobe to binaries
-let ffmpegPath = ffmpegStatic;
-let ffprobePath = ffprobeStatic.path;
-if (ffmpegPath.includes('app.asar')) { 
-  ffmpegPath = ffmpegPath.replace('app.asar', 'app.asar.unpacked'); 
-}
-if (ffprobePath.includes('app.asar')) { 
-  ffprobePath = ffprobePath.replace('app.asar', 'app.asar.unpacked'); 
+let ffmpegPath,ffprobePath;
+
+async function ensureBinaries() {
+  console.log("[debug][ispackaged] Running logic if app is packaged?");
+  if (!app.isPackaged) { // skip in dev
+    const ffmpegStatic = require('ffmpeg-static');
+    const ffprobeStatic = require('ffprobe-static');
+    console.log("[debug][ispackaged] False.");
+    console.log("[debug][ispackaged] so ffmpegpath should be: ",ffmpegStatic);
+    ffmpegPath = ffmpegStatic;
+    ffprobePath = ffprobeStatic;
+    return;
+  } else {
+    console.log("[debug][ispackaged] True.");
+    
+    const ffmpegBin = path.join(binDir, process.platform === 'win32' ? 'ffmpeg.exe' : 'ffmpeg');
+    const ffprobeBin = path.join(binDir, process.platform === 'win32' ? 'ffprobe.exe' : 'ffprobe');
+
+    if (fs.existsSync(ffmpegBin) && fs.existsSync(ffprobeBin)) {
+      ffmpegPath = ffmpegBin;
+      ffprobePath = ffprobeBin;
+      return; // already extracted
+    } 
+
+    try {
+      await extract(zipPath, { dir: process.resourcesPath }); // avoid double folder extract like bin/bin/
+      console.log('[MAIN] Extracted ffmpeg/ffprobe binaries');
+    } catch (err) {
+      console.error('[MAIN] Failed to extract prereq.zip:', err);
+    }
+    ffmpegPath = ffmpegBin;
+    ffprobePath = ffprobeBin;
+  }
 }
 
-console.log("[debug][mainjs] ffmpeg: ",ffmpegPath);
+function getBinary(name) {
+  if (!app.isPackaged) {
+    // Dev mode → use ffmpeg-static / ffprobe-static
+    const ffmpegStatic = require('ffmpeg-static');
+    const ffprobeStatic = require('ffprobe-static');
+    if (name === 'ffmpeg') return ffmpegStatic;
+    if (name === 'ffprobe') return ffprobeStatic;
+  }
+  // Packaged runtime → use extracted binaries
+  return path.join(binDir, process.platform === 'win32' ? `${name}.exe` : name);
+}
 
 // Helper to run ffmpeg command and capture output
 function runFfmpegCommand(args) {
@@ -27,7 +65,7 @@ function runFfmpegCommand(args) {
 
     proc.stdout.on('data', (data) => output += data.toString());
     proc.stderr.on('data', (data) => output += data.toString());
-
+    
     proc.on('close', () => resolve(output));
   });
 }
@@ -48,16 +86,16 @@ async function testCodec(codec) {
     proc.stderr.on('data', (data) => {
       const msg = data.toString();
       stderr += msg;
-      //console.log(`[DEBUG:${codec}] ${msg}`); // live log of ffmpeg output
+      console.log(`[DEBUG:${codec}] ${msg}`); // live log of ffmpeg output
     });
-    proc.on('close', () => {
+    proc.on('close', (code) => {
       let usable = false;
 
-      // Global override: if preset error appears, assume true
-      if (/Cannot get the preset configuration: unsupported param/i.test(stderr)) {
+      // If code is 0 then it's good.
+      if (code == "0") {
         usable = true;
       }
-
+      //console.log(`[DEBUG] Codec ${codec} code out:`,code);
       //console.log(`[DEBUG] Codec ${codec} usable: ${usable}`);
       resolve(usable);
     });
@@ -88,7 +126,6 @@ protocol.registerSchemesAsPrivileged([
     }
   }
 ]);
-
 
 const createWindow = () => {
   // Create the browser window.
@@ -156,8 +193,17 @@ ipcMain.handle('dialog:openFolder', async () => {
 // initialization and is ready to create browser windows.
 // Some APIs can only be used after this event occurs.
 app.whenReady().then(async() => {
+  await ensureBinaries(); 
+
+  ffmpegPath = getBinary('ffmpeg');
+  ffprobePath = getBinary('ffprobe');
+
+  console.log("[debug][mainjs] ffmpeg require, ",ffmpegPath);
+
+  createAppMenu();
   createWindow();
   // Get GPU details
+  // Get gpu info
   const completeInfo = await app.getGPUInfo('basic');
   ipcMain.handle('get-gpu-info', () => completeInfo);
   // On OS X it's common to re-create a window in the app when the
@@ -203,10 +249,10 @@ app.on('quit', () => {
   }
 });
 
+
 // In this file you can include the rest of your app's specific main process
 // code. You can also put them in separate files and import them here.
 ipcMain.handle('extract-frames', async (e, videoPath) => {
-
 // Always reset the temp directory
   if (fs.existsSync(tmpDir)) {
     try {
@@ -311,6 +357,39 @@ ipcMain.handle('getMetadata', async (event, filePath) => {
     });
   });
 });
+
+function createAppMenu() {
+  const template = [
+    {
+      label: 'File',
+      submenu: [
+        {
+          label: 'Exit',
+          role: 'quit' // built-in role quits the app
+        }
+      ]
+    },
+    {
+      label: 'Help',
+      submenu: [
+        {
+          label: 'Check for Updates',
+          click: () => {
+            // Put your update logic here
+            console.log('Check for updates clicked');
+          }
+        },
+        {
+          label: `Version ${app.getVersion()}`,
+          enabled: false
+        }
+      ]
+    }
+  ];
+
+  const menu = Menu.buildFromTemplate(template);
+  Menu.setApplicationMenu(menu);
+}
 
 
 function debugLog(...args) { 

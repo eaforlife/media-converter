@@ -1,11 +1,11 @@
 const { FusesPlugin } = require('@electron-forge/plugin-fuses');
 const { FuseV1Options, FuseVersion } = require('@electron/fuses');
+const path = require('path');
 
 module.exports = {
   packagerConfig: {
-    asar: {
-      unpack: "**/node_modules/{ffmpeg-static,ffprobe-static}/**"
-    },
+    asar: true,
+    extraResource: [ "./resources/prereq.zip" ]
   },
   rebuildConfig: {},
   makers: [
