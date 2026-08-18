@@ -28,6 +28,10 @@ const rotateIfNeeded = async () => {
 
 export const initializeLogger = async () => {
   await fs.promises.mkdir(app.getPath('userData'), { recursive: true });
+  if (!app.isPackaged) {
+    await fs.promises.rm(logPath(), { force: true }).catch(() => undefined);
+    return;
+  }
   await rotateIfNeeded();
 };
 

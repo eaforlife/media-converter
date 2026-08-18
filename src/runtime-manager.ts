@@ -35,7 +35,11 @@ const executableName = (name: 'ffmpeg' | 'ffprobe') =>
   process.platform === 'win32' ? `${name}.exe` : name;
 
 const getRuntimePaths = () => {
-  const root = app.isPackaged ? path.dirname(process.execPath) : process.cwd();
+  const root = app.isPackaged
+    ? process.platform === 'win32'
+      ? path.dirname(process.execPath)
+      : path.join(app.getPath('userData'), 'runtime')
+    : process.cwd();
   const lib = path.join(root, 'lib');
   return {
     root,
@@ -100,6 +104,14 @@ const selectAsset = (assets: ReleaseAsset[]): ReleaseAsset => {
       x64: /_portable_win64-clang-gpl\.zip$/i,
       arm64: /_portable_winarm64-clang-gpl\.zip$/i,
     },
+    darwin: {
+      x64: /_portable_mac64-gpl\.tar\.xz$/i,
+      arm64: /_portable_macarm64-gpl\.tar\.xz$/i,
+    },
+    linux: {
+      x64: /_portable_linux64-gpl\.tar\.xz$/i,
+      arm64: /_portable_linuxarm64-gpl\.tar\.xz$/i,
+    },
   };
   const pattern = patterns[process.platform]?.[process.arch];
   if (!pattern) {
@@ -110,6 +122,18 @@ const selectAsset = (assets: ReleaseAsset[]): ReleaseAsset => {
     throw new Error(`The latest release has no FFmpeg asset for ${process.platform}/${process.arch}`);
   }
   return asset;
+};
+
+const extractRuntimeArchive = async (archivePath: string, extractionPath: string) => {
+  if (/\.zip$/i.test(archivePath)) {
+    await extract(archivePath, { dir: extractionPath });
+    return;
+  }
+  if (/\.tar\.xz$/i.test(archivePath)) {
+    await execute('tar', ['-xJf', archivePath, '-C', extractionPath], 120_000);
+    return;
+  }
+  throw new Error(`Unsupported FFmpeg archive format: ${path.basename(archivePath)}`);
 };
 
 const downloadAsset = async (
@@ -253,7 +277,7 @@ const installRuntime = async (
 
     notify('extracting', 'Extracting the FFmpeg runtime', null);
     await fs.promises.mkdir(extractionPath, { recursive: true });
-    await extract(archivePath, { dir: extractionPath });
+    await extractRuntimeArchive(archivePath, extractionPath);
 
     const stagedFfmpeg = await findFile(extractionPath, executableName('ffmpeg'));
     const stagedFfprobe = await findFile(extractionPath, executableName('ffprobe'));
@@ -269,6 +293,12 @@ const installRuntime = async (
       recursive: true,
       force: true,
     });
+    if (process.platform !== 'win32') {
+      await Promise.all([
+        fs.promises.chmod(path.join(libDirectory, executableName('ffmpeg')), 0o755),
+        fs.promises.chmod(path.join(libDirectory, executableName('ffprobe')), 0o755),
+      ]);
+    }
     await installRuntimeLicenses(release.tag_name, asset.name, libDirectory);
     const manifest: RuntimeManifest = {
       releaseTag: release.tag_name,
@@ -287,15 +317,19 @@ const installRuntime = async (
 
 export const initializeRuntime = async (webContents: WebContents): Promise<RuntimeState> => {
   const runtimePaths = getRuntimePaths();
-  const activeFfmpeg = app.isPackaged ? runtimePaths.ffmpeg : 'jellyffmpeg';
-  const activeFfprobe = app.isPackaged ? runtimePaths.ffprobe : 'ffprobe';
+  const activeFfmpeg = app.isPackaged
+    ? runtimePaths.ffmpeg
+    : process.env.EA_FFMPEG_PATH || (process.platform === 'win32' ? 'jellyffmpeg' : 'ffmpeg');
+  const activeFfprobe = app.isPackaged
+    ? runtimePaths.ffprobe
+    : process.env.EA_FFPROBE_PATH || 'ffprobe';
   const baseState: RuntimeState = {
     phase: 'checking-local',
     message: 'Checking the local FFmpeg runtime',
     progress: null,
     appVersion: app.getVersion(),
     isPackaged: app.isPackaged,
-    updateEnabled: app.isPackaged,
+    updateEnabled: app.isPackaged && process.platform !== 'linux',
     ffmpegAvailable: false,
     ffmpegPath: activeFfmpeg,
     ffprobePath: activeFfprobe,

@@ -1,4 +1,5 @@
 import { execFile } from 'node:child_process';
+import fs from 'node:fs';
 import { logActivity } from './app-logger';
 import type { HardwareCapabilities, VideoEncoderCapability } from './shared-types';
 
@@ -82,6 +83,93 @@ ConvertTo-Json -InputObject $items -Compress
   }
 };
 
+const getMacAdapters = async () => {
+  if (process.platform !== 'darwin') return { primary: [] as string[], ignored: [] as string[] };
+  try {
+    const output = await execute('system_profiler', ['SPDisplaysDataType', '-json']);
+    const report = JSON.parse(output) as {
+      SPDisplaysDataType?: Array<{
+        _name?: string;
+        sppci_model?: string;
+        _spdisplays_ndrvs?: Array<{ spdisplays_main?: string }>;
+      }>;
+    };
+    const detected = (report.SPDisplaysDataType ?? []).map((adapter) => ({
+      name: adapter.sppci_model || adapter._name || 'Apple VideoToolbox',
+      primary: adapter._spdisplays_ndrvs?.some((display) => display.spdisplays_main === 'spdisplays_yes') ?? false,
+    }));
+    const physical = detected.filter((adapter) => !VIRTUAL_DISPLAY.test(adapter.name));
+    const selected = physical.find((adapter) => adapter.primary) ?? physical[0];
+    const primary = selected ? [selected.name] : ['Apple VideoToolbox'];
+    const ignored = detected.filter((adapter) => adapter !== selected).map((adapter) => adapter.name);
+    logActivity('INFO', 'hardware.display-adapters.detected', {
+      primary, ignored, displays: detected, enumerationMethod: 'system_profiler primary display',
+    });
+    return { primary, ignored };
+  } catch (error) {
+    logActivity('WARN', 'hardware.adapter-query.failed', error instanceof Error ? error.message : String(error));
+    return { primary: ['Apple VideoToolbox'], ignored: [] as string[] };
+  }
+};
+
+const getLinuxDrmAdapters = async () => {
+  const drmRoot = '/sys/class/drm';
+  const entries = await fs.promises.readdir(drmRoot, { withFileTypes: true });
+  const connectedCards = new Set<string>();
+  for (const entry of entries) {
+    const card = /^(card\d+)-/.exec(entry.name)?.[1];
+    if (!card) continue;
+    const status = await fs.promises.readFile(`${drmRoot}/${entry.name}/status`, 'utf8').catch(() => '');
+    if (status.trim() === 'connected') connectedCards.add(card);
+  }
+  const vendorNames: Record<string, string> = {
+    '0x10de': 'NVIDIA', '0x1002': 'AMD Radeon', '0x8086': 'Intel',
+  };
+  const detected = await Promise.all([...connectedCards].map(async (card) => {
+    const vendor = (await fs.promises.readFile(`${drmRoot}/${card}/device/vendor`, 'utf8').catch(() => '')).trim().toLowerCase();
+    return vendorNames[vendor] ? `${vendorNames[vendor]} (${card})` : `Virtual or unsupported GPU ${vendor || 'unknown'} (${card})`;
+  }));
+  if (!detected.some((name) => !VIRTUAL_DISPLAY.test(name))) {
+    throw new Error('No supported physical GPU backs a connected DRM display');
+  }
+  return detected;
+};
+
+const getLinuxAdapters = async () => {
+  if (process.platform !== 'linux') return { primary: [] as string[], ignored: [] as string[] };
+  try {
+    let detected: string[];
+    let enumerationMethod: string;
+    try {
+      detected = await getLinuxDrmAdapters();
+      enumerationMethod = 'sysfs connected DRM display';
+    } catch {
+      const output = await execute('lspci', ['-nn']);
+      detected = output.split(/\r?\n/)
+        .filter((line) => /VGA compatible controller|3D controller|Display controller/i.test(line))
+        .map((line) => line.replace(/^\S+\s+/, '').trim())
+        .filter(Boolean);
+      enumerationMethod = 'lspci fallback';
+    }
+    const selected = detected.find((name) => !VIRTUAL_DISPLAY.test(name));
+    const primary = selected ? [selected] : [];
+    const ignored = detected.filter((name) => name !== selected);
+    logActivity('INFO', 'hardware.display-adapters.detected', {
+      primary, ignored, displays: detected, enumerationMethod,
+    });
+    return { primary, ignored };
+  } catch (error) {
+    logActivity('WARN', 'hardware.adapter-query.failed', error instanceof Error ? error.message : String(error));
+    return { primary: [] as string[], ignored: [] as string[] };
+  }
+};
+
+const getPlatformAdapters = () => process.platform === 'win32'
+  ? getWindowsAdapters()
+  : process.platform === 'darwin'
+    ? getMacAdapters()
+    : getLinuxAdapters();
+
 const canEncode = async (ffmpegPath: string, encoder: string, tenBit = false) => {
   const args = [
     '-hide_banner', '-loglevel', 'error', '-f', 'lavfi', '-i',
@@ -125,6 +213,24 @@ const canInitializeDevice = async (ffmpegPath: string, specification: string) =>
   }
 };
 
+const canEncodeVaapi = async (ffmpegPath: string, encoder: string, device: string, tenBit = false) => {
+  const format = tenBit ? 'p010le' : 'nv12';
+  try {
+    await execute(ffmpegPath, [
+      '-hide_banner', '-loglevel', 'error', '-vaapi_device', device,
+      '-f', 'lavfi', '-i', 'color=color=black:size=256x256:rate=1', '-frames:v', '1', '-an',
+      '-vf', `format=${format},hwupload`, '-c:v', encoder, '-f', 'null', '-',
+    ]);
+    logActivity('INFO', 'ffmpeg.encoder.available', { encoder, tenBit, device });
+    return true;
+  } catch (error) {
+    logActivity('INFO', 'ffmpeg.encoder.unavailable', {
+      encoder, tenBit, device, reason: error instanceof Error ? error.message : String(error),
+    });
+    return false;
+  }
+};
+
 const availableHardwareDecoders = async (ffmpegPath: string) => {
   try {
     const output = await execute(ffmpegPath, ['-hide_banner', '-decoders']);
@@ -138,21 +244,24 @@ const availableHardwareDecoders = async (ffmpegPath: string) => {
   }
 };
 
-type Candidate = Omit<VideoEncoderCapability, 'tenBit'> & { tenBitTest?: boolean };
+type Candidate = Omit<VideoEncoderCapability, 'tenBit'> & { tenBitTest?: boolean; platforms?: NodeJS.Platform[] };
 const CANDIDATES: Candidate[] = [
-  { id: 'h264_nvenc', label: 'H.264 (NVENC)', vendor: 'NVIDIA', codec: 'H.264' },
-  { id: 'hevc_nvenc', label: 'H.265 / HEVC (NVENC)', vendor: 'NVIDIA', codec: 'HEVC', tenBitTest: true },
-  { id: 'av1_nvenc', label: 'AV1 (NVENC)', vendor: 'NVIDIA', codec: 'AV1' },
-  { id: 'h264_amf', label: 'H.264 (AMD AMF)', vendor: 'AMD', codec: 'H.264' },
-  { id: 'hevc_amf', label: 'H.265 / HEVC (AMD AMF)', vendor: 'AMD', codec: 'HEVC', tenBitTest: true },
-  { id: 'av1_amf', label: 'AV1 (AMD AMF)', vendor: 'AMD', codec: 'AV1' },
-  { id: 'h264_qsv', label: 'H.264 (Intel QSV)', vendor: 'Intel', codec: 'H.264' },
-  { id: 'hevc_qsv', label: 'H.265 / HEVC (Intel QSV)', vendor: 'Intel', codec: 'HEVC', tenBitTest: true },
-  { id: 'av1_qsv', label: 'AV1 (Intel QSV)', vendor: 'Intel', codec: 'AV1' },
+  { id: 'h264_nvenc', label: 'H.264 (NVENC)', vendor: 'NVIDIA', codec: 'H.264', platforms: ['win32', 'linux'] },
+  { id: 'hevc_nvenc', label: 'H.265 / HEVC (NVENC)', vendor: 'NVIDIA', codec: 'HEVC', tenBitTest: true, platforms: ['win32', 'linux'] },
+  { id: 'av1_nvenc', label: 'AV1 (NVENC)', vendor: 'NVIDIA', codec: 'AV1', platforms: ['win32', 'linux'] },
+  { id: 'h264_amf', label: 'H.264 (AMD AMF)', vendor: 'AMD', codec: 'H.264', platforms: ['win32'] },
+  { id: 'hevc_amf', label: 'H.265 / HEVC (AMD AMF)', vendor: 'AMD', codec: 'HEVC', tenBitTest: true, platforms: ['win32'] },
+  { id: 'av1_amf', label: 'AV1 (AMD AMF)', vendor: 'AMD', codec: 'AV1', platforms: ['win32'] },
+  { id: 'h264_qsv', label: 'H.264 (Intel QSV)', vendor: 'Intel', codec: 'H.264', platforms: ['win32', 'linux'] },
+  { id: 'hevc_qsv', label: 'H.265 / HEVC (Intel QSV)', vendor: 'Intel', codec: 'HEVC', tenBitTest: true, platforms: ['win32', 'linux'] },
+  { id: 'av1_qsv', label: 'AV1 (Intel QSV)', vendor: 'Intel', codec: 'AV1', platforms: ['win32', 'linux'] },
+  { id: 'h264_videotoolbox', label: 'H.264 (VideoToolbox)', vendor: 'Apple', codec: 'H.264', platforms: ['darwin'] },
+  { id: 'hevc_videotoolbox', label: 'H.265 / HEVC (VideoToolbox)', vendor: 'Apple', codec: 'HEVC', tenBitTest: true, platforms: ['darwin'] },
+  { id: 'av1_videotoolbox', label: 'AV1 (VideoToolbox)', vendor: 'Apple', codec: 'AV1', platforms: ['darwin'] },
 ];
 
 export const detectHardwareCapabilities = async (ffmpegPath: string): Promise<HardwareCapabilities> => {
-  const displayAdapters = await getWindowsAdapters();
+  const displayAdapters = await getPlatformAdapters();
   const adapters = displayAdapters.primary;
   logActivity('INFO', 'hardware.detection.started', { adapters, ignoredAdapters: displayAdapters.ignored, ffmpegPath });
   const adapterText = adapters.join(' ').toLowerCase();
@@ -160,10 +269,13 @@ export const detectHardwareCapabilities = async (ffmpegPath: string): Promise<Ha
   if (/nvidia/.test(adapterText)) detectedVendors.add('NVIDIA');
   if (/\bamd\b|advanced micro devices|radeon/.test(adapterText)) detectedVendors.add('AMD');
   if (/intel/.test(adapterText)) detectedVendors.add('Intel');
-  const candidates = CANDIDATES.filter((candidate) => detectedVendors.has(candidate.vendor));
+  if (process.platform === 'darwin') detectedVendors.add('Apple');
+  const candidates = CANDIDATES.filter((candidate) =>
+    detectedVendors.has(candidate.vendor) && (!candidate.platforms || candidate.platforms.includes(process.platform)));
   logActivity('INFO', 'hardware.encoder-tests.selected', { count: candidates.length, vendors: [...detectedVendors] });
 
-  const [testedEncoders, cudaAvailable, amfDecodeAvailable, qsvDecodeAvailable, decoders] = await Promise.all([
+  const vaapiDevice = process.platform === 'linux' && fs.existsSync('/dev/dri/renderD128') ? '/dev/dri/renderD128' : null;
+  const [testedEncoders, cudaAvailable, amfDecodeAvailable, qsvDecodeAvailable, decoders, vaapiAvailable] = await Promise.all([
     Promise.all(candidates.map(async (candidate): Promise<VideoEncoderCapability | null> => {
       if (!await canEncode(ffmpegPath, candidate.id)) return null;
       const tenBit = candidate.tenBitTest ? await canEncode(ffmpegPath, candidate.id, true) : false;
@@ -185,13 +297,29 @@ export const detectHardwareCapabilities = async (ffmpegPath: string): Promise<Ha
       ? canInitializeDevice(ffmpegPath, 'qsv=qs:hw')
       : Promise.resolve(false),
     availableHardwareDecoders(ffmpegPath),
+    vaapiDevice && (detectedVendors.has('AMD') || detectedVendors.has('Intel'))
+      ? canInitializeDevice(ffmpegPath, `vaapi=va:${vaapiDevice}`)
+      : Promise.resolve(false),
   ]);
   const encoders = testedEncoders.filter((encoder): encoder is VideoEncoderCapability => encoder !== null);
+  if (vaapiAvailable && vaapiDevice) {
+    const vendor: VideoEncoderCapability['vendor'] = detectedVendors.has('AMD') ? 'AMD' : 'Intel';
+    const vaapiCandidates = [
+      { id: 'h264_vaapi', label: 'H.264 (VA-API)', codec: 'H.264' as const, tenBit: false },
+      { id: 'hevc_vaapi', label: 'H.265 / HEVC (VA-API)', codec: 'HEVC' as const, tenBit: true },
+      { id: 'av1_vaapi', label: 'AV1 (VA-API)', codec: 'AV1' as const, tenBit: true },
+    ];
+    for (const candidate of vaapiCandidates) {
+      if (!await canEncodeVaapi(ffmpegPath, candidate.id, vaapiDevice)) continue;
+      const tenBit = candidate.tenBit && await canEncodeVaapi(ffmpegPath, candidate.id, vaapiDevice, true);
+      encoders.push({ ...candidate, vendor, tenBit });
+    }
+  }
   const nvdecAvailable = cudaAvailable && decoders.cuvid.length > 0;
   const result = {
     checkedAt: new Date().toISOString(), adapters, ignoredAdapters: displayAdapters.ignored, cudaAvailable, nvdecAvailable,
     cuvidDecoders: decoders.cuvid, amfDecodeAvailable, qsvDecodeAvailable,
-    qsvDecoders: decoders.qsv, encoders,
+    qsvDecoders: decoders.qsv, vaapiAvailable, vaapiDevice, encoders,
   };
   logActivity('INFO', 'hardware.detection.completed', result);
   return result;

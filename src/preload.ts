@@ -1,13 +1,17 @@
 import { contextBridge, ipcRenderer } from 'electron';
-import type { AppSettings, HardwareCapabilities, RuntimeState, SourceFile } from './shared-types';
+import type {
+  AppSettings, EncodeJob, EncodeProgress, EncodeStartResult, HardwareCapabilities, RuntimeState, SourceFile,
+} from './shared-types';
 
 export type { AppSettings, RuntimeState, SourceFile } from './shared-types';
 
 contextBridge.exposeInMainWorld('mediaAPI', {
   openFile: (initialDirectory?: string): Promise<SourceFile[]> => ipcRenderer.invoke('source:open-file', initialDirectory),
   openFolder: (initialDirectory?: string): Promise<SourceFile[]> => ipcRenderer.invoke('source:open-folder', initialDirectory),
-  chooseOutput: (defaultName: string): Promise<string | null> =>
-    ipcRenderer.invoke('output:choose', defaultName),
+  chooseOutputDirectory: (defaultPath: string): Promise<string | null> =>
+    ipcRenderer.invoke('output:choose-directory', defaultPath),
+  prepareOutputDirectory: (directoryPath: string): Promise<boolean> =>
+    ipcRenderer.invoke('output:prepare-directory', directoryPath),
   showInFolder: (targetPath: string): Promise<void> => ipcRenderer.invoke('path:show', targetPath),
   loadSettings: (): Promise<AppSettings> => ipcRenderer.invoke('settings:load'),
   saveSettings: (settings: AppSettings): Promise<void> => ipcRenderer.invoke('settings:save', settings),
@@ -19,6 +23,13 @@ contextBridge.exposeInMainWorld('mediaAPI', {
   readLog: (): Promise<string> => ipcRenderer.invoke('log:read'),
   readConfig: (settings: AppSettings): Promise<string> => ipcRenderer.invoke('config:read', settings),
   initializeRuntime: (): Promise<RuntimeState> => ipcRenderer.invoke('runtime:initialize'),
+  startEncode: (jobs: EncodeJob[]): Promise<EncodeStartResult> => ipcRenderer.invoke('encode:start', jobs),
+  cancelEncode: (): Promise<boolean> => ipcRenderer.invoke('encode:cancel'),
+  onEncodeProgress: (callback: (progress: EncodeProgress) => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, progress: EncodeProgress) => callback(progress);
+    ipcRenderer.on('encode:progress', listener);
+    return () => ipcRenderer.removeListener('encode:progress', listener);
+  },
   onRuntimeProgress: (callback: (state: RuntimeState) => void) => {
     const listener = (_event: Electron.IpcRendererEvent, state: RuntimeState) => callback(state);
     ipcRenderer.on('runtime:progress', listener);
@@ -31,7 +42,8 @@ declare global {
     mediaAPI: {
       openFile: (initialDirectory?: string) => Promise<SourceFile[]>;
       openFolder: (initialDirectory?: string) => Promise<SourceFile[]>;
-      chooseOutput: (defaultName: string) => Promise<string | null>;
+      chooseOutputDirectory: (defaultPath: string) => Promise<string | null>;
+      prepareOutputDirectory: (directoryPath: string) => Promise<boolean>;
       showInFolder: (targetPath: string) => Promise<void>;
       loadSettings: () => Promise<AppSettings>;
       saveSettings: (settings: AppSettings) => Promise<void>;
@@ -43,6 +55,9 @@ declare global {
       readLog: () => Promise<string>;
       readConfig: (settings: AppSettings) => Promise<string>;
       initializeRuntime: () => Promise<RuntimeState>;
+      startEncode: (jobs: EncodeJob[]) => Promise<EncodeStartResult>;
+      cancelEncode: () => Promise<boolean>;
+      onEncodeProgress: (callback: (progress: EncodeProgress) => void) => () => void;
       onRuntimeProgress: (callback: (state: RuntimeState) => void) => () => void;
     };
   }

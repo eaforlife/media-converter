@@ -6,11 +6,12 @@ import { updateElectronApp, UpdateSourceType } from 'update-electron-app';
 import { APP_NAME, APP_UPDATE_REPOSITORY } from './config';
 import { initializeLogger, logActivity, readLog, rotateLogForUpdate } from './app-logger';
 import { detectHardwareCapabilities } from './hardware-capabilities';
+import { cancelEncoding, startEncodeQueue } from './encode-runner';
 import { analyzeVisual, cleanupPreviews, initializePreviewStorage, releasePreviews } from './media-analysis';
 import { probeMedia } from './media-probe';
 import { initializeRuntime } from './runtime-manager';
 import { loadSettings, readConfig, saveSettings } from './settings-store';
-import type { AppSettings, HardwareCapabilities, RuntimeState, SourceFile } from './shared-types';
+import type { AppSettings, EncodeJob, HardwareCapabilities, RuntimeState, SourceFile } from './shared-types';
 
 const runSquirrel = (args: string[]) => {
   const updateExe = path.resolve(path.dirname(process.execPath), '..', 'Update.exe');
@@ -56,6 +57,10 @@ const VIDEO_EXTENSIONS = new Set([
 
 let runtimeState: RuntimeState | null = null;
 let hardwareCheck: Promise<HardwareCapabilities> | null = null;
+const developmentFfmpeg = () => process.env.EA_FFMPEG_PATH || (process.platform === 'win32' ? 'jellyffmpeg' : 'ffmpeg');
+const developmentFfprobe = () => process.env.EA_FFPROBE_PATH || 'ffprobe';
+const activeFfmpeg = () => runtimeState?.ffmpegPath || developmentFfmpeg();
+const activeFfprobe = () => runtimeState?.ffprobePath || developmentFfprobe();
 
 const toSourceFile = (filePath: string): SourceFile | null => {
   try {
@@ -74,8 +79,8 @@ const toSourceFile = (filePath: string): SourceFile | null => {
 };
 
 const inspectSource = async (file: SourceFile): Promise<SourceFile | null> => {
-  const ffprobePath = app.isPackaged ? runtimeState?.ffprobePath ?? '' : 'ffprobe';
-  const ffmpegPath = app.isPackaged ? runtimeState?.ffmpegPath ?? '' : 'jellyffmpeg';
+  const ffprobePath = activeFfprobe();
+  const ffmpegPath = activeFfmpeg();
   if (!ffprobePath) {
     return { ...file, probeError: 'FFprobe is not available' };
   }
@@ -130,7 +135,7 @@ const registerIpc = () => {
   ipcMain.handle('settings:save', (_event, settings: AppSettings) => saveSettings(settings));
   ipcMain.handle('source:release-previews', (_event, ids: string[]) => releasePreviews(ids));
   ipcMain.handle('hardware:detect', () => {
-    const ffmpegPath = app.isPackaged ? runtimeState?.ffmpegPath ?? '' : 'jellyffmpeg';
+    const ffmpegPath = activeFfmpeg();
     if (!ffmpegPath) throw new Error('FFmpeg is unavailable for hardware capability checks');
     hardwareCheck ??= detectHardwareCapabilities(ffmpegPath);
     return hardwareCheck;
@@ -194,13 +199,37 @@ const registerIpc = () => {
     }
   });
 
-  ipcMain.handle('output:choose', async (_event, defaultName: string) => {
-    const result = await dialog.showSaveDialog({
-      title: 'Choose output location',
-      defaultPath: defaultName,
-      filters: [{ name: 'Video', extensions: ['mp4', 'mkv', 'webm'] }],
-    });
-    return result.canceled ? null : result.filePath;
+  ipcMain.handle('output:choose-directory', async (event, defaultPath: string) => {
+    const parent = BrowserWindow.fromWebContents(event.sender);
+    const options: Electron.OpenDialogOptions = {
+      title: 'Choose output folder',
+      defaultPath: defaultPath || undefined,
+      properties: ['openDirectory', 'createDirectory'],
+    };
+    const result = parent
+      ? await dialog.showOpenDialog(parent, options)
+      : await dialog.showOpenDialog(options);
+    return result.canceled ? null : result.filePaths[0] ?? null;
+  });
+  ipcMain.handle('encode:start', (event, jobs: EncodeJob[]) => {
+    const ffmpegPath = activeFfmpeg();
+    return startEncodeQueue(ffmpegPath, jobs, event.sender);
+  });
+  ipcMain.handle('encode:cancel', () => cancelEncoding());
+
+  ipcMain.handle('output:prepare-directory', async (_event, directoryPath: string) => {
+    if (!directoryPath || !path.isAbsolute(directoryPath)) return false;
+    try {
+      await fs.promises.mkdir(directoryPath, { recursive: true });
+      logActivity('INFO', 'output.directory.ready', { path: directoryPath });
+      return true;
+    } catch (error) {
+      logActivity('ERROR', 'output.directory.failed', {
+        path: directoryPath,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return false;
+    }
   });
 
   ipcMain.handle('path:show', async (_event, targetPath: string) => {
@@ -241,7 +270,7 @@ if (!handlingSquirrelEvent) app.whenReady().then(async () => {
   registerIpc();
   createWindow();
 
-  if (app.isPackaged) {
+  if (app.isPackaged && process.platform !== 'linux') {
     updateElectronApp({
       updateSource: {
         type: UpdateSourceType.ElectronPublicUpdateService,
@@ -266,5 +295,6 @@ app.on('before-quit', (event) => {
   if (handlingSquirrelEvent || cleaningUp) return;
   cleaningUp = true;
   event.preventDefault();
+  cancelEncoding();
   void cleanupPreviews().finally(() => app.exit(0));
 });

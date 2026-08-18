@@ -2,7 +2,6 @@ import type { ForgeConfig } from '@electron-forge/shared-types';
 import { MakerSquirrel } from '@electron-forge/maker-squirrel';
 import { MakerZIP } from '@electron-forge/maker-zip';
 import { MakerDeb } from '@electron-forge/maker-deb';
-import { MakerRpm } from '@electron-forge/maker-rpm';
 import { MakerWix } from '@electron-forge/maker-wix';
 import { VitePlugin } from '@electron-forge/plugin-vite';
 import { FusesPlugin } from '@electron-forge/plugin-fuses';
@@ -28,7 +27,7 @@ const config: ForgeConfig = {
         name: 'EA-Media-Tools',
       },
       draft: true,
-      prerelease: false,
+      prerelease: true,
       generateReleaseNotes: true,
     }),
   ],
@@ -47,7 +46,6 @@ const config: ForgeConfig = {
       windowsSign,
     })] : []),
     new MakerZIP({}, ['darwin']),
-    new MakerRpm({}),
     new MakerDeb({}),
   ],
   plugins: [

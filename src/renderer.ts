@@ -1,8 +1,9 @@
 import './index.css';
+import { parseEpisodeIdentity, sanitizePathSegment, smartSeriesBaseName } from './output-naming';
 import { BUILT_IN_PRESETS, BUILT_IN_PRESET_NAMES } from './presets';
 import type { BuiltInPresetDefinition, BuiltInPresetName, PreferredVideoCodec, PresetAudioCodec, QualityFamily } from './presets';
 import type {
-  AppSettings, AudioStreamInfo, FilterSettings, HardwareCapabilities, RuntimeState, SavedPreset,
+  AppSettings, AudioStreamInfo, EncodeJob, EncodeProgress, FilterSettings, HardwareCapabilities, RuntimeState, SavedPreset,
   ScaleMode, SourceFile, StreamFlags, SubtitleStreamInfo,
 } from './shared-types';
 
@@ -13,6 +14,7 @@ type AudioCodec = 'libfdk_aac' | 'libopus' | 'copy';
 type SubtitleCodec = 'subrip' | 'webvtt' | 'mov_text' | 'copy';
 type AudioSetting = { enabled: boolean; codec: AudioCodec; bitrate: string; flags: StreamFlags };
 type SubtitleSetting = { enabled: boolean; codec: SubtitleCodec; flags: StreamFlags };
+type FolderSeriesLayout = { sourceRoot: string; showFolder: string };
 type JobSettings = {
   preset: string; format: 'mp4' | 'mkv' | 'webm'; encoder: string;
   resolution: string; quality: string; videoBitrate: string; maxRate: string; bufferMultiplier: number; bufferSize: string;
@@ -54,18 +56,20 @@ const OPUS_BITRATES = ['32k', '48k', '64k', '80k', '96k', '112k', '128k'];
 let sources: SourceFile[] = [];
 let selectedIndex = 0;
 let activeTab = 'Summary';
-let outputPath = '';
-let queueCount = 0;
+let outputDirectory = '';
+let encodeQueue: EncodeJob[] = [];
+let encodingActive = false;
 let toastTimer: number | undefined;
 let runtimeState: RuntimeState | null = null;
 let hardwareCapabilities: HardwareCapabilities = {
   checkedAt: '', adapters: [], ignoredAdapters: [], cudaAvailable: false, nvdecAvailable: false,
   cuvidDecoders: [], amfDecodeAvailable: false, qsvDecodeAvailable: false,
-  qsvDecoders: [], encoders: [],
+  qsvDecoders: [], vaapiAvailable: false, vaapiDevice: null, encoders: [],
 };
 let pickerBusy = false;
 let sourceMode: 'file' | 'folder' | null = null;
-let appSettings: AppSettings = { hardwareAcceleration: true, lastPreset: 'Streaming', lastSourceDirectory: '', customPresets: [], workingPreset: null };
+let folderSeriesLayout: FolderSeriesLayout | null = null;
+let appSettings: AppSettings = { hardwareAcceleration: true, smartFileNaming: true, lastPreset: 'Streaming', lastSourceDirectory: '', customPresets: [], workingPreset: null };
 const settingsByPath = new Map<string, JobSettings>();
 
 const escapeHtml = (value: string) => value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#039;');
@@ -85,7 +89,9 @@ const formatDuration = (seconds: number | null) => {
 const baseName = (name: string) => name.replace(/\.[^.]+$/, '');
 const parentPath = (filePath: string) => filePath.replace(/[\\/][^\\/]+$/, '');
 const joinPath = (folder: string, name: string) => `${folder}${folder.includes('\\') ? '\\' : '/'}${name}`;
-const quote = (value: string) => `"${value.replace(/"/g, '\\"')}"`;
+const displayArgument = (value: string) => /^[A-Za-z0-9_./:@=+\\-]+$/.test(value)
+  ? value
+  : `"${value.replace(/"/g, '\\"')}"`;
 const isDeliveryPreset = (settings: JobSettings) => settings.deliveryMode;
 const builtInPreset = (name: string) => BUILT_IN_PRESETS[name as BuiltInPresetName];
 const recommendedMaxRate = (source: SourceFile) => {
@@ -102,7 +108,8 @@ const preferredCodecForEncoder = (encoder: string): PreferredVideoCodec =>
   /av1/i.test(encoder) ? 'AV1' : /264/i.test(encoder) ? 'H.264' : 'HEVC';
 const normalizeQuality = (value: string) => String(Math.min(38, Math.max(12, Number(value) || 20)));
 const qualityFamily = (encoder: string): QualityFamily => encoder.endsWith('_nvenc')
-  ? 'nvenc' : encoder.endsWith('_amf') ? 'amf' : encoder.endsWith('_qsv') ? 'qsv' : 'software';
+  ? 'nvenc' : encoder.endsWith('_amf') ? 'amf'
+    : encoder.endsWith('_qsv') || encoder.endsWith('_vaapi') || encoder.endsWith('_videotoolbox') ? 'qsv' : 'software';
 const presetQuality = (preset: BuiltInPresetDefinition, encoder: string) => preset.quality[qualityFamily(encoder)];
 const audioBitrateFor = (
   presetName: string,
@@ -227,7 +234,6 @@ const getSettings = (source: SourceFile) => {
   }
   return settings;
 };
-const updateOutputExtension = (format: JobSettings['format']) => { if (outputPath) outputPath = outputPath.replace(/\.[^.\\/]+$/, `.${format}`); };
 const applyPreset = (source: SourceFile, preset: string, persist = true) => {
   const settings = getSettings(source);
   const saved = preset === 'Custom'
@@ -280,7 +286,6 @@ const applyPreset = (source: SourceFile, preset: string, persist = true) => {
     appSettings.lastPreset = preset;
     void persistAppSettings();
   }
-  updateOutputExtension(settings.format);
 };
 const markCustom = (settings: JobSettings) => {
   settings.preset = 'Custom';
@@ -309,7 +314,38 @@ const snapshotPreset = (settings: JobSettings, name: string): SavedPreset => {
     filters: { ...settings.filters, scaleLocked: false },
   };
 };
-const makeDefaultOutput = (source: SourceFile) => joinPath(parentPath(source.path), `${baseName(source.name)}_converted.${getSettings(source).format}`);
+const detectFolderSeriesLayout = (folderSources: SourceFile[]): FolderSeriesLayout | null => {
+  if (!folderSources.length) return null;
+  const identities = folderSources.map((source) => parseEpisodeIdentity(source.name));
+  if (identities.some((identity) => identity === null)) return null;
+  const parsed = identities.filter((identity) => identity !== null);
+  const normalizedTitle = parsed[0].showTitle.toLocaleLowerCase();
+  if (parsed.some((identity) => identity.showTitle.toLocaleLowerCase() !== normalizedTitle)) return null;
+  const years = [...new Set(parsed.flatMap((identity) => identity.year === null ? [] : [identity.year]))];
+  if (years.length > 1) return null;
+  const showFolder = sanitizePathSegment(`${parsed[0].showTitle}${years[0] ? ` (${years[0]})` : ''}`);
+  return { sourceRoot: parentPath(folderSources[0].path), showFolder };
+};
+const makeDefaultOutputDirectory = (source: SourceFile) => {
+  if (sourceMode === 'folder' && folderSeriesLayout) {
+    const identity = parseEpisodeIdentity(source.name);
+    if (identity) {
+      return joinPath(
+        joinPath(joinPath(folderSeriesLayout.sourceRoot, 'converted'), folderSeriesLayout.showFolder),
+        `Season ${String(identity.season).padStart(2, '0')}`,
+      );
+    }
+  }
+  return joinPath(parentPath(source.path), 'converted');
+};
+const makeOutputFileName = (source: SourceFile) => {
+  const format = getSettings(source).format;
+  const name = appSettings.smartFileNaming
+    ? smartSeriesBaseName(source.name)
+    : sanitizePathSegment(`${baseName(source.name)}_converted`);
+  return `${name}.${format}`;
+};
+const makeOutputPath = (source: SourceFile) => joinPath(outputDirectory || makeDefaultOutputDirectory(source), makeOutputFileName(source));
 const dispositionValue = (flags: StreamFlags) => {
   const values = [];
   if (flags.default) values.push('default');
@@ -321,6 +357,8 @@ const qualityLabel = (encoder: string) => {
   if (encoder.endsWith('_nvenc')) return 'CQ';
   if (encoder.endsWith('_amf')) return 'QVBR';
   if (encoder.endsWith('_qsv')) return 'ICQ';
+  if (encoder.endsWith('_vaapi')) return 'QP';
+  if (encoder.endsWith('_videotoolbox')) return 'Q';
   return 'RF';
 };
 const downmixFilter = (track: AudioStreamInfo) => {
@@ -334,7 +372,7 @@ const downmixFilter = (track: AudioStreamInfo) => {
 };
 const addDownmixArguments = (args: string[], outputIndex: number, track: AudioStreamInfo) => {
   const filter = downmixFilter(track);
-  if (filter) args.push(`-filter:a:${outputIndex}`, quote(filter));
+  if (filter) args.push(`-filter:a:${outputIndex}`, filter);
   else args.push(`-ac:a:${outputIndex}`, '2');
 };
 const encoderCanOutput10Bit = (encoder: string) => encoder === 'libx265'
@@ -360,6 +398,12 @@ const cuvidCrop = (source: SourceFile) => {
   return top || bottom || left || right ? `${top}x${bottom}x${left}x${right}` : null;
 };
 const hardwareInputArguments = (source: SourceFile, settings: JobSettings) => {
+  if (settings.encoder.endsWith('_vaapi') && hardwareCapabilities.vaapiAvailable && hardwareCapabilities.vaapiDevice) {
+    return {
+      args: ['-vaapi_device', hardwareCapabilities.vaapiDevice],
+      cuvidCropApplied: false, backend: 'vaapi' as const,
+    };
+  }
   if (!appSettings.hardwareAcceleration) return { args: [] as string[], cuvidCropApplied: false, backend: 'software' as const };
   if (settings.encoder.endsWith('_nvenc') && hardwareCapabilities.cudaAvailable && hardwareCapabilities.nvdecAvailable) {
     const decoder = hardwareDecoderName(source, 'cuvid');
@@ -384,6 +428,9 @@ const hardwareInputArguments = (source: SourceFile, settings: JobSettings) => {
     const args = ['-init_hw_device', 'qsv=qs:hw', '-filter_hw_device', 'qs', '-hwaccel', 'qsv', '-hwaccel_flags', '+unsafe_output'];
     if (decoder && hardwareCapabilities.qsvDecoders.includes(decoder)) args.push('-c:v:0', decoder);
     return { args, cuvidCropApplied: false, backend: 'qsv' as const };
+  }
+  if (settings.encoder.endsWith('_videotoolbox')) {
+    return { args: ['-hwaccel', 'videotoolbox'], cuvidCropApplied: false, backend: 'software' as const };
   }
   return { args: ['-hwaccel', 'auto'], cuvidCropApplied: false, backend: 'software' as const };
 };
@@ -438,17 +485,16 @@ const hardwareAccelerationSummary = () => {
   if (hardwareCapabilities.nvdecAvailable) capabilities.push('NVDEC');
   if (hardwareCapabilities.amfDecodeAvailable) capabilities.push('AMF decode');
   if (hardwareCapabilities.qsvDecodeAvailable) capabilities.push('QSV decode');
+  if (hardwareCapabilities.vaapiAvailable) capabilities.push('VA-API');
   return capabilities.length ? capabilities.join(' · ') : 'hardware encode only';
 };
 
-const getCommand = () => {
-  const source = sources[selectedIndex];
-  if (!source) return '';
+const getCommandArguments = (source: SourceFile) => {
   const settings = getSettings(source);
-  if (!settings.encoder) return '# No compatible hardware video encoder was detected.';
+  if (!settings.encoder) return null;
   const hardwareInput = hardwareInputArguments(source, settings);
-  const args = ['ffmpeg', ...hardwareInput.args];
-  args.push('-i', quote(source.path), '-map', '0:v:0', '-c:v', settings.encoder);
+  const args = [...hardwareInput.args];
+  args.push('-i', source.path, '-map', '0:v:0', '-c:v', settings.encoder);
   if (settings.encoder.endsWith('_nvenc')) {
     args.push(
       '-preset', nvencPreset(settings.preset), '-tune', 'hq', '-rc:v', 'vbr', '-cq:v', settings.quality,
@@ -458,6 +504,8 @@ const getCommand = () => {
   }
   else if (settings.encoder.endsWith('_qsv')) args.push('-global_quality:v', settings.quality);
   else if (settings.encoder.endsWith('_amf')) args.push('-rc:v', 'qvbr', '-qvbr_quality_level:v', settings.quality);
+  else if (settings.encoder.endsWith('_vaapi')) args.push('-qp:v', settings.quality);
+  else if (settings.encoder.endsWith('_videotoolbox')) args.push('-q:v', settings.quality);
   else args.push('-crf', settings.quality);
   const bitrateControl = builtInPreset(settings.preset)?.bitrateControl ?? true;
   if (bitrateControl) {
@@ -510,13 +558,18 @@ const getCommand = () => {
       const downloadFormat = video?.pixelFormat.includes('10') ? 'p010le' : 'nv12';
       filters.push('hwdownload', `format=${downloadFormat}`, ...softwareToneMapFilters(Boolean(video?.hasDolbyVision), toneMapFormat));
     }
+  } else if (hardwareInput.backend === 'vaapi') {
+    const scale = softwareScaleFilter(settings.filters.scale);
+    if (scale) filters.push(scale);
+    if (toneMap) filters.push(...softwareToneMapFilters(Boolean(video?.hasDolbyVision), toneMapFormat));
+    filters.push(`format=${main10Output ? 'p010le' : 'nv12'}`, 'hwupload');
   } else {
     const scale = softwareScaleFilter(settings.filters.scale);
     if (scale) filters.push(scale);
     if (toneMap) filters.push(...softwareToneMapFilters(Boolean(video?.hasDolbyVision), toneMapFormat));
     else if (main10Output) filters.push('format=p010le');
   }
-  if (filters.length) args.push('-filter:v:0', quote(filters.join(',')));
+  if (filters.length) args.push('-filter:v:0', filters.join(','));
   let audioOutputIndex = 0;
   let stereoDefaultAssigned = false;
   orderByFlags(source.media?.audio ?? [], (track) => settings.audio[track.index]?.flags ?? track.flags).forEach((track) => {
@@ -562,8 +615,147 @@ const getCommand = () => {
   if (settings.filters.stripMetadata) args.push('-map_metadata', '-1', '-metadata', 'title=', '-metadata', 'description=', '-metadata', 'comment=', '-metadata', 'synopsis=', '-metadata', 'grouping=');
   args.push('-map_chapters', '0');
   if (settings.format === 'mp4') args.push('-movflags', '+faststart');
-  args.push(quote(outputPath));
-  return args.join(' ');
+  args.push(makeOutputPath(source));
+  return args;
+};
+
+const getCommand = () => {
+  const source = sources[selectedIndex];
+  if (!source) return '';
+  const args = getCommandArguments(source);
+  if (!args) return '# No compatible hardware video encoder was detected.';
+  return ['ffmpeg', ...args].map(displayArgument).join(' ');
+};
+
+const createEncodeJob = (source: SourceFile): EncodeJob | null => {
+  const args = getCommandArguments(source);
+  if (!args) return null;
+  return {
+    sourceName: source.name,
+    sourcePath: source.path,
+    outputPath: makeOutputPath(source),
+    duration: source.media?.duration ?? null,
+    args,
+  };
+};
+
+const formatEncodeCommand = (job: EncodeJob, command?: string[]) => (command ?? [
+  runtimeState?.ffmpegPath || 'ffmpeg',
+  '-hide_banner', '-nostdin', '-nostats', '-progress', 'pipe:1', ...job.args,
+]).map(displayArgument).join(' ');
+
+const formatElapsed = (seconds: number | null) => {
+  if (seconds === null || !Number.isFinite(seconds)) return 'Calculating…';
+  const whole = Math.max(0, Math.round(seconds));
+  const hours = Math.floor(whole / 3600);
+  const minutes = Math.floor((whole % 3600) / 60);
+  const remaining = whole % 60;
+  return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(remaining).padStart(2, '0')}`;
+};
+
+const showEncodeDialog = (jobs: EncodeJob[]) => {
+  document.querySelector('.encode-modal')?.remove();
+  const first = jobs[0];
+  const modal = document.createElement('div');
+  modal.className = 'encode-modal';
+  modal.innerHTML = `<section><header><div><span id="encode-position">ENCODE 1 OF ${jobs.length}</span><h2 id="encode-source">${escapeHtml(first.sourceName)}</h2></div><strong id="encode-percent">Preparing…</strong></header>
+    <div class="encode-progress indeterminate" id="encode-progress"><span></span></div>
+    <div class="encode-stats"><div><span>BITRATE</span><strong id="encode-bitrate">—</strong></div><div><span>FPS</span><strong id="encode-fps">—</strong></div><div><span>RUN TIME</span><strong id="encode-runtime">00:00:00</strong></div><div><span>ETA</span><strong id="encode-eta">Calculating…</strong></div></div>
+    <div class="encode-output"><div><span>OUTPUT FILE</span><strong id="encode-output-file">${escapeHtml(first.outputPath.replace(/^.*[\\/]/, ''))}</strong></div><div><span>DIRECTORY</span><strong id="encode-output-directory">${escapeHtml(parentPath(first.outputPath))}</strong></div></div>
+    <div class="encode-command-panel"><button id="toggle-encode-command" aria-expanded="false">${icon('chevron', 15)} Show FFmpeg command</button><pre class="encode-command-block" id="encode-command" hidden>${escapeHtml(formatEncodeCommand(first))}</pre></div>
+    <pre class="encode-error" id="encode-error" hidden></pre><footer><button class="secondary-button encode-dialog-button" id="show-encoded-file" hidden>Show in folder</button><button class="encode-cancel encode-dialog-button" id="encode-action" data-mode="cancel">Cancel encode</button></footer></section>`;
+  document.body.appendChild(modal);
+  modal.querySelector<HTMLButtonElement>('#toggle-encode-command')?.addEventListener('click', (event) => {
+    const button = event.currentTarget as HTMLButtonElement;
+    const command = modal.querySelector<HTMLElement>('#encode-command');
+    const expanded = button.getAttribute('aria-expanded') === 'true';
+    button.setAttribute('aria-expanded', String(!expanded));
+    button.innerHTML = `${icon('chevron', 15)} ${expanded ? 'Show' : 'Hide'} FFmpeg command`;
+    if (command) command.hidden = expanded;
+  });
+  modal.querySelector<HTMLButtonElement>('#encode-action')?.addEventListener('click', async (event) => {
+    const button = event.currentTarget as HTMLButtonElement;
+    if (button.dataset.mode === 'close') { modal.remove(); return; }
+    button.disabled = true;
+    button.textContent = 'Cancelling…';
+    await window.mediaAPI.cancelEncode();
+  });
+  modal.querySelector('#show-encoded-file')?.addEventListener('click', () => {
+    const target = modal.querySelector<HTMLElement>('#show-encoded-file')?.dataset.path;
+    if (target) void window.mediaAPI.showInFolder(target);
+  });
+};
+
+const updateEncodeDialog = (progress: EncodeProgress) => {
+  const modal = document.querySelector<HTMLElement>('.encode-modal');
+  if (!modal) return;
+  const setText = (selector: string, value: string) => {
+    const element = modal.querySelector<HTMLElement>(selector);
+    if (element) element.textContent = value;
+  };
+  const terminal = progress.phase === 'failed' || progress.phase === 'cancelled' || progress.phase === 'queue-completed';
+  const percent = progress.percent === null ? null : Math.min(100, Math.max(0, progress.percent));
+  setText('#encode-position', progress.phase === 'queue-completed'
+    ? `${progress.totalJobs} ENCODE${progress.totalJobs === 1 ? '' : 'S'} COMPLETE`
+    : `ENCODE ${progress.jobIndex} OF ${progress.totalJobs}`);
+  setText('#encode-source', progress.phase === 'queue-completed' ? 'Encoding complete' : progress.sourceName);
+  setText('#encode-percent', progress.phase === 'failed' ? 'Failed'
+    : progress.phase === 'cancelled' ? 'Cancelled'
+      : progress.phase === 'queue-completed' ? 'Done'
+        : percent === null ? 'Encoding…' : `${percent.toFixed(1)}%`);
+  if (progress.phase !== 'queue-completed') {
+    setText('#encode-bitrate', progress.bitrate);
+    setText('#encode-fps', progress.fps);
+  }
+  setText('#encode-runtime', formatElapsed(progress.runTimeSeconds));
+  setText('#encode-eta', progress.phase === 'queue-completed' ? '00:00:00' : formatElapsed(progress.etaSeconds));
+  setText('#encode-output-file', progress.outputPath.replace(/^.*[\\/]/, ''));
+  setText('#encode-output-directory', parentPath(progress.outputPath));
+  if (progress.command) setText('#encode-command', progress.command.map(displayArgument).join(' '));
+
+  const progressBar = modal.querySelector<HTMLElement>('#encode-progress');
+  progressBar?.classList.toggle('indeterminate', percent === null && !terminal);
+  const fill = progressBar?.querySelector<HTMLElement>('span');
+  if (fill) fill.style.width = `${percent ?? (progress.phase === 'queue-completed' ? 100 : 36)}%`;
+
+  const error = modal.querySelector<HTMLElement>('#encode-error');
+  if (error) {
+    error.hidden = !progress.message;
+    error.textContent = progress.message ?? '';
+  }
+  if (terminal) {
+    encodingActive = false;
+    const action = modal.querySelector<HTMLButtonElement>('#encode-action');
+    if (action) { action.disabled = false; action.dataset.mode = 'close'; action.textContent = 'Close'; }
+    const reveal = modal.querySelector<HTMLButtonElement>('#show-encoded-file');
+    if (reveal && progress.phase === 'queue-completed') {
+      reveal.hidden = false;
+      reveal.dataset.path = progress.outputPath;
+    }
+  }
+};
+
+const startEncoding = async (source: SourceFile) => {
+  if (encodingActive) return;
+  if (!runtimeState?.ffmpegAvailable) { showToast('FFmpeg is unavailable'); return; }
+  const current = createEncodeJob(source);
+  if (!current) { showToast('No compatible hardware encoder is available'); return; }
+  const jobs = encodeQueue.length ? [...encodeQueue] : [current];
+  encodingActive = true;
+  showEncodeDialog(jobs);
+  const result = await window.mediaAPI.startEncode(jobs).catch((error: unknown) => ({
+    started: false,
+    message: error instanceof Error ? error.message : 'Unable to start encoding.',
+  }));
+  if (!result.started) {
+    encodingActive = false;
+    document.querySelector('.encode-modal')?.remove();
+    showToast(result.message ?? 'Unable to start encoding');
+    return;
+  }
+  encodeQueue = [];
+  const count = document.querySelector('.queue-count');
+  if (count) count.textContent = '0';
 };
 
 const renderBootstrap = (state?: RuntimeState) => {
@@ -590,7 +782,7 @@ const showAppMenu = () => {
   document.querySelector('.app-menu')?.remove();
   const menu = document.createElement('div');
   menu.className = 'app-menu';
-  menu.innerHTML = `<div class="menu-identity"><strong>EA Media Tools</strong><span>Version ${escapeHtml(runtimeState?.appVersion ?? '0.1.0')}</span></div><label class="menu-check"><input id="hardware-acceleration" type="checkbox"${checked(appSettings.hardwareAcceleration)}/><span>Use hardware encoding/decoding acceleration</span></label><button id="view-logs">View Logs</button><button id="view-config">View Running Config</button><button id="check-update">Check for update</button><button class="danger" id="exit-app">Exit</button>`;
+  menu.innerHTML = `<div class="menu-identity"><strong>EA Media Tools</strong><span>Version ${escapeHtml(runtimeState?.appVersion ?? '0.2.0')}</span></div><label class="menu-check"><input id="hardware-acceleration" type="checkbox"${checked(appSettings.hardwareAcceleration)}/><span>Use hardware encoding/decoding acceleration</span></label><button id="view-logs">View Logs</button><button id="view-config">View Running Config</button><button id="check-update">Check for update</button><button class="danger" id="exit-app">Exit</button>`;
   document.body.appendChild(menu);
   menu.querySelector<HTMLInputElement>('#hardware-acceleration')?.addEventListener('change', (event) => {
     appSettings.hardwareAcceleration = (event.currentTarget as HTMLInputElement).checked;
@@ -658,12 +850,17 @@ const pickSource = async (type: 'file' | 'folder') => {
   if (!newSources.length) return;
   await window.mediaAPI.releasePreviews(sources.flatMap((source) => source.previewId ? [source.previewId] : []));
   sources.forEach((source) => settingsByPath.delete(source.path));
+  encodeQueue = [];
   sourceMode = type;
+  folderSeriesLayout = type === 'folder' ? detectFolderSeriesLayout(newSources) : null;
   appSettings.lastPreset = 'Streaming';
   appSettings.workingPreset = null;
   appSettings.lastSourceDirectory = parentPath(newSources[0].path);
   void persistAppSettings();
-  sources = newSources; selectedIndex = 0; activeTab = 'Summary'; outputPath = makeDefaultOutput(sources[0]); renderWorkspace();
+  sources = newSources; selectedIndex = 0; activeTab = 'Summary'; outputDirectory = makeDefaultOutputDirectory(sources[0]);
+  const outputDirectories = [...new Set(sources.map(makeDefaultOutputDirectory))];
+  void Promise.all(outputDirectories.map((directory) => window.mediaAPI.prepareOutputDirectory(directory)));
+  renderWorkspace();
 };
 const audioSummary = (source: SourceFile) => {
   const tracks = source.media?.audio ?? [];
@@ -681,19 +878,20 @@ const renderWorkspace = () => {
   const source = sources[selectedIndex];
   if (!source) return renderWelcome();
   const settings = getSettings(source);
+  const outputFileName = makeOutputFileName(source);
   const tabs = [['Summary', 'film'], ['Video', 'video'], ['Audio', 'audio'], ['Subtitles', 'captions'], ['Filters', 'sliders']] as Array<[string, IconName]>;
   const fileRows = sources.map((file, index) => `<button class="source-row ${index === selectedIndex ? 'active' : ''}" data-source-index="${index}"><span class="file-type">${escapeHtml(file.extension.slice(0, 4))}</span><span class="source-row-copy"><strong>${escapeHtml(file.name)}</strong><small>${formatSize(file.size)}</small></span>${index === selectedIndex ? '<span class="active-pip"></span>' : ''}</button>`).join('');
   const video = source.media?.video;
   const showWorkingCustom = settings.preset === 'Custom' || appSettings.workingPreset !== null;
   const visiblePresets = [...BUILT_IN_PRESET_NAMES, ...(showWorkingCustom ? ['Custom'] as const : [])];
-  app.innerHTML = `<main class="workspace"><header class="topbar"><div class="brand"><span class="brand-mark">${icon('app', 21)}</span><span>EA Media Tools</span></div><div class="topbar-spacer"></div><button class="top-action queue-button">${icon('queue', 17)} Queue <span class="queue-count">${queueCount}</span></button><button class="icon-button" data-app-settings aria-label="Settings">${icon('settings', 18)}</button>${windowControls()}</header>
+  app.innerHTML = `<main class="workspace"><header class="topbar"><div class="brand"><span class="brand-mark">${icon('app', 21)}</span><span>EA Media Tools</span></div><div class="topbar-spacer"></div><button class="top-action queue-button">${icon('queue', 17)} Queue <span class="queue-count">${encodeQueue.length}</span></button><button class="icon-button" data-app-settings aria-label="Settings">${icon('settings', 18)}</button>${windowControls()}</header>
     <aside class="sidebar"><div class="sidebar-heading"><span>SOURCES</span><span>${sources.length}</span></div><div class="source-list">${fileRows}</div>${sourceMode === 'file' ? `<button class="add-more" id="add-more-videos">${icon('plus', 16)} Add more videos</button>` : ''}<div class="sidebar-tip"><span>${icon('sparkles', 17)}</span><div><strong>Video-only input</strong><p>${sourceMode === 'folder' ? 'Folder mode is locked to the videos detected in the selected folder.' : 'Shift/Ctrl multi-select adds each file as a separate source.'}</p></div></div></aside>
     <section class="work-area"><div class="source-hero"><div class="media-preview">${source.previewDataUrl ? `<img src="${source.previewDataUrl}" alt="35 percent source preview"/>` : `<div class="preview-grid"></div><div class="preview-play">${icon('play', 23)}</div>`}<span>${escapeHtml(source.extension)}</span></div><div class="source-info"><div class="section-label">CURRENT SOURCE · PREVIEW AT 35%</div><h2>${escapeHtml(source.name)}</h2><p title="${escapeHtml(source.path)}">${escapeHtml(source.path)}</p>
       <div class="metadata"><span><b>Video</b>${video ? `${escapeHtml(video.codec)} · ${video.width}×${video.height}` : 'Unknown'}</span><span><b>Dynamic range</b>${escapeHtml(hdrLabel(source))}</span><span><b>Audio</b>${escapeHtml(audioSummary(source))}</span><span><b>Chapters</b>${source.media?.chapterCount ?? 'Unknown'}</span><span><b>Subtitles</b>${escapeHtml(subtitleSummary(source))}</span></div></div></div>
       ${source.probeError ? `<div class="probe-warning">${icon('x', 16)} ${escapeHtml(source.probeError)}</div>` : ''}
       <div class="preset-bar"><div class="preset-icon">${icon('gauge', 22)}</div><label class="preset-control"><span>PRESET</span><select id="preset">${visiblePresets.map((preset) => `<option${selected(settings.preset === preset)}>${preset}</option>`).join('')}${appSettings.customPresets.length ? `<optgroup label="Saved presets">${appSettings.customPresets.map((preset) => `<option${selected(settings.preset === preset.name)}>${escapeHtml(preset.name)}</option>`).join('')}</optgroup>` : ''}</select><small class="preset-description">${escapeHtml(PRESET_DESCRIPTION[settings.preset as BuiltInPresetName] ?? (settings.preset === 'Custom' ? 'Modified settings ready to save as a preset.' : 'Saved user preset.'))}</small></label>${settings.preset === 'Custom' ? '<button class="save-preset" id="save-preset">Save preset</button>' : ''}</div>
       <nav class="tabs">${tabs.map(([label, tabIcon]) => `<button class="tab ${activeTab === label ? 'active' : ''}" data-tab="${label}">${icon(tabIcon, 17)}${label}${label === 'Audio' ? `<i>${source.media?.audio.length ?? 0}</i>` : label === 'Subtitles' ? `<i>${source.media?.subtitles.length ?? 0}</i>` : ''}</button>`).join('')}</nav><div class="tab-content" id="tab-content">${renderTabContent(activeTab, source, settings)}</div></section>
-    <footer class="encode-footer"><div class="destination"><span>DESTINATION</span><div class="destination-row"><div class="destination-path" title="${escapeHtml(outputPath)}">${icon('folder', 16)}<span>${escapeHtml(outputPath)}</span></div><button id="browse-output">Browse</button></div></div><button class="secondary-button" id="add-queue">${icon('plus', 17)} Add to queue</button><button class="encode-button" id="start-encode">${icon('play', 17)} Start encode</button></footer></main>`;
+    <footer class="encode-footer"><div class="destination"><div class="destination-heading"><span>DESTINATION</span></div><div class="destination-controls"><div class="destination-row"><div class="destination-path" title="${escapeHtml(outputDirectory)}">${icon('folder', 16)}<span>${escapeHtml(outputDirectory)}</span></div><button id="browse-output"${encodingActive ? ' disabled' : ''}>Browse</button></div><label class="smart-naming"><input id="smart-file-naming" type="checkbox"${checked(appSettings.smartFileNaming)}${encodingActive ? ' disabled' : ''}/><span>Smart file naming</span></label></div><small class="destination-output" title="${escapeHtml(makeOutputPath(source))}">Output: ${escapeHtml(outputFileName)}</small></div><button class="secondary-button" id="add-queue"${encodingActive ? ' disabled' : ''}>${icon('plus', 17)} Add to queue</button><button class="encode-button" id="start-encode"${encodingActive ? ' disabled' : ''}>${icon('play', 17)} Start encode</button></footer></main>`;
   bindWorkspaceEvents();
 };
 
@@ -846,7 +1044,7 @@ const bindContentEvents = () => {
   (['format', 'encoder'] as const).forEach((field) => document.querySelector<HTMLSelectElement>(`#${field}`)?.addEventListener('change', (event) => {
     const value = (event.currentTarget as HTMLSelectElement).value;
     if (field === 'format') {
-      settings.format = value as JobSettings['format']; updateOutputExtension(settings.format);
+      settings.format = value as JobSettings['format'];
       for (const track of source.media?.subtitles ?? []) {
         const subtitle = settings.subtitles[track.index];
         if (settings.format === 'mp4') { subtitle.enabled = track.kind === 'text' && subtitle.enabled; subtitle.codec = track.kind === 'text' ? 'mov_text' : 'copy'; }
@@ -946,11 +1144,33 @@ const bindWorkspaceEvents = () => {
   document.querySelector('#add-more-videos')?.addEventListener('click', () => void addSources());
   document.querySelector<HTMLSelectElement>('#preset')?.addEventListener('change', (event) => { applyPreset(source, (event.currentTarget as HTMLSelectElement).value); renderWorkspace(); });
   document.querySelector('#save-preset')?.addEventListener('click', () => saveCurrentPreset(source));
-  document.querySelectorAll<HTMLElement>('[data-source-index]').forEach((row) => row.addEventListener('click', () => { selectedIndex = Number(row.dataset.sourceIndex); outputPath = makeDefaultOutput(sources[selectedIndex]); renderWorkspace(); }));
+  document.querySelectorAll<HTMLElement>('[data-source-index]').forEach((row) => row.addEventListener('click', () => {
+    selectedIndex = Number(row.dataset.sourceIndex);
+    outputDirectory = makeDefaultOutputDirectory(sources[selectedIndex]);
+    void window.mediaAPI.prepareOutputDirectory(outputDirectory);
+    renderWorkspace();
+  }));
   document.querySelectorAll<HTMLElement>('[data-tab]').forEach((tab) => tab.addEventListener('click', () => { activeTab = tab.dataset.tab || 'Summary'; renderWorkspace(); }));
-  document.querySelector('#browse-output')?.addEventListener('click', async () => { const selectedPath = await window.mediaAPI.chooseOutput(outputPath); if (selectedPath) { outputPath = selectedPath; renderWorkspace(); } });
-  document.querySelector('#add-queue')?.addEventListener('click', () => { queueCount += 1; const count = document.querySelector('.queue-count'); if (count) count.textContent = String(queueCount); showToast('Job added to queue'); });
-  document.querySelector('#start-encode')?.addEventListener('click', () => showToast('Encode command is ready'));
+  document.querySelector('#browse-output')?.addEventListener('click', async () => {
+    const selectedPath = await window.mediaAPI.chooseOutputDirectory(outputDirectory);
+    if (selectedPath) { outputDirectory = selectedPath; renderWorkspace(); }
+  });
+  document.querySelector<HTMLInputElement>('#smart-file-naming')?.addEventListener('change', (event) => {
+    appSettings.smartFileNaming = (event.currentTarget as HTMLInputElement).checked;
+    void persistAppSettings();
+    renderWorkspace();
+  });
+  document.querySelector('#add-queue')?.addEventListener('click', () => {
+    const job = createEncodeJob(source);
+    if (!job) { showToast('No compatible hardware encoder is available'); return; }
+    const existing = encodeQueue.findIndex((queued) => queued.outputPath.toLowerCase() === job.outputPath.toLowerCase());
+    if (existing >= 0) encodeQueue[existing] = job;
+    else encodeQueue.push(job);
+    const count = document.querySelector('.queue-count');
+    if (count) count.textContent = String(encodeQueue.length);
+    showToast(existing >= 0 ? 'Queued job updated' : 'Job added to queue');
+  });
+  document.querySelector('#start-encode')?.addEventListener('click', () => void startEncoding(source));
   bindWindowControls();
   bindContentEvents();
 };
@@ -965,18 +1185,19 @@ const addSources = async () => {
   renderWorkspace();
 };
 const startApplication = async () => {
+  window.mediaAPI.onEncodeProgress(updateEncodeDialog);
   try { appSettings = await window.mediaAPI.loadSettings(); } catch { /* defaults remain active */ }
   renderBootstrap();
   const removeProgressListener = window.mediaAPI.onRuntimeProgress((state) => { runtimeState = state; renderBootstrap(state); });
   try {
     runtimeState = await window.mediaAPI.initializeRuntime(); renderBootstrap(runtimeState);
     if (runtimeState.ffmpegAvailable) {
-      renderBootstrap({ ...runtimeState, message: 'Testing Windows GPU encoding capabilities', progress: null });
+      renderBootstrap({ ...runtimeState, message: 'Testing GPU encoding capabilities', progress: null });
       try { hardwareCapabilities = await window.mediaAPI.detectHardware(); } catch { /* The UI will report that no hardware encoder passed. */ }
     }
     await new Promise((resolve) => window.setTimeout(resolve, runtimeState?.phase === 'error' ? 900 : 350));
   } catch (error) {
-    runtimeState = { phase: 'error', message: error instanceof Error ? error.message : 'Unable to initialize FFmpeg', progress: null, appVersion: '0.1.0', isPackaged: false, updateEnabled: false, ffmpegAvailable: false, ffmpegPath: '', ffprobePath: '', ffmpegVersion: null, releaseTag: null };
+    runtimeState = { phase: 'error', message: error instanceof Error ? error.message : 'Unable to initialize FFmpeg', progress: null, appVersion: '0.2.0', isPackaged: false, updateEnabled: false, ffmpegAvailable: false, ffmpegPath: '', ffprobePath: '', ffmpegVersion: null, releaseTag: null };
     renderBootstrap(runtimeState); await new Promise((resolve) => window.setTimeout(resolve, 900));
   } finally { removeProgressListener(); }
   renderWelcome();

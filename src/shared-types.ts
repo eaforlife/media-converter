@@ -86,7 +86,7 @@ export type FilterSettings = {
 export type VideoEncoderCapability = {
   id: string;
   label: string;
-  vendor: 'NVIDIA' | 'AMD' | 'Intel';
+  vendor: 'NVIDIA' | 'AMD' | 'Intel' | 'Apple';
   codec: 'H.264' | 'HEVC' | 'AV1';
   tenBit: boolean;
 };
@@ -101,6 +101,8 @@ export type HardwareCapabilities = {
   amfDecodeAvailable: boolean;
   qsvDecodeAvailable: boolean;
   qsvDecoders: string[];
+  vaapiAvailable: boolean;
+  vaapiDevice: string | null;
   encoders: VideoEncoderCapability[];
 };
 
@@ -121,6 +123,7 @@ export type SavedPreset = {
 
 export type AppSettings = {
   hardwareAcceleration: boolean;
+  smartFileNaming: boolean;
   lastPreset: string;
   lastSourceDirectory: string;
   customPresets: SavedPreset[];
@@ -149,4 +152,41 @@ export type RuntimeState = {
   ffprobePath: string;
   ffmpegVersion: string | null;
   releaseTag: string | null;
+};
+
+export type EncodeJob = {
+  sourceName: string;
+  sourcePath: string;
+  outputPath: string;
+  duration: number | null;
+  args: string[];
+};
+
+export type EncodeProgressPhase =
+  | 'starting'
+  | 'encoding'
+  | 'completed'
+  | 'failed'
+  | 'cancelled'
+  | 'queue-completed';
+
+export type EncodeProgress = {
+  phase: EncodeProgressPhase;
+  jobIndex: number;
+  totalJobs: number;
+  sourceName: string;
+  outputPath: string;
+  percent: number | null;
+  bitrate: string;
+  fps: string;
+  runTimeSeconds: number;
+  etaSeconds: number | null;
+  speed: string;
+  command?: string[];
+  message?: string;
+};
+
+export type EncodeStartResult = {
+  started: boolean;
+  message?: string;
 };
