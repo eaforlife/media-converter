@@ -3,14 +3,22 @@ import { MakerSquirrel } from '@electron-forge/maker-squirrel';
 import { MakerZIP } from '@electron-forge/maker-zip';
 import { MakerDeb } from '@electron-forge/maker-deb';
 import { MakerRpm } from '@electron-forge/maker-rpm';
+import { MakerWix } from '@electron-forge/maker-wix';
 import { VitePlugin } from '@electron-forge/plugin-vite';
 import { FusesPlugin } from '@electron-forge/plugin-fuses';
 import { PublisherGithub } from '@electron-forge/publisher-github';
 import { FuseV1Options, FuseVersion } from '@electron/fuses';
 
+const certificateFile = process.env.WINDOWS_CERTIFICATE_FILE;
+const certificatePassword = process.env.WINDOWS_CERTIFICATE_PASSWORD;
+const windowsSign = certificateFile && certificatePassword
+  ? { certificateFile, certificatePassword }
+  : undefined;
+
 const config: ForgeConfig = {
   packagerConfig: {
     asar: true,
+    windowsSign,
   },
   rebuildConfig: {},
   publishers: [
@@ -25,7 +33,19 @@ const config: ForgeConfig = {
     }),
   ],
   makers: [
-    new MakerSquirrel({}),
+    new MakerSquirrel({
+      name: 'ea_media_tools',
+      setupExe: 'EA-Media-Tools-Setup.exe',
+      noMsi: true,
+      windowsSign,
+    }),
+    ...(process.env.EA_BUILD_WIX === '1' ? [new MakerWix({
+      name: 'EA Media Tools',
+      manufacturer: 'eaforlife',
+      defaultInstallMode: 'perMachine',
+      ui: { chooseDirectory: true },
+      windowsSign,
+    })] : []),
     new MakerZIP({}, ['darwin']),
     new MakerRpm({}),
     new MakerDeb({}),

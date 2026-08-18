@@ -59,7 +59,14 @@ typings/
 
 # dotenv environment variables file
 .env
-.env.test
+.env.*
+!.env.example
+.env.trustedsigning
+electron-windows-sign.log
+*.pfx
+*.p12
+*.pem
+*.key
 
 # parcel-bundler cache (https://parceljs.org/)
 .cache
@@ -90,5 +97,19 @@ typings/
 
 # Electron-Forge
 out/
+dist/
+release/
+
+# Local application state and temporary media artifacts
+/config
+*.tmp
+ea-media-tools-previews/
+
+# Editors and Windows metadata
+.idea/
+.vscode/
+*.swp
+Thumbs.db
+Desktop.ini
 # Downloaded third-party runtime binaries and their generated notices.
 /lib/

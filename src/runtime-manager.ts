@@ -5,6 +5,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import extract from 'extract-zip';
 import { FFMPEG_RELEASE_API } from './config';
+import { logActivity } from './app-logger';
 import type { RuntimePhase, RuntimeState } from './shared-types';
 
 type ReleaseAsset = {
@@ -61,10 +62,6 @@ const getVersion = (output: string) =>
   output.match(/ffmpeg version\s+([^\s]+)/i)?.[1] ?? output.split(/\r?\n/, 1)[0] ?? null;
 
 const inspectLocalRuntime = async (ffmpeg: string, ffprobe: string): Promise<LocalRuntime> => {
-  if (!fs.existsSync(ffmpeg) || !fs.existsSync(ffprobe)) {
-    return { available: false, version: null };
-  }
-
   try {
     const [ffmpegOutput] = await Promise.all([
       execute(ffmpeg, ['-version']),
@@ -290,6 +287,8 @@ const installRuntime = async (
 
 export const initializeRuntime = async (webContents: WebContents): Promise<RuntimeState> => {
   const runtimePaths = getRuntimePaths();
+  const activeFfmpeg = app.isPackaged ? runtimePaths.ffmpeg : 'jellyffmpeg';
+  const activeFfprobe = app.isPackaged ? runtimePaths.ffprobe : 'ffprobe';
   const baseState: RuntimeState = {
     phase: 'checking-local',
     message: 'Checking the local FFmpeg runtime',
@@ -298,19 +297,20 @@ export const initializeRuntime = async (webContents: WebContents): Promise<Runti
     isPackaged: app.isPackaged,
     updateEnabled: app.isPackaged,
     ffmpegAvailable: false,
-    ffmpegPath: runtimePaths.ffmpeg,
-    ffprobePath: runtimePaths.ffprobe,
+    ffmpegPath: activeFfmpeg,
+    ffprobePath: activeFfprobe,
     ffmpegVersion: null,
     releaseTag: null,
   };
 
   const notify = (phase: RuntimePhase, message: string, progress: number | null = null) => {
     Object.assign(baseState, { phase, message, progress });
+    logActivity(phase === 'error' ? 'ERROR' : 'INFO', 'runtime.progress', { phase, message, progress });
     if (!webContents.isDestroyed()) webContents.send('runtime:progress', { ...baseState });
   };
 
   notify('checking-local', 'Checking the local FFmpeg runtime');
-  let local = await inspectLocalRuntime(runtimePaths.ffmpeg, runtimePaths.ffprobe);
+  let local = await inspectLocalRuntime(activeFfmpeg, activeFfprobe);
   Object.assign(baseState, {
     ffmpegAvailable: local.available,
     ffmpegVersion: local.version,
