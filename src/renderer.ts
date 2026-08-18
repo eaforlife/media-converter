@@ -14,7 +14,7 @@ type AudioCodec = 'libfdk_aac' | 'libopus' | 'copy';
 type SubtitleCodec = 'subrip' | 'webvtt' | 'mov_text' | 'copy';
 type AudioSetting = { enabled: boolean; codec: AudioCodec; bitrate: string; flags: StreamFlags };
 type SubtitleSetting = { enabled: boolean; codec: SubtitleCodec; flags: StreamFlags };
-type FolderSeriesLayout = { sourceRoot: string; showFolder: string };
+type FolderSeriesLayout = { sourceRoot: string; showFolder: string; season: number };
 type JobSettings = {
   preset: string; format: 'mp4' | 'mkv' | 'webm'; encoder: string;
   resolution: string; quality: string; videoBitrate: string; maxRate: string; bufferMultiplier: number; bufferSize: string;
@@ -57,7 +57,7 @@ let sources: SourceFile[] = [];
 let selectedIndex = 0;
 let activeTab = 'Summary';
 let outputDirectory = '';
-let encodeQueue: EncodeJob[] = [];
+let outputDirectoryIsCustom = false;
 let encodingActive = false;
 let toastTimer: number | undefined;
 let runtimeState: RuntimeState | null = null;
@@ -287,12 +287,61 @@ const applyPreset = (source: SourceFile, preset: string, persist = true) => {
     void persistAppSettings();
   }
 };
+const matchingTrackIndex = <T extends { index: number; language: string }>(
+  originTracks: T[],
+  targetTracks: T[],
+  targetIndex: number,
+) => {
+  const target = targetTracks.find((track) => track.index === targetIndex);
+  if (!target) return null;
+  const targetLanguageTracks = targetTracks.filter((track) => track.language === target.language);
+  const ordinal = targetLanguageTracks.findIndex((track) => track.index === targetIndex);
+  return originTracks.filter((track) => track.language === target.language)[ordinal]?.index ?? null;
+};
+const syncBatchTrackSettings = (
+  originSource: SourceFile,
+  origin: JobSettings,
+  targetSource: SourceFile,
+  target: JobSettings,
+) => {
+  const originAudio = originSource.media?.audio ?? [];
+  const targetAudio = targetSource.media?.audio ?? [];
+  for (const track of targetAudio) {
+    const originIndex = matchingTrackIndex(originAudio, targetAudio, track.index);
+    const sourceSetting = originIndex === null ? null : origin.audio[originIndex];
+    if (!sourceSetting) continue;
+    target.audio[track.index] = { ...sourceSetting, flags: { ...sourceSetting.flags } };
+  }
+  const originSubtitles = originSource.media?.subtitles ?? [];
+  const targetSubtitles = targetSource.media?.subtitles ?? [];
+  for (const track of targetSubtitles) {
+    const originIndex = matchingTrackIndex(originSubtitles, targetSubtitles, track.index);
+    const originTrack = originIndex === null ? null : originSubtitles.find((item) => item.index === originIndex);
+    const sourceSetting = originIndex === null ? null : origin.subtitles[originIndex];
+    if (!sourceSetting || originTrack?.kind !== track.kind) continue;
+    target.subtitles[track.index] = { ...sourceSetting, flags: { ...sourceSetting.flags } };
+    if (target.format === 'mp4') {
+      target.subtitles[track.index].enabled = track.kind === 'text' && sourceSetting.enabled;
+      target.subtitles[track.index].codec = track.kind === 'text' ? 'mov_text' : 'copy';
+    }
+  }
+  normalizeUniqueFlags(target.audio);
+  normalizeUniqueFlags(target.subtitles);
+};
 const markCustom = (settings: JobSettings) => {
   settings.preset = 'Custom';
   settings.bufferMultiplier = 1;
   settings.filters.scaleLocked = false;
   appSettings.lastPreset = 'Custom';
   appSettings.workingPreset = snapshotPreset(settings, 'Custom');
+  const originSource = sources.find((source) => settingsByPath.get(source.path) === settings);
+  for (const source of sources) {
+    const target = getSettings(source);
+    if (target !== settings) {
+      applyPreset(source, 'Custom', false);
+      if (originSource) syncBatchTrackSettings(originSource, settings, source, target);
+    }
+  }
   void persistAppSettings();
 };
 const snapshotPreset = (settings: JobSettings, name: string): SavedPreset => {
@@ -321,10 +370,12 @@ const detectFolderSeriesLayout = (folderSources: SourceFile[]): FolderSeriesLayo
   const parsed = identities.filter((identity) => identity !== null);
   const normalizedTitle = parsed[0].showTitle.toLocaleLowerCase();
   if (parsed.some((identity) => identity.showTitle.toLocaleLowerCase() !== normalizedTitle)) return null;
+  const seasons = [...new Set(parsed.map((identity) => identity.season))];
+  if (seasons.length !== 1) return null;
   const years = [...new Set(parsed.flatMap((identity) => identity.year === null ? [] : [identity.year]))];
   if (years.length > 1) return null;
   const showFolder = sanitizePathSegment(`${parsed[0].showTitle}${years[0] ? ` (${years[0]})` : ''}`);
-  return { sourceRoot: parentPath(folderSources[0].path), showFolder };
+  return { sourceRoot: parentPath(folderSources[0].path), showFolder, season: seasons[0] };
 };
 const makeDefaultOutputDirectory = (source: SourceFile) => {
   if (sourceMode === 'folder' && folderSeriesLayout) {
@@ -345,7 +396,10 @@ const makeOutputFileName = (source: SourceFile) => {
     : sanitizePathSegment(`${baseName(source.name)}_converted`);
   return `${name}.${format}`;
 };
-const makeOutputPath = (source: SourceFile) => joinPath(outputDirectory || makeDefaultOutputDirectory(source), makeOutputFileName(source));
+const outputDirectoryFor = (source: SourceFile) => outputDirectoryIsCustom
+  ? outputDirectory
+  : makeDefaultOutputDirectory(source);
+const makeOutputPath = (source: SourceFile) => joinPath(outputDirectoryFor(source), makeOutputFileName(source));
 const dispositionValue = (flags: StreamFlags) => {
   const values = [];
   if (flags.default) values.push('default');
@@ -639,10 +693,7 @@ const createEncodeJob = (source: SourceFile): EncodeJob | null => {
   };
 };
 
-const formatEncodeCommand = (job: EncodeJob, command?: string[]) => (command ?? [
-  runtimeState?.ffmpegPath || 'ffmpeg',
-  '-hide_banner', '-nostdin', '-nostats', '-progress', 'pipe:1', ...job.args,
-]).map(displayArgument).join(' ');
+const formatEncodeArguments = (command: string[]) => command.slice(1).map(displayArgument).join(' ');
 
 const formatElapsed = (seconds: number | null) => {
   if (seconds === null || !Number.isFinite(seconds)) return 'Calculating…';
@@ -662,15 +713,15 @@ const showEncodeDialog = (jobs: EncodeJob[]) => {
     <div class="encode-progress indeterminate" id="encode-progress"><span></span></div>
     <div class="encode-stats"><div><span>BITRATE</span><strong id="encode-bitrate">—</strong></div><div><span>FPS</span><strong id="encode-fps">—</strong></div><div><span>RUN TIME</span><strong id="encode-runtime">00:00:00</strong></div><div><span>ETA</span><strong id="encode-eta">Calculating…</strong></div></div>
     <div class="encode-output"><div><span>OUTPUT FILE</span><strong id="encode-output-file">${escapeHtml(first.outputPath.replace(/^.*[\\/]/, ''))}</strong></div><div><span>DIRECTORY</span><strong id="encode-output-directory">${escapeHtml(parentPath(first.outputPath))}</strong></div></div>
-    <div class="encode-command-panel"><button id="toggle-encode-command" aria-expanded="false">${icon('chevron', 15)} Show FFmpeg command</button><pre class="encode-command-block" id="encode-command" hidden>${escapeHtml(formatEncodeCommand(first))}</pre></div>
+    <div class="encode-command-panel"><button id="toggle-encode-command" aria-expanded="false">${icon('chevron', 15)} Show FFmpeg commands</button><div class="encode-command-history" id="encode-commands" hidden><p>Commands will appear as each encode begins.</p></div></div>
     <pre class="encode-error" id="encode-error" hidden></pre><footer><button class="secondary-button encode-dialog-button" id="show-encoded-file" hidden>Show in folder</button><button class="encode-cancel encode-dialog-button" id="encode-action" data-mode="cancel">Cancel encode</button></footer></section>`;
   document.body.appendChild(modal);
   modal.querySelector<HTMLButtonElement>('#toggle-encode-command')?.addEventListener('click', (event) => {
     const button = event.currentTarget as HTMLButtonElement;
-    const command = modal.querySelector<HTMLElement>('#encode-command');
+    const command = modal.querySelector<HTMLElement>('#encode-commands');
     const expanded = button.getAttribute('aria-expanded') === 'true';
     button.setAttribute('aria-expanded', String(!expanded));
-    button.innerHTML = `${icon('chevron', 15)} ${expanded ? 'Show' : 'Hide'} FFmpeg command`;
+    button.innerHTML = `${icon('chevron', 15)} ${expanded ? 'Show' : 'Hide'} FFmpeg commands`;
     if (command) command.hidden = expanded;
   });
   modal.querySelector<HTMLButtonElement>('#encode-action')?.addEventListener('click', async (event) => {
@@ -711,7 +762,21 @@ const updateEncodeDialog = (progress: EncodeProgress) => {
   setText('#encode-eta', progress.phase === 'queue-completed' ? '00:00:00' : formatElapsed(progress.etaSeconds));
   setText('#encode-output-file', progress.outputPath.replace(/^.*[\\/]/, ''));
   setText('#encode-output-directory', parentPath(progress.outputPath));
-  if (progress.command) setText('#encode-command', progress.command.map(displayArgument).join(' '));
+  if (progress.command) {
+    const history = modal.querySelector<HTMLElement>('#encode-commands');
+    if (history && !history.querySelector(`[data-command-job="${progress.jobIndex}"]`)) {
+      history.querySelector('p')?.remove();
+      const entry = document.createElement('section');
+      entry.className = 'encode-command-entry';
+      entry.dataset.commandJob = String(progress.jobIndex);
+      const label = document.createElement('strong');
+      label.textContent = `Encode ${progress.jobIndex} of ${progress.totalJobs}`;
+      const command = document.createElement('pre');
+      command.textContent = formatEncodeArguments(progress.command);
+      entry.append(label, command);
+      history.appendChild(entry);
+    }
+  }
 
   const progressBar = modal.querySelector<HTMLElement>('#encode-progress');
   progressBar?.classList.toggle('indeterminate', percent === null && !terminal);
@@ -735,12 +800,13 @@ const updateEncodeDialog = (progress: EncodeProgress) => {
   }
 };
 
-const startEncoding = async (source: SourceFile) => {
+const startEncoding = async () => {
   if (encodingActive) return;
   if (!runtimeState?.ffmpegAvailable) { showToast('FFmpeg is unavailable'); return; }
-  const current = createEncodeJob(source);
-  if (!current) { showToast('No compatible hardware encoder is available'); return; }
-  const jobs = encodeQueue.length ? [...encodeQueue] : [current];
+  const pendingJobs = sources.map(createEncodeJob);
+  if (pendingJobs.some((job) => job === null)) { showToast('No compatible hardware encoder is available'); return; }
+  const jobs = pendingJobs.filter((job): job is EncodeJob => job !== null);
+  if (!jobs.length) { showToast('There are no videos to encode'); return; }
   encodingActive = true;
   showEncodeDialog(jobs);
   const result = await window.mediaAPI.startEncode(jobs).catch((error: unknown) => ({
@@ -753,9 +819,6 @@ const startEncoding = async (source: SourceFile) => {
     showToast(result.message ?? 'Unable to start encoding');
     return;
   }
-  encodeQueue = [];
-  const count = document.querySelector('.queue-count');
-  if (count) count.textContent = '0';
 };
 
 const renderBootstrap = (state?: RuntimeState) => {
@@ -850,14 +913,13 @@ const pickSource = async (type: 'file' | 'folder') => {
   if (!newSources.length) return;
   await window.mediaAPI.releasePreviews(sources.flatMap((source) => source.previewId ? [source.previewId] : []));
   sources.forEach((source) => settingsByPath.delete(source.path));
-  encodeQueue = [];
   sourceMode = type;
   folderSeriesLayout = type === 'folder' ? detectFolderSeriesLayout(newSources) : null;
   appSettings.lastPreset = 'Streaming';
   appSettings.workingPreset = null;
   appSettings.lastSourceDirectory = parentPath(newSources[0].path);
   void persistAppSettings();
-  sources = newSources; selectedIndex = 0; activeTab = 'Summary'; outputDirectory = makeDefaultOutputDirectory(sources[0]);
+  sources = newSources; selectedIndex = 0; activeTab = 'Summary'; outputDirectoryIsCustom = false; outputDirectory = makeDefaultOutputDirectory(sources[0]);
   const outputDirectories = [...new Set(sources.map(makeDefaultOutputDirectory))];
   void Promise.all(outputDirectories.map((directory) => window.mediaAPI.prepareOutputDirectory(directory)));
   renderWorkspace();
@@ -884,14 +946,14 @@ const renderWorkspace = () => {
   const video = source.media?.video;
   const showWorkingCustom = settings.preset === 'Custom' || appSettings.workingPreset !== null;
   const visiblePresets = [...BUILT_IN_PRESET_NAMES, ...(showWorkingCustom ? ['Custom'] as const : [])];
-  app.innerHTML = `<main class="workspace"><header class="topbar"><div class="brand"><span class="brand-mark">${icon('app', 21)}</span><span>EA Media Tools</span></div><div class="topbar-spacer"></div><button class="top-action queue-button">${icon('queue', 17)} Queue <span class="queue-count">${encodeQueue.length}</span></button><button class="icon-button" data-app-settings aria-label="Settings">${icon('settings', 18)}</button>${windowControls()}</header>
-    <aside class="sidebar"><div class="sidebar-heading"><span>SOURCES</span><span>${sources.length}</span></div><div class="source-list">${fileRows}</div>${sourceMode === 'file' ? `<button class="add-more" id="add-more-videos">${icon('plus', 16)} Add more videos</button>` : ''}<div class="sidebar-tip"><span>${icon('sparkles', 17)}</span><div><strong>Video-only input</strong><p>${sourceMode === 'folder' ? 'Folder mode is locked to the videos detected in the selected folder.' : 'Shift/Ctrl multi-select adds each file as a separate source.'}</p></div></div></aside>
+  app.innerHTML = `<main class="workspace"><header class="topbar"><div class="brand"><span class="brand-mark">${icon('app', 21)}</span><span>EA Media Tools</span></div><div class="topbar-spacer"></div><button class="top-action queue-button">${icon('queue', 17)} Queue <span class="queue-count">${sources.length}</span></button><button class="icon-button" data-app-settings aria-label="Settings">${icon('settings', 18)}</button>${windowControls()}</header>
+    <aside class="sidebar"><div class="sidebar-heading"><span>SOURCES</span><span>${sources.length}</span></div><div class="source-list">${fileRows}</div>${sourceMode === 'file' ? `<button class="add-more" id="add-more-videos">${icon('plus', 16)} Add more videos</button>` : ''}<div class="sidebar-tip"><span>${icon('sparkles', 17)}</span><div><strong>Batch queue active</strong><p>All selected videos are queued automatically. Preset changes apply to the entire batch.</p></div></div></aside>
     <section class="work-area"><div class="source-hero"><div class="media-preview">${source.previewDataUrl ? `<img src="${source.previewDataUrl}" alt="35 percent source preview"/>` : `<div class="preview-grid"></div><div class="preview-play">${icon('play', 23)}</div>`}<span>${escapeHtml(source.extension)}</span></div><div class="source-info"><div class="section-label">CURRENT SOURCE · PREVIEW AT 35%</div><h2>${escapeHtml(source.name)}</h2><p title="${escapeHtml(source.path)}">${escapeHtml(source.path)}</p>
       <div class="metadata"><span><b>Video</b>${video ? `${escapeHtml(video.codec)} · ${video.width}×${video.height}` : 'Unknown'}</span><span><b>Dynamic range</b>${escapeHtml(hdrLabel(source))}</span><span><b>Audio</b>${escapeHtml(audioSummary(source))}</span><span><b>Chapters</b>${source.media?.chapterCount ?? 'Unknown'}</span><span><b>Subtitles</b>${escapeHtml(subtitleSummary(source))}</span></div></div></div>
       ${source.probeError ? `<div class="probe-warning">${icon('x', 16)} ${escapeHtml(source.probeError)}</div>` : ''}
       <div class="preset-bar"><div class="preset-icon">${icon('gauge', 22)}</div><label class="preset-control"><span>PRESET</span><select id="preset">${visiblePresets.map((preset) => `<option${selected(settings.preset === preset)}>${preset}</option>`).join('')}${appSettings.customPresets.length ? `<optgroup label="Saved presets">${appSettings.customPresets.map((preset) => `<option${selected(settings.preset === preset.name)}>${escapeHtml(preset.name)}</option>`).join('')}</optgroup>` : ''}</select><small class="preset-description">${escapeHtml(PRESET_DESCRIPTION[settings.preset as BuiltInPresetName] ?? (settings.preset === 'Custom' ? 'Modified settings ready to save as a preset.' : 'Saved user preset.'))}</small></label>${settings.preset === 'Custom' ? '<button class="save-preset" id="save-preset">Save preset</button>' : ''}</div>
       <nav class="tabs">${tabs.map(([label, tabIcon]) => `<button class="tab ${activeTab === label ? 'active' : ''}" data-tab="${label}">${icon(tabIcon, 17)}${label}${label === 'Audio' ? `<i>${source.media?.audio.length ?? 0}</i>` : label === 'Subtitles' ? `<i>${source.media?.subtitles.length ?? 0}</i>` : ''}</button>`).join('')}</nav><div class="tab-content" id="tab-content">${renderTabContent(activeTab, source, settings)}</div></section>
-    <footer class="encode-footer"><div class="destination"><div class="destination-heading"><span>DESTINATION</span></div><div class="destination-controls"><div class="destination-row"><div class="destination-path" title="${escapeHtml(outputDirectory)}">${icon('folder', 16)}<span>${escapeHtml(outputDirectory)}</span></div><button id="browse-output"${encodingActive ? ' disabled' : ''}>Browse</button></div><label class="smart-naming"><input id="smart-file-naming" type="checkbox"${checked(appSettings.smartFileNaming)}${encodingActive ? ' disabled' : ''}/><span>Smart file naming</span></label></div><small class="destination-output" title="${escapeHtml(makeOutputPath(source))}">Output: ${escapeHtml(outputFileName)}</small></div><button class="secondary-button" id="add-queue"${encodingActive ? ' disabled' : ''}>${icon('plus', 17)} Add to queue</button><button class="encode-button" id="start-encode"${encodingActive ? ' disabled' : ''}>${icon('play', 17)} Start encode</button></footer></main>`;
+    <footer class="encode-footer"><div class="destination"><div class="destination-heading"><span>DESTINATION</span></div><div class="destination-controls"><div class="destination-row"><div class="destination-path" title="${escapeHtml(outputDirectoryFor(source))}">${icon('folder', 16)}<span>${escapeHtml(outputDirectoryFor(source))}</span></div><button id="browse-output"${encodingActive ? ' disabled' : ''}>Browse</button></div><label class="smart-naming"><input id="smart-file-naming" type="checkbox"${checked(appSettings.smartFileNaming)}${encodingActive ? ' disabled' : ''}/><span>Smart file naming</span></label></div><small class="destination-output" title="${escapeHtml(makeOutputPath(source))}">Output: ${escapeHtml(outputFileName)}</small></div><button class="encode-button" id="start-encode"${encodingActive ? ' disabled' : ''}>${icon('play', 17)} Encode ${sources.length} video${sources.length === 1 ? '' : 's'}</button></footer></main>`;
   bindWorkspaceEvents();
 };
 
@@ -1133,7 +1195,7 @@ const saveCurrentPreset = (source: SourceFile) => {
   const preset = snapshotPreset(settings, name);
   appSettings.customPresets = [...appSettings.customPresets.filter((item) => item.name !== name), preset];
   appSettings.lastPreset = name;
-  settings.preset = name;
+  for (const item of sources) getSettings(item).preset = name;
   void persistAppSettings();
   showToast(`Saved preset: ${name}`);
   renderWorkspace();
@@ -1142,35 +1204,31 @@ const bindWorkspaceEvents = () => {
   const source = sources[selectedIndex];
   if (!source) return;
   document.querySelector('#add-more-videos')?.addEventListener('click', () => void addSources());
-  document.querySelector<HTMLSelectElement>('#preset')?.addEventListener('change', (event) => { applyPreset(source, (event.currentTarget as HTMLSelectElement).value); renderWorkspace(); });
+  document.querySelector<HTMLSelectElement>('#preset')?.addEventListener('change', (event) => {
+    const preset = (event.currentTarget as HTMLSelectElement).value;
+    sources.forEach((item) => applyPreset(item, preset, false));
+    appSettings.lastPreset = preset;
+    void persistAppSettings();
+    renderWorkspace();
+  });
   document.querySelector('#save-preset')?.addEventListener('click', () => saveCurrentPreset(source));
   document.querySelectorAll<HTMLElement>('[data-source-index]').forEach((row) => row.addEventListener('click', () => {
     selectedIndex = Number(row.dataset.sourceIndex);
-    outputDirectory = makeDefaultOutputDirectory(sources[selectedIndex]);
-    void window.mediaAPI.prepareOutputDirectory(outputDirectory);
+    if (!outputDirectoryIsCustom) outputDirectory = makeDefaultOutputDirectory(sources[selectedIndex]);
+    void window.mediaAPI.prepareOutputDirectory(outputDirectoryFor(sources[selectedIndex]));
     renderWorkspace();
   }));
   document.querySelectorAll<HTMLElement>('[data-tab]').forEach((tab) => tab.addEventListener('click', () => { activeTab = tab.dataset.tab || 'Summary'; renderWorkspace(); }));
   document.querySelector('#browse-output')?.addEventListener('click', async () => {
-    const selectedPath = await window.mediaAPI.chooseOutputDirectory(outputDirectory);
-    if (selectedPath) { outputDirectory = selectedPath; renderWorkspace(); }
+    const selectedPath = await window.mediaAPI.chooseOutputDirectory(outputDirectoryFor(source));
+    if (selectedPath) { outputDirectory = selectedPath; outputDirectoryIsCustom = true; renderWorkspace(); }
   });
   document.querySelector<HTMLInputElement>('#smart-file-naming')?.addEventListener('change', (event) => {
     appSettings.smartFileNaming = (event.currentTarget as HTMLInputElement).checked;
     void persistAppSettings();
     renderWorkspace();
   });
-  document.querySelector('#add-queue')?.addEventListener('click', () => {
-    const job = createEncodeJob(source);
-    if (!job) { showToast('No compatible hardware encoder is available'); return; }
-    const existing = encodeQueue.findIndex((queued) => queued.outputPath.toLowerCase() === job.outputPath.toLowerCase());
-    if (existing >= 0) encodeQueue[existing] = job;
-    else encodeQueue.push(job);
-    const count = document.querySelector('.queue-count');
-    if (count) count.textContent = String(encodeQueue.length);
-    showToast(existing >= 0 ? 'Queued job updated' : 'Job added to queue');
-  });
-  document.querySelector('#start-encode')?.addEventListener('click', () => void startEncoding(source));
+  document.querySelector('#start-encode')?.addEventListener('click', () => void startEncoding());
   bindWindowControls();
   bindContentEvents();
 };
@@ -1180,8 +1238,17 @@ const addSources = async () => {
   if (!newSources.length) return;
   appSettings.lastSourceDirectory = parentPath(newSources[0].path);
   void persistAppSettings();
+  const referenceSource = sources[selectedIndex] ?? null;
+  const referenceSettings = referenceSource ? getSettings(referenceSource) : null;
   const known = new Set(sources.map((source) => source.path.toLowerCase()));
-  sources = [...sources, ...newSources.filter((source) => !known.has(source.path.toLowerCase()))];
+  const additions = newSources.filter((source) => !known.has(source.path.toLowerCase()));
+  sources = [...sources, ...additions];
+  if (referenceSource && referenceSettings) {
+    additions.forEach((item) => {
+      applyPreset(item, referenceSettings.preset, false);
+      syncBatchTrackSettings(referenceSource, referenceSettings, item, getSettings(item));
+    });
+  }
   renderWorkspace();
 };
 const startApplication = async () => {

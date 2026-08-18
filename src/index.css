@@ -511,7 +511,7 @@ input[type='number']:disabled { color: #737b87; background: #11151a; cursor: not
 .log-modal pre { min-width: 0; min-height: 0; overflow: auto; margin: 0; padding: 20px; color: #aab3bf; background: #0a0d11; font: 13px/1.65 'Cascadia Mono', Consolas, monospace; white-space: pre-wrap; user-select: text; }
 
 .encode-modal { position: fixed; z-index: 13000; inset: 0; display: grid; place-items: center; padding: 40px; background: rgba(4,6,9,.82); backdrop-filter: blur(6px); }
-.encode-modal > section { width: min(720px, 92vw); overflow: hidden; border: 1px solid #363d48; border-radius: 15px; background: #10141a; box-shadow: 0 30px 90px rgba(0,0,0,.62); }
+.encode-modal > section { width: min(720px, 92vw); max-height: calc(100vh - 80px); overflow-x: hidden; overflow-y: auto; border: 1px solid #363d48; border-radius: 15px; background: #10141a; box-shadow: 0 30px 90px rgba(0,0,0,.62); }
 .encode-modal header { display: flex; align-items: center; justify-content: space-between; gap: 24px; padding: 24px 26px 20px; }
 .encode-modal header > div { min-width: 0; }
 .encode-modal header span { display: block; margin-bottom: 6px; color: #f07a4f; font-size: 12px; font-weight: 800; letter-spacing: .14em; }
@@ -526,12 +526,18 @@ input[type='number']:disabled { color: #737b87; background: #11151a; cursor: not
 .encode-stats span, .encode-output span { display: block; margin-bottom: 6px; color: #687381; font-size: 11px; font-weight: 800; letter-spacing: .11em; }
 .encode-stats strong { overflow: hidden; display: block; color: #d7dce3; font: 650 15px 'Cascadia Mono', Consolas, monospace; text-overflow: ellipsis; white-space: nowrap; }
 .encode-output { display: grid; gap: 13px; margin: 0 26px; padding: 17px 18px; border: 1px solid #2a3039; border-radius: 10px; background: #151920; }
-.encode-output strong { overflow: hidden; display: block; color: #b9c0ca; font-size: 14px; text-overflow: ellipsis; white-space: nowrap; }
+.encode-output > div { min-width: 0; }
+.encode-output strong { display: block; max-width: 100%; color: #b9c0ca; font-size: 14px; line-height: 1.5; overflow-wrap: anywhere; word-break: break-word; white-space: normal; }
 .encode-command-panel { margin: 14px 26px 0; }
 .encode-command-panel > button { display: flex; align-items: center; gap: 7px; padding: 7px 9px; border-radius: 6px; color: #8993a0; background: transparent; font-size: 13px; }
 .encode-command-panel > button:hover { color: #fff; background: #1b2028; }
 .encode-command-panel > button[aria-expanded='true'] .icon { transform: rotate(90deg); }
-.encode-command-block { max-height: 150px; overflow: auto; margin: 7px 0 0; padding: 13px; border: 1px solid #2e3540; border-radius: 8px; color: #aeb8c5; background: #090c10; font: 12px/1.65 'Cascadia Mono', Consolas, monospace; white-space: pre-wrap; overflow-wrap: anywhere; user-select: text; }
+.encode-command-history { max-height: 260px; overflow: auto; margin-top: 7px; border: 1px solid #2e3540; border-radius: 8px; color: #aeb8c5; background: #090c10; user-select: text; }
+.encode-command-history > p { margin: 0; padding: 13px; color: #697380; font-size: 12px; }
+.encode-command-entry { min-width: 0; padding: 13px; }
+.encode-command-entry + .encode-command-entry { border-top: 1px solid #29303a; }
+.encode-command-entry > strong { display: block; margin-bottom: 8px; color: #f07a4f; font-size: 11px; letter-spacing: .1em; text-transform: uppercase; }
+.encode-command-entry > pre { overflow-wrap: anywhere; margin: 0; color: #aeb8c5; font: 12px/1.65 'Cascadia Mono', Consolas, monospace; white-space: pre-wrap; word-break: break-word; }
 .encode-modal .encode-error { max-height: 130px; overflow: auto; margin: 16px 26px 0; padding: 12px; border: 1px solid #623127; border-radius: 8px; color: #f0a08d; background: #241412; font: 12px/1.5 'Cascadia Mono', Consolas, monospace; white-space: pre-wrap; }
 .encode-modal footer { display: flex; justify-content: flex-end; gap: 10px; padding: 22px 26px 24px; }
 .encode-modal footer .encode-dialog-button { min-width: 142px; height: 48px; padding: 0 18px; border-radius: 8px; font-size: 14px; font-weight: 700; }
