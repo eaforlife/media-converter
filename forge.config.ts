@@ -10,6 +10,7 @@ import { FuseV1Options, FuseVersion } from '@electron/fuses';
 
 const certificateFile = process.env.WINDOWS_CERTIFICATE_FILE;
 const certificatePassword = process.env.WINDOWS_CERTIFICATE_PASSWORD;
+const releaseArch = process.env.EA_RELEASE_ARCH;
 const windowsSign = certificateFile && certificatePassword
   ? { certificateFile, certificatePassword }
   : undefined;
@@ -17,6 +18,7 @@ const windowsSign = certificateFile && certificatePassword
 const config: ForgeConfig = {
   packagerConfig: {
     asar: true,
+    executableName: 'ea-media-tools',
     windowsSign,
   },
   rebuildConfig: {},
@@ -33,8 +35,10 @@ const config: ForgeConfig = {
   ],
   makers: [
     new MakerSquirrel({
-      name: 'ea_media_tools',
-      setupExe: 'EA-Media-Tools-Setup.exe',
+      name: releaseArch ? `ea_media_tools_${releaseArch}` : 'ea_media_tools',
+      setupExe: releaseArch
+        ? `EA-Media-Tools-${releaseArch}-Setup.exe`
+        : 'EA-Media-Tools-Setup.exe',
       noMsi: true,
       windowsSign,
     }),
@@ -46,7 +50,16 @@ const config: ForgeConfig = {
       windowsSign,
     })] : []),
     new MakerZIP({}, ['darwin']),
-    new MakerDeb({}),
+    new MakerDeb({
+      options: {
+        name: 'ea-media-tools',
+        productName: 'EA Media Tools',
+        bin: 'ea-media-tools',
+        categories: ['AudioVideo', 'Video'],
+        maintainer: 'eaforlife <ea.0691@gmail.com>',
+        homepage: 'https://github.com/eaforlife/EA-Media-Tools',
+      },
+    }),
   ],
   plugins: [
     new VitePlugin({
