@@ -164,6 +164,65 @@ const verifyDigest = async (archivePath: string, digest?: string | null) => {
   }
 };
 
+const installRuntimeLicenses = async (
+  releaseTag: string,
+  assetName: string,
+  libDirectory: string,
+) => {
+  if (!/^[A-Za-z0-9._-]+$/.test(releaseTag)) {
+    throw new Error('The FFmpeg release tag is not safe to use for license retrieval');
+  }
+
+  const upstreamFiles = [
+    ['LICENSE.md', 'FFMPEG-LICENSE.md'],
+    ['COPYING.GPLv2', 'COPYING.GPLv2'],
+    ['COPYING.GPLv3', 'COPYING.GPLv3'],
+  ] as const;
+  const baseUrl = `https://raw.githubusercontent.com/jellyfin/jellyfin-ffmpeg/${releaseTag}`;
+
+  await Promise.all(upstreamFiles.map(async ([upstreamName, installedName]) => {
+    const response = await net.fetch(`${baseUrl}/${upstreamName}`, {
+      headers: { 'User-Agent': `EA-Media-Tools/${app.getVersion()}` },
+    });
+    if (!response.ok) {
+      throw new Error(`Unable to retrieve the upstream FFmpeg license file ${upstreamName}`);
+    }
+    await fs.promises.writeFile(
+      path.join(libDirectory, installedName),
+      await response.text(),
+      'utf8',
+    );
+  }));
+
+  const sourceUrl =
+    `https://github.com/jellyfin/jellyfin-ffmpeg/archive/refs/tags/${releaseTag}.tar.gz`;
+  const notice = [
+    'Jellyfin FFmpeg — Third-Party Runtime Notice',
+    '=============================================',
+    '',
+    `Installed release: ${releaseTag}`,
+    `Installed asset: ${assetName}`,
+    '',
+    'This runtime was downloaded unmodified from the Jellyfin FFmpeg project.',
+    'It is a separate command-line program and is not covered by the EA Media',
+    'Tools MIT License. The accompanying FFMPEG-LICENSE.md and COPYING.GPL*',
+    'files state the licenses that apply to this runtime.',
+    '',
+    `Corresponding tagged source and build scripts: ${sourceUrl}`,
+    `Release page: https://github.com/jellyfin/jellyfin-ffmpeg/releases/tag/${releaseTag}`,
+    '',
+    'You may inspect, replace, or remove ffmpeg and ffprobe in this directory.',
+    'EA Media Tools and its authors are not affiliated with or endorsed by the',
+    'Jellyfin or FFmpeg projects.',
+    '',
+  ].join('\n');
+  await fs.promises.writeFile(
+    path.join(libDirectory, 'FFMPEG-THIRD-PARTY-NOTICE.txt'),
+    notice,
+    'utf8',
+  );
+};
+
 const findFile = async (directory: string, filename: string): Promise<string | null> => {
   const entries = await fs.promises.readdir(directory, { withFileTypes: true });
   for (const entry of entries) {
@@ -213,6 +272,7 @@ const installRuntime = async (
       recursive: true,
       force: true,
     });
+    await installRuntimeLicenses(release.tag_name, asset.name, libDirectory);
     const manifest: RuntimeManifest = {
       releaseTag: release.tag_name,
       assetName: asset.name,

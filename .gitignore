@@ -90,3 +90,5 @@ typings/
 
 # Electron-Forge
 out/
+# Downloaded third-party runtime binaries and their generated notices.
+/lib/
