@@ -26,7 +26,7 @@ const config: ForgeConfig = {
     new PublisherGithub({
       repository: {
         owner: 'eaforlife',
-        name: 'EA-Media-Tools',
+        name: 'media-converter',
       },
       draft: false,
       prerelease: false,
@@ -57,7 +57,7 @@ const config: ForgeConfig = {
         bin: 'ea-media-tools',
         categories: ['AudioVideo', 'Video'],
         maintainer: 'eaforlife <ea.0691@gmail.com>',
-        homepage: 'https://github.com/eaforlife/EA-Media-Tools',
+        homepage: 'https://github.com/eaforlife/media-converter',
       },
     }),
   ],

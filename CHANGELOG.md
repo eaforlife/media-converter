@@ -2,6 +2,18 @@
 
 All notable changes to EA Media Tools are documented here.
 
+## [0.3.2] - 2026-08-19
+
+### Changed
+
+- Use the canonical `eaforlife/media-converter` repository slug throughout updater, publisher, package, and documentation metadata.
+- Limit automatic Squirrel updates to Windows x64; Windows ARM64, unsigned macOS, and Linux builds now receive platform-specific manual update guidance.
+
+### Fixed
+
+- Correct the public Electron update feed that returned 404 during automatic and manual update checks.
+- Replace verbose Squirrel/.NET failures with a concise message and direct release-page guidance.
+
 ## [0.3.1] - 2026-08-19
 
 ### Added
@@ -43,5 +55,6 @@ All notable changes to EA Media Tools are documented here.
 - Convert crop offsets to CUVID edge values with division by two and floor rounding.
 - Cancel all active parallel encodes and interrupt pending cooldowns when the queue is stopped or a job fails.
 
-[0.3.1]: https://github.com/eaforlife/EA-Media-Tools/compare/v0.3.0...v0.3.1
-[0.3.0]: https://github.com/eaforlife/EA-Media-Tools/releases/tag/v0.3.0
+[0.3.2]: https://github.com/eaforlife/media-converter/compare/v0.3.1...v0.3.2
+[0.3.1]: https://github.com/eaforlife/media-converter/compare/v0.3.0...v0.3.1
+[0.3.0]: https://github.com/eaforlife/media-converter/releases/tag/v0.3.0

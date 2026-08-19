@@ -4,6 +4,9 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { updateElectronApp, UpdateSourceType } from 'update-electron-app';
 import { APP_NAME, APP_UPDATE_REPOSITORY } from './config';
+import {
+  electronUpdateFeedUrl, friendlyUpdateError, manualUpdateUnavailableMessage, shouldInitializeAppUpdater,
+} from './app-update';
 import { initializeLogger, logActivity, readLog, rotateLogForUpdate } from './app-logger';
 import { detectHardwareCapabilities } from './hardware-capabilities';
 import { cancelEncoding, startEncodeQueue } from './encode-runner';
@@ -133,9 +136,8 @@ const inspectSources = async (files: SourceFile[]) => {
 
 const checkForAppUpdate = () => {
   if (!app.isPackaged) return Promise.resolve('Update checks are available in installed builds.');
-  if (process.platform === 'linux') {
-    return Promise.resolve('Updates on Linux are provided through the installed package manager.');
-  }
+  const unavailableMessage = manualUpdateUnavailableMessage(process.platform, process.arch);
+  if (unavailableMessage) return Promise.resolve(unavailableMessage);
   if (manualUpdateCheck) return manualUpdateCheck;
 
   const check = new Promise<string>((resolve) => {
@@ -158,7 +160,7 @@ const checkForAppUpdate = () => {
       'update.manual-check.current',
     );
     const onError = (error: Error) => finish(
-      `Update check failed: ${error.message}`,
+      `Update check failed: ${friendlyUpdateError(error.message)}`,
       'ERROR',
       'update.manual-check.failed',
     );
@@ -317,15 +319,24 @@ if (!handlingSquirrelEvent) app.whenReady().then(async () => {
   registerIpc();
   createWindow();
 
-  if (app.isPackaged && process.platform !== 'linux') {
-    updateElectronApp({
-      updateSource: {
-        type: UpdateSourceType.ElectronPublicUpdateService,
-        repo: APP_UPDATE_REPOSITORY,
-      },
-      updateInterval: '1 hour',
-      notifyUser: true,
-    });
+  if (app.isPackaged) {
+    if (shouldInitializeAppUpdater(process.platform, process.arch)) {
+      logActivity('INFO', 'update.configured', {
+        feedUrl: electronUpdateFeedUrl(APP_UPDATE_REPOSITORY, process.platform, process.arch, app.getVersion()),
+      });
+      updateElectronApp({
+        updateSource: {
+          type: UpdateSourceType.ElectronPublicUpdateService,
+          repo: APP_UPDATE_REPOSITORY,
+        },
+        updateInterval: '1 hour',
+        notifyUser: true,
+      });
+    } else {
+      logActivity('INFO', 'update.disabled', {
+        reason: manualUpdateUnavailableMessage(process.platform, process.arch),
+      });
+    }
   }
 });
 
