@@ -534,13 +534,21 @@ input[type='number']:disabled { color: #737b87; background: #11151a; cursor: not
 .encode-command-panel > button[aria-expanded='true'] .icon { transform: rotate(90deg); }
 .encode-command-history { max-height: 260px; overflow: auto; margin-top: 7px; border: 1px solid #2e3540; border-radius: 8px; color: #aeb8c5; background: #090c10; user-select: text; }
 .encode-command-history > p { margin: 0; padding: 13px; color: #697380; font-size: 12px; }
+.encode-command-history > pre { overflow-wrap: anywhere; margin: 0; padding: 13px; color: #aeb8c5; font: 12px/1.65 'Cascadia Mono', Consolas, monospace; white-space: pre-wrap; word-break: break-word; }
 .encode-command-entry { min-width: 0; padding: 13px; }
 .encode-command-entry + .encode-command-entry { border-top: 1px solid #29303a; }
 .encode-command-entry > strong { display: block; margin-bottom: 8px; color: #f07a4f; font-size: 11px; letter-spacing: .1em; text-transform: uppercase; }
 .encode-command-entry > pre { overflow-wrap: anywhere; margin: 0; color: #aeb8c5; font: 12px/1.65 'Cascadia Mono', Consolas, monospace; white-space: pre-wrap; word-break: break-word; }
 .encode-modal .encode-error { max-height: 130px; overflow: auto; margin: 16px 26px 0; padding: 12px; border: 1px solid #623127; border-radius: 8px; color: #f0a08d; background: #241412; font: 12px/1.5 'Cascadia Mono', Consolas, monospace; white-space: pre-wrap; }
-.encode-modal footer { display: flex; justify-content: flex-end; gap: 10px; padding: 22px 26px 24px; }
+.encode-modal footer { display: flex; align-items: center; justify-content: space-between; gap: 18px; padding: 22px 26px 24px; }
 .encode-modal footer .encode-dialog-button { min-width: 142px; height: 48px; padding: 0 18px; border-radius: 8px; font-size: 14px; font-weight: 700; }
+.encode-pagination, .encode-modal-actions { display: flex; align-items: center; gap: 9px; }
+.encode-pagination button { height: 38px; padding: 0 12px; border: 1px solid #343b46; border-radius: 7px; color: #aab2bd; background: #181d24; font-size: 13px; font-weight: 700; }
+.encode-pagination button:hover:not(:disabled) { color: #fff; border-color: #555f6d; background: #242a33; }
+.encode-pagination button:disabled { opacity: .38; cursor: default; }
+.encode-pagination strong { min-width: 48px; color: #8993a0; font: 700 13px 'Cascadia Mono', Consolas, monospace; text-align: center; }
+.encode-modal-actions { justify-content: flex-end; }
+.encode-modal-actions .secondary-button:disabled { opacity: .55; cursor: default; }
 .encode-cancel { border: 1px solid #713927; color: #f5b09b; background: #2a1814; }
 .encode-cancel:hover { color: #fff; background: #3a1d17; }
 .encode-cancel:disabled { opacity: .55; cursor: wait; }
@@ -549,6 +557,14 @@ input[type='number']:disabled { color: #737b87; background: #11151a; cursor: not
   .source-summary { grid-template-columns: 1fr; }
   .source-summary > .details-panel:first-child, .chapter-summary { grid-column: 1; }
   .job-options { grid-template-columns: 1fr; }
+}
+
+@media (max-width: 760px) {
+  .encode-modal { padding: 18px; }
+  .encode-modal > section { width: 100%; max-height: calc(100vh - 36px); }
+  .encode-modal footer { align-items: stretch; flex-direction: column; }
+  .encode-pagination, .encode-modal-actions { justify-content: center; }
+  .encode-modal-actions { flex-wrap: wrap; }
 }
 
 @media (max-width: 1220px) {

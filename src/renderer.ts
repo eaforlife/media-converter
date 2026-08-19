@@ -4,6 +4,8 @@ import { BUILT_IN_PRESETS, BUILT_IN_PRESET_NAMES } from './presets';
 import type { BuiltInPresetDefinition, BuiltInPresetName, PreferredVideoCodec, PresetAudioCodec, QualityFamily } from './presets';
 import { cuvidCrop, detectedCrop } from './video-crop';
 import { bufferSizeFor, deliveryPresetForOutput, scaleDimensionsFor, videoOutputProfile } from './video-output-profile';
+import { applyEncodeProgress, createEncodeQueueProgress, isQueueTerminal } from './encode-progress-state';
+import type { EncodeJobProgressState, EncodeQueueProgressState } from './encode-progress-state';
 import type {
   AppSettings, AudioStreamInfo, EncodeJob, EncodeProgress, FilterSettings, HardwareCapabilities, RuntimeState, SavedPreset,
   ScaleMode, SourceFile, StreamFlags, SubtitleStreamInfo,
@@ -73,6 +75,11 @@ let sourceMode: 'file' | 'folder' | null = null;
 let folderSeriesLayout: FolderSeriesLayout | null = null;
 let appSettings: AppSettings = { hardwareAcceleration: true, smartFileNaming: true, lastPreset: 'Streaming', lastSourceDirectory: '', customPresets: [], workingPreset: null };
 const settingsByPath = new Map<string, JobSettings>();
+let encodeQueueProgress: EncodeQueueProgressState | null = null;
+let encodePageIndex = 0;
+let encodePagePinned = false;
+let encodeCancelAllRequested = false;
+const encodeCancellingJobs = new Set<number>();
 
 const escapeHtml = (value: string) => value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#039;');
 const selected = (condition: boolean) => condition ? ' selected' : '';
@@ -725,100 +732,215 @@ const formatElapsed = (seconds: number | null) => {
   return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(remaining).padStart(2, '0')}`;
 };
 
-const showEncodeDialog = (jobs: EncodeJob[]) => {
-  document.querySelector('.encode-modal')?.remove();
-  const first = jobs[0];
-  const modal = document.createElement('div');
-  modal.className = 'encode-modal';
-  modal.innerHTML = `<section><header><div><span id="encode-position">ENCODE 1 OF ${jobs.length}</span><h2 id="encode-source">${escapeHtml(first.sourceName)}</h2></div><strong id="encode-percent">Preparing…</strong></header>
-    <div class="encode-progress indeterminate" id="encode-progress"><span></span></div>
-    <div class="encode-stats"><div><span>BITRATE</span><strong id="encode-bitrate">—</strong></div><div><span>FPS</span><strong id="encode-fps">—</strong></div><div><span>RUN TIME</span><strong id="encode-runtime">00:00:00</strong></div><div><span>ETA</span><strong id="encode-eta">Calculating…</strong></div></div>
-    <div class="encode-output"><div><span>OUTPUT FILE</span><strong id="encode-output-file">${escapeHtml(first.outputPath.replace(/^.*[\\/]/, ''))}</strong></div><div><span>DIRECTORY</span><strong id="encode-output-directory">${escapeHtml(parentPath(first.outputPath))}</strong></div></div>
-    <div class="encode-command-panel"><button id="toggle-encode-command" aria-expanded="false">${icon('chevron', 15)} Show FFmpeg commands</button><div class="encode-command-history" id="encode-commands" hidden><p>Commands will appear as each encode begins.</p></div></div>
-    <pre class="encode-error" id="encode-error" hidden></pre><footer><button class="secondary-button encode-dialog-button" id="show-encoded-file" hidden>Show in folder</button><button class="encode-cancel encode-dialog-button" id="encode-action" data-mode="cancel">Cancel encode</button></footer></section>`;
-  document.body.appendChild(modal);
-  modal.querySelector<HTMLButtonElement>('#toggle-encode-command')?.addEventListener('click', (event) => {
-    const button = event.currentTarget as HTMLButtonElement;
-    const command = modal.querySelector<HTMLElement>('#encode-commands');
-    const expanded = button.getAttribute('aria-expanded') === 'true';
-    button.setAttribute('aria-expanded', String(!expanded));
-    button.innerHTML = `${icon('chevron', 15)} ${expanded ? 'Show' : 'Hide'} FFmpeg commands`;
-    if (command) command.hidden = expanded;
-  });
-  modal.querySelector<HTMLButtonElement>('#encode-action')?.addEventListener('click', async (event) => {
-    const button = event.currentTarget as HTMLButtonElement;
-    if (button.dataset.mode === 'close') { modal.remove(); return; }
-    button.disabled = true;
-    button.textContent = 'Cancelling…';
-    await window.mediaAPI.cancelEncode();
-  });
-  modal.querySelector('#show-encoded-file')?.addEventListener('click', () => {
-    const target = modal.querySelector<HTMLElement>('#show-encoded-file')?.dataset.path;
-    if (target) void window.mediaAPI.showInFolder(target);
-  });
+const encodeStatusLabel = (job: EncodeJobProgressState) => {
+  if (job.status === 'pending') return 'Pending…';
+  if (job.status === 'starting') return 'Preparing…';
+  if (job.status === 'encoding') return job.percent === null ? 'Encoding…' : `${job.percent.toFixed(1)}%`;
+  if (job.status === 'completed') return 'Complete';
+  if (job.status === 'failed') return 'Failed';
+  if (job.status === 'cancelled') return 'Cancelled';
+  return 'Not encoded';
 };
 
-const updateEncodeDialog = (progress: EncodeProgress) => {
+const renderEncodePage = () => {
   const modal = document.querySelector<HTMLElement>('.encode-modal');
-  if (!modal) return;
+  if (!modal || !encodeQueueProgress) return;
+  encodePageIndex = Math.min(Math.max(encodePageIndex, 0), encodeQueueProgress.jobs.length - 1);
+  const job = encodeQueueProgress.jobs[encodePageIndex];
+  if (!job) return;
   const setText = (selector: string, value: string) => {
     const element = modal.querySelector<HTMLElement>(selector);
     if (element) element.textContent = value;
   };
-  const terminal = progress.phase === 'failed' || progress.phase === 'cancelled' || progress.phase === 'queue-completed';
-  const percent = progress.percent === null ? null : Math.min(100, Math.max(0, progress.percent));
-  setText('#encode-position', progress.phase === 'queue-completed'
-    ? `${progress.totalJobs} ENCODE${progress.totalJobs === 1 ? '' : 'S'} COMPLETE`
-    : `ENCODE ${progress.jobIndex} OF ${progress.totalJobs}`);
-  setText('#encode-source', progress.phase === 'queue-completed' ? 'Encoding complete' : progress.sourceName);
-  setText('#encode-percent', progress.phase === 'failed' ? 'Failed'
-    : progress.phase === 'cancelled' ? 'Cancelled'
-      : progress.phase === 'queue-completed' ? 'Done'
-        : percent === null ? 'Encoding…' : `${percent.toFixed(1)}%`);
-  if (progress.phase !== 'queue-completed') {
-    setText('#encode-bitrate', progress.bitrate);
-    setText('#encode-fps', progress.fps);
-  }
-  setText('#encode-runtime', formatElapsed(progress.runTimeSeconds));
-  setText('#encode-eta', progress.phase === 'queue-completed' ? '00:00:00' : formatElapsed(progress.etaSeconds));
-  setText('#encode-output-file', progress.outputPath.replace(/^.*[\\/]/, ''));
-  setText('#encode-output-directory', parentPath(progress.outputPath));
-  if (progress.command) {
-    const history = modal.querySelector<HTMLElement>('#encode-commands');
-    if (history && !history.querySelector(`[data-command-job="${progress.jobIndex}"]`)) {
-      history.querySelector('p')?.remove();
-      const entry = document.createElement('section');
-      entry.className = 'encode-command-entry';
-      entry.dataset.commandJob = String(progress.jobIndex);
-      const label = document.createElement('strong');
-      label.textContent = `Encode ${progress.jobIndex} of ${progress.totalJobs}`;
-      const command = document.createElement('pre');
-      command.textContent = formatEncodeArguments(progress.command);
-      entry.append(label, command);
-      history.appendChild(entry);
-    }
-  }
+  const active = job.status === 'starting' || job.status === 'encoding';
+  const terminal = isQueueTerminal(encodeQueueProgress);
+  const percent = job.percent === null ? null : Math.min(100, Math.max(0, job.percent));
+
+  setText('#encode-position', `ENCODE ${job.jobIndex} OF ${encodeQueueProgress.jobs.length} · ${job.status.toUpperCase()}`);
+  setText('#encode-source', job.sourceName);
+  setText('#encode-percent', encodeStatusLabel(job));
+  setText('#encode-bitrate', job.bitrate);
+  setText('#encode-fps', job.fps);
+  setText('#encode-runtime', formatElapsed(job.runTimeSeconds));
+  setText('#encode-eta', job.status === 'completed' ? '00:00:00' : active ? formatElapsed(job.etaSeconds) : '—');
+  setText('#encode-output-file', job.outputPath.replace(/^.*[\\/]/, ''));
+  setText('#encode-output-directory', parentPath(job.outputPath));
+  setText('#encode-page-number', `${job.jobIndex} / ${encodeQueueProgress.jobs.length}`);
 
   const progressBar = modal.querySelector<HTMLElement>('#encode-progress');
-  progressBar?.classList.toggle('indeterminate', percent === null && !terminal);
+  progressBar?.classList.toggle('indeterminate', active && percent === null);
   const fill = progressBar?.querySelector<HTMLElement>('span');
-  if (fill) fill.style.width = `${percent ?? (progress.phase === 'queue-completed' ? 100 : 36)}%`;
+  if (fill) fill.style.width = `${percent ?? (active ? 36 : 0)}%`;
+
+  const command = modal.querySelector<HTMLElement>('#encode-command');
+  if (command) command.textContent = job.command
+    ? formatEncodeArguments(job.command)
+    : 'The FFmpeg command will appear when this encode begins.';
 
   const error = modal.querySelector<HTMLElement>('#encode-error');
+  const message = job.message ?? (terminal ? encodeQueueProgress.message : undefined);
   if (error) {
-    error.hidden = !progress.message;
-    error.textContent = progress.message ?? '';
+    error.hidden = !message;
+    error.textContent = message ?? '';
   }
-  if (terminal) {
-    encodingActive = false;
-    const action = modal.querySelector<HTMLButtonElement>('#encode-action');
-    if (action) { action.disabled = false; action.dataset.mode = 'close'; action.textContent = 'Close'; }
-    const reveal = modal.querySelector<HTMLButtonElement>('#show-encoded-file');
-    if (reveal && progress.phase === 'queue-completed') {
-      reveal.hidden = false;
-      reveal.dataset.path = progress.outputPath;
+
+  const previous = modal.querySelector<HTMLButtonElement>('#encode-previous');
+  const next = modal.querySelector<HTMLButtonElement>('#encode-next');
+  if (previous) previous.disabled = encodePageIndex === 0;
+  if (next) next.disabled = encodePageIndex === encodeQueueProgress.jobs.length - 1;
+
+  const jobAction = modal.querySelector<HTMLButtonElement>('#encode-job-action');
+  if (jobAction) {
+    jobAction.hidden = false;
+    jobAction.disabled = false;
+    jobAction.className = 'secondary-button encode-dialog-button';
+    if (active) {
+      jobAction.dataset.action = 'cancel-job';
+      jobAction.classList.add('encode-cancel');
+      jobAction.disabled = encodeCancellingJobs.has(job.jobIndex);
+      jobAction.textContent = jobAction.disabled ? 'Cancelling encode…' : 'Cancel encode';
+    } else if (job.status === 'completed') {
+      jobAction.dataset.action = 'show-job';
+      jobAction.dataset.path = job.outputPath;
+      jobAction.textContent = 'Show in folder';
+    } else {
+      jobAction.dataset.action = 'status';
+      jobAction.disabled = true;
+      jobAction.textContent = encodeStatusLabel(job);
     }
   }
+
+  const queueAction = modal.querySelector<HTMLButtonElement>('#encode-queue-action');
+  if (queueAction) {
+    if (!terminal) {
+      queueAction.dataset.action = 'cancel-all';
+      queueAction.className = 'encode-cancel encode-dialog-button';
+      queueAction.disabled = encodeCancelAllRequested;
+      queueAction.textContent = encodeCancelAllRequested ? 'Cancelling all…' : 'Cancel all active encodes';
+    } else {
+      queueAction.dataset.action = 'start-new';
+      queueAction.className = 'encode-button encode-dialog-button';
+      queueAction.disabled = false;
+      queueAction.textContent = 'Start New';
+    }
+  }
+};
+
+const startNewEncode = async () => {
+  const previewIds = sources.flatMap((source) => source.previewId ? [source.previewId] : []);
+  document.querySelector<HTMLButtonElement>('#encode-queue-action')?.setAttribute('disabled', 'true');
+  await window.mediaAPI.releasePreviews(previewIds).catch(() => undefined);
+  sources = [];
+  settingsByPath.clear();
+  selectedIndex = 0;
+  activeTab = 'Summary';
+  outputDirectory = '';
+  outputDirectoryIsCustom = false;
+  encodingActive = false;
+  pickerBusy = false;
+  sourceMode = null;
+  folderSeriesLayout = null;
+  encodeQueueProgress = null;
+  encodePageIndex = 0;
+  encodePagePinned = false;
+  encodeCancelAllRequested = false;
+  encodeCancellingJobs.clear();
+  appSettings.lastPreset = 'Streaming';
+  appSettings.lastSourceDirectory = '';
+  appSettings.workingPreset = null;
+  await persistAppSettings().catch(() => undefined);
+  document.body.classList.remove('picker-busy');
+  document.body.setAttribute('aria-busy', 'false');
+  document.querySelector('.encode-modal')?.remove();
+  renderWelcome();
+};
+
+const showEncodeDialog = (jobs: EncodeJob[]) => {
+  document.querySelector('.encode-modal')?.remove();
+  encodeQueueProgress = createEncodeQueueProgress(jobs);
+  encodePageIndex = 0;
+  encodePagePinned = false;
+  encodeCancelAllRequested = false;
+  encodeCancellingJobs.clear();
+  const modal = document.createElement('div');
+  modal.className = 'encode-modal';
+  modal.innerHTML = `<section><header><div><span id="encode-position"></span><h2 id="encode-source"></h2></div><strong id="encode-percent"></strong></header>
+    <div class="encode-progress indeterminate" id="encode-progress"><span></span></div>
+    <div class="encode-stats"><div><span>BITRATE</span><strong id="encode-bitrate">—</strong></div><div><span>FPS</span><strong id="encode-fps">—</strong></div><div><span>RUN TIME</span><strong id="encode-runtime">00:00:00</strong></div><div><span>ETA</span><strong id="encode-eta">Calculating…</strong></div></div>
+    <div class="encode-output"><div><span>OUTPUT FILE</span><strong id="encode-output-file"></strong></div><div><span>DIRECTORY</span><strong id="encode-output-directory"></strong></div></div>
+    <div class="encode-command-panel"><button id="toggle-encode-command" aria-expanded="false">${icon('chevron', 15)} Show FFmpeg command</button><div class="encode-command-history" id="encode-command-panel" hidden><pre id="encode-command"></pre></div></div>
+    <pre class="encode-error" id="encode-error" hidden></pre><footer><div class="encode-pagination"><button id="encode-previous" aria-label="Previous encode">Previous</button><strong id="encode-page-number"></strong><button id="encode-next" aria-label="Next encode">Next</button></div><div class="encode-modal-actions"><button class="secondary-button encode-dialog-button" id="encode-job-action"></button><button class="encode-cancel encode-dialog-button" id="encode-queue-action">Cancel all active encodes</button></div></footer></section>`;
+  document.body.appendChild(modal);
+  modal.querySelector<HTMLButtonElement>('#toggle-encode-command')?.addEventListener('click', (event) => {
+    const button = event.currentTarget as HTMLButtonElement;
+    const command = modal.querySelector<HTMLElement>('#encode-command-panel');
+    const expanded = button.getAttribute('aria-expanded') === 'true';
+    button.setAttribute('aria-expanded', String(!expanded));
+    button.innerHTML = `${icon('chevron', 15)} ${expanded ? 'Show' : 'Hide'} FFmpeg command`;
+    if (command) command.hidden = expanded;
+  });
+  modal.querySelector('#encode-previous')?.addEventListener('click', () => {
+    encodePageIndex -= 1;
+    encodePagePinned = true;
+    renderEncodePage();
+  });
+  modal.querySelector('#encode-next')?.addEventListener('click', () => {
+    encodePageIndex += 1;
+    encodePagePinned = true;
+    renderEncodePage();
+  });
+  modal.querySelector<HTMLButtonElement>('#encode-job-action')?.addEventListener('click', async (event) => {
+    const button = event.currentTarget as HTMLButtonElement;
+    const job = encodeQueueProgress?.jobs[encodePageIndex];
+    if (!job) return;
+    if (button.dataset.action === 'show-job') {
+      void window.mediaAPI.showInFolder(job.outputPath);
+      return;
+    }
+    if (button.dataset.action === 'cancel-job') {
+      encodeCancellingJobs.add(job.jobIndex);
+      renderEncodePage();
+      const cancelled = await window.mediaAPI.cancelEncode(job.jobIndex);
+      if (!cancelled) {
+        encodeCancellingJobs.delete(job.jobIndex);
+        renderEncodePage();
+        showToast('That encode is no longer active');
+      }
+    }
+  });
+  modal.querySelector<HTMLButtonElement>('#encode-queue-action')?.addEventListener('click', async (event) => {
+    const button = event.currentTarget as HTMLButtonElement;
+    if (button.dataset.action === 'start-new') {
+      button.disabled = true;
+      button.textContent = 'Starting new…';
+      await startNewEncode();
+      return;
+    }
+    if (button.dataset.action === 'cancel-all') {
+      encodeCancelAllRequested = true;
+      renderEncodePage();
+      const cancelled = await window.mediaAPI.cancelEncode();
+      if (!cancelled) {
+        encodeCancelAllRequested = false;
+        renderEncodePage();
+      }
+    }
+  });
+  renderEncodePage();
+};
+
+const updateEncodeDialog = (progress: EncodeProgress) => {
+  if (!encodeQueueProgress) return;
+  encodeQueueProgress = applyEncodeProgress(encodeQueueProgress, progress);
+  encodeCancellingJobs.delete(progress.jobIndex);
+  if (progress.phase === 'starting' && !encodePagePinned) encodePageIndex = progress.jobIndex - 1;
+  if (isQueueTerminal(encodeQueueProgress)) {
+    encodingActive = false;
+    encodeCancelAllRequested = false;
+    const completedIndex = encodeQueueProgress.jobs.findLastIndex((job) => job.status === 'completed');
+    if (!encodePagePinned && completedIndex >= 0) encodePageIndex = completedIndex;
+  }
+  renderEncodePage();
 };
 
 const startEncoding = async () => {
@@ -1101,10 +1223,11 @@ const renderSubtitleSettings = (source: SourceFile, settings: JobSettings) => {
 };
 const renderSubtitleTrack = (track: SubtitleStreamInfo, position: number, settings: JobSettings) => {
   const setting = settings.subtitles[track.index], mp4 = settings.format === 'mp4', imageBlocked = track.kind === 'image' && mp4;
-  let options = '';
-  if (track.kind === 'image') options = '<option value="copy">Preserve image subtitle</option>';
-  else if (mp4) options = '<option value="mov_text">MOV text (required by MP4)</option>';
-  else options = `<option value="subrip"${selected(setting.codec === 'subrip')}>SRT (SubRip)</option><option value="webvtt"${selected(setting.codec === 'webvtt')}>WebVTT</option>`;
+  const options = track.kind === 'image'
+    ? '<option value="copy">Preserve image subtitle</option>'
+    : mp4
+      ? '<option value="mov_text">MOV text (required by MP4)</option>'
+      : `<option value="subrip"${selected(setting.codec === 'subrip')}>SRT (SubRip)</option><option value="webvtt"${selected(setting.codec === 'webvtt')}>WebVTT</option>`;
   return `<section class="track-card ${imageBlocked ? 'track-disabled' : ''}"><div class="track-heading"><div><span>TRACK ${position + 1}</span><h3>${position + 1}. Track ${position + 1}: ${escapeHtml(track.languageLabel)}</h3></div><span class="track-badge ${track.kind}">${escapeHtml(track.codecLabel)}</span></div>
     <div class="track-meta"><span>${track.kind === 'text' ? 'Text-based' : 'Image-based'}</span><span>${track.isUtf8 ? 'UTF-8' : 'Binary image'}</span><span>${escapeHtml(flagsLabel(track.flags))}</span></div>${imageBlocked ? '<div class="downmix-notice warning">Image subtitles cannot be converted to mov_text and will be excluded from MP4.</div>' : ''}
     <div class="subtitle-controls"><label class="check-label"><input type="checkbox" data-subtitle-enabled="${track.index}"${checked(setting.enabled && !imageBlocked)}${imageBlocked ? ' disabled' : ''}/> Include track</label><label>Output format<select data-subtitle-codec="${track.index}"${mp4 || track.kind === 'image' ? ' disabled' : ''}>${options}</select></label></div>${renderDispositionControls('subtitle', track.index, setting.flags, imageBlocked || !setting.enabled)}</section>`;

@@ -7,12 +7,13 @@ import { BrowserWindow, type WebContents } from 'electron';
 import { logActivity } from './app-logger';
 import type { EncodeJob, EncodeProgress, EncodeStartResult } from './shared-types';
 
-const activeProcesses = new Set<ChildProcessWithoutNullStreams>();
+const activeProcesses = new Map<number, ChildProcessWithoutNullStreams>();
 const cancelCooldowns = new Set<() => void>();
+const cancelledJobs = new Set<number>();
 let queueRunning = false;
 let cancellationRequested = false;
-let cancellationEventEmitted = false;
 let queueFailureRequested = false;
+let queueFailureMessage: string | undefined;
 
 const ENCODE_COOLDOWN_MS = 10_000;
 
@@ -63,8 +64,14 @@ const isNvencJob = (job: EncodeJob) => job.args.some((argument, index) =>
   argument === '-c:v' && job.args[index + 1]?.endsWith('_nvenc'));
 
 const stopActiveProcesses = () => {
-  for (const process of activeProcesses) process.kill();
+  for (const process of activeProcesses.values()) process.kill();
 };
+
+class EncodeCancelledError extends Error {
+  constructor(readonly wholeQueue: boolean) {
+    super(wholeQueue ? 'Encoding queue was cancelled.' : 'Encode was cancelled.');
+  }
+}
 
 const runJob = (
   ffmpegPath: string,
@@ -125,7 +132,7 @@ const runJob = (
   const child = spawn(ffmpegPath, [
     '-hide_banner', '-nostdin', '-nostats', '-progress', 'pipe:1', ...processArguments,
   ], { windowsHide: true, shell: false });
-  activeProcesses.add(child);
+  activeProcesses.set(jobIndex, child);
 
   child.stdout.setEncoding('utf8');
   child.stdout.on('data', (chunk: string) => {
@@ -152,7 +159,7 @@ const runJob = (
   child.on('error', (error) => {
     if (settled) return;
     settled = true;
-    activeProcesses.delete(child);
+    activeProcesses.delete(jobIndex);
     void removePartialOutput(temporaryOutput);
     logActivity('ERROR', 'ffmpeg.encode.failed', { job: jobIndex, error: error.message });
     emit(webContents, status('failed', error.message));
@@ -161,12 +168,12 @@ const runJob = (
   child.on('close', async (code) => {
     if (settled) return;
     settled = true;
-    activeProcesses.delete(child);
-    if (cancellationRequested) {
+    activeProcesses.delete(jobIndex);
+    const jobCancellationRequested = cancelledJobs.delete(jobIndex);
+    if (cancellationRequested || jobCancellationRequested) {
       await removePartialOutput(temporaryOutput);
-      cancellationEventEmitted = true;
       emit(webContents, status('cancelled', 'Encoding was cancelled.'));
-      reject(new Error('Encoding was cancelled.'));
+      reject(new EncodeCancelledError(cancellationRequested));
       return;
     }
     if (queueFailureRequested) {
@@ -232,8 +239,9 @@ export const startEncodeQueue = async (
   await Promise.all(jobs.map((job) => fs.promises.mkdir(path.dirname(job.outputPath), { recursive: true })));
   queueRunning = true;
   cancellationRequested = false;
-  cancellationEventEmitted = false;
   queueFailureRequested = false;
+  queueFailureMessage = undefined;
+  cancelledJobs.clear();
   const queueStartedAt = Date.now();
   const concurrency = jobs.length > 1 && jobs.every(isNvencJob) ? 2 : 1;
   logActivity('INFO', 'ffmpeg.queue.started', { jobs: jobs.length, concurrency, cooldownSeconds: 10 });
@@ -255,26 +263,38 @@ export const startEncodeQueue = async (
             await runJob(ffmpegPath, jobs[index], index + 1, jobs.length, webContents);
             completedAJob = true;
           } catch (error) {
+            if (error instanceof EncodeCancelledError && !error.wholeQueue) {
+              completedAJob = true;
+              continue;
+            }
             if (!cancellationRequested && !queueFailureRequested) {
               queueFailureRequested = true;
+              queueFailureMessage = error instanceof Error ? error.message : 'Encoding failed.';
               for (const cancel of [...cancelCooldowns]) cancel();
               stopActiveProcesses();
             }
-            throw error;
+            return;
           }
         }
       };
       await Promise.allSettled(Array.from({ length: concurrency }, runWorker));
-      if (cancellationRequested && !cancellationEventEmitted) {
-        const index = Math.min(nextIndex, jobs.length - 1);
-        const job = jobs[index];
+      const index = Math.max(0, Math.min(nextIndex - 1, jobs.length - 1));
+      const job = jobs[index];
+      if (cancellationRequested) {
         emit(webContents, {
-          phase: 'cancelled', jobIndex: index + 1, totalJobs: jobs.length,
+          phase: 'queue-cancelled', jobIndex: index + 1, totalJobs: jobs.length,
           sourceName: job.sourceName, outputPath: job.outputPath, percent: null,
           bitrate: '—', fps: '—', runTimeSeconds: (Date.now() - queueStartedAt) / 1000,
-          etaSeconds: null, speed: '—', message: 'Encoding was cancelled.',
+          etaSeconds: null, speed: '—', message: 'All active encodes were cancelled.',
         });
-      } else if (!cancellationRequested && !queueFailureRequested) {
+      } else if (queueFailureRequested) {
+        emit(webContents, {
+          phase: 'queue-failed', jobIndex: index + 1, totalJobs: jobs.length,
+          sourceName: job.sourceName, outputPath: job.outputPath, percent: null,
+          bitrate: '—', fps: '—', runTimeSeconds: (Date.now() - queueStartedAt) / 1000,
+          etaSeconds: null, speed: '—', message: queueFailureMessage ?? 'The encoding queue stopped after a failure.',
+        });
+      } else {
         const last = jobs[jobs.length - 1];
         emit(webContents, {
           phase: 'queue-completed', jobIndex: jobs.length, totalJobs: jobs.length,
@@ -286,18 +306,27 @@ export const startEncodeQueue = async (
     } finally {
       activeProcesses.clear();
       cancelCooldowns.clear();
+      cancelledJobs.clear();
       queueRunning = false;
       cancellationRequested = false;
-      cancellationEventEmitted = false;
       queueFailureRequested = false;
+      queueFailureMessage = undefined;
     }
   })();
 
   return { started: true };
 };
 
-export const cancelEncoding = () => {
+export const cancelEncoding = (jobIndex?: number) => {
   if (!queueRunning) return false;
+  if (jobIndex !== undefined) {
+    const process = activeProcesses.get(jobIndex);
+    if (!process) return false;
+    cancelledJobs.add(jobIndex);
+    const killed = process.kill();
+    if (!killed) cancelledJobs.delete(jobIndex);
+    return killed;
+  }
   cancellationRequested = true;
   for (const cancel of [...cancelCooldowns]) cancel();
   stopActiveProcesses();

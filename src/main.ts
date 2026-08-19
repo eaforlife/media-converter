@@ -264,7 +264,7 @@ const registerIpc = () => {
     const ffmpegPath = activeFfmpeg();
     return startEncodeQueue(ffmpegPath, jobs, event.sender);
   });
-  ipcMain.handle('encode:cancel', () => cancelEncoding());
+  ipcMain.handle('encode:cancel', (_event, jobIndex?: number) => cancelEncoding(jobIndex));
 
   ipcMain.handle('output:prepare-directory', async (_event, directoryPath: string) => {
     if (!directoryPath || !path.isAbsolute(directoryPath)) return false;

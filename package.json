@@ -18,10 +18,10 @@
     "make": "electron-forge make",
     "make:wix": "node scripts/make-wix.mjs",
     "publish": "electron-forge publish",
-    "lint": "eslint --ext .ts,.tsx .",
+    "lint": "eslint \"**/*.{ts,mts}\"",
     "typecheck": "tsc --noEmit",
     "typecheck:compat": "tsc6 --noEmit",
-    "test": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test src/video-output-profile.test.ts src/app-update.test.ts",
+    "test": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test src/video-output-profile.test.ts src/app-update.test.ts src/encode-progress-state.test.ts",
     "check": "npm run lint && npm run typecheck && npm test",
     "version:patch": "npm version patch --no-git-tag-version",
     "version:minor": "npm version minor --no-git-tag-version",
@@ -44,25 +44,28 @@
     "@electron-forge/plugin-vite": "^7.11.2",
     "@electron-forge/publisher-github": "^7.11.2",
     "@electron/fuses": "^1.8.0",
+    "@eslint/js": "^10.0.1",
     "@types/electron-squirrel-startup": "^1.0.2",
     "@types/node": "^24.13.3",
-    "@typescript-eslint/eslint-plugin": "^8.65.0",
-    "@typescript-eslint/parser": "^8.65.0",
+    "@typescript-eslint/eslint-plugin": "^8.67.0",
+    "@typescript-eslint/parser": "^8.67.0",
     "@typescript/native": "npm:typescript@^7.0.2",
-    "electron": "43.4.0",
-    "eslint": "^8.57.1",
-    "eslint-plugin-import": "^2.32.0",
+    "electron": "^43.4.1",
+    "eslint": "^10.8.1",
+    "eslint-import-resolver-typescript": "^4.4.5",
+    "eslint-plugin-import-x": "^4.17.1",
+    "globals": "^17.11.0",
     "typescript": "npm:@typescript/typescript6@^6.0.2",
-    "vite": "^5.4.21"
+    "vite": "^7.3.6"
   },
   "dependencies": {
     "electron-squirrel-startup": "^1.0.1",
-    "extract-zip": "^2.0.1",
-    "update-electron-app": "^3.1.1"
+    "update-electron-app": "^3.3.0"
   },
   "allowScripts": {
     "@bitdisaster/exe-icon-extractor": true,
     "electron-winstaller": true,
-    "esbuild": true
+    "esbuild": true,
+    "unrs-resolver": true
   }
 }

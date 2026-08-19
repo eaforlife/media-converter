@@ -168,7 +168,9 @@ export type EncodeProgressPhase =
   | 'completed'
   | 'failed'
   | 'cancelled'
-  | 'queue-completed';
+  | 'queue-completed'
+  | 'queue-failed'
+  | 'queue-cancelled';
 
 export type EncodeProgress = {
   phase: EncodeProgressPhase;

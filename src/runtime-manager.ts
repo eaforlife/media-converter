@@ -3,7 +3,6 @@ import { execFile } from 'node:child_process';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import extract from 'extract-zip';
 import { FFMPEG_RELEASE_API } from './config';
 import { logActivity } from './app-logger';
 import type { RuntimePhase, RuntimeState } from './shared-types';
@@ -126,7 +125,7 @@ const selectAsset = (assets: ReleaseAsset[]): ReleaseAsset => {
 
 const extractRuntimeArchive = async (archivePath: string, extractionPath: string) => {
   if (/\.zip$/i.test(archivePath)) {
-    await extract(archivePath, { dir: extractionPath });
+    await execute('tar', ['-xf', archivePath, '-C', extractionPath], 120_000);
     return;
   }
   if (/\.tar\.xz$/i.test(archivePath)) {

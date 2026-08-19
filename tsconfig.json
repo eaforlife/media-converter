@@ -16,6 +16,6 @@
     "resolveJsonModule": true,
     "allowImportingTsExtensions": true
   },
-  "include": ["src/**/*.ts", "*.ts", "*.d.ts"],
+  "include": ["src/**/*.ts", "*.ts", "*.mts", "*.d.ts"],
   "exclude": ["node_modules", ".vite", "out"]
 }

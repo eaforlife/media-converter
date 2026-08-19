@@ -24,7 +24,7 @@ contextBridge.exposeInMainWorld('mediaAPI', {
   readConfig: (settings: AppSettings): Promise<string> => ipcRenderer.invoke('config:read', settings),
   initializeRuntime: (): Promise<RuntimeState> => ipcRenderer.invoke('runtime:initialize'),
   startEncode: (jobs: EncodeJob[]): Promise<EncodeStartResult> => ipcRenderer.invoke('encode:start', jobs),
-  cancelEncode: (): Promise<boolean> => ipcRenderer.invoke('encode:cancel'),
+  cancelEncode: (jobIndex?: number): Promise<boolean> => ipcRenderer.invoke('encode:cancel', jobIndex),
   onEncodeProgress: (callback: (progress: EncodeProgress) => void) => {
     const listener = (_event: Electron.IpcRendererEvent, progress: EncodeProgress) => callback(progress);
     ipcRenderer.on('encode:progress', listener);
@@ -56,7 +56,7 @@ declare global {
       readConfig: (settings: AppSettings) => Promise<string>;
       initializeRuntime: () => Promise<RuntimeState>;
       startEncode: (jobs: EncodeJob[]) => Promise<EncodeStartResult>;
-      cancelEncode: () => Promise<boolean>;
+      cancelEncode: (jobIndex?: number) => Promise<boolean>;
       onEncodeProgress: (callback: (progress: EncodeProgress) => void) => () => void;
       onRuntimeProgress: (callback: (state: RuntimeState) => void) => () => void;
     };
