@@ -11,6 +11,9 @@ export type SourceFile = {
 
 export type VideoStreamInfo = {
   index: number;
+  language: string;
+  languageLabel: string;
+  flags: StreamFlags;
   codec: string;
   profile: string;
   pixelFormat: string;
@@ -160,6 +163,7 @@ export type EncodeJob = {
   outputPath: string;
   duration: number | null;
   args: string[];
+  replaceSourcePath?: string;
 };
 
 export type EncodeProgressPhase =

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { applyEncodeProgress, createEncodeQueueProgress } from './encode-progress-state.ts';
+import { applyEncodeProgress, canFinishEncodeQueue, createEncodeQueueProgress } from './encode-progress-state.ts';
 import type { EncodeJob, EncodeProgress } from './shared-types';
 
 const jobs: EncodeJob[] = [1, 2, 3].map((index) => ({
@@ -61,4 +61,16 @@ test('marks unfinished pages when the whole queue is cancelled or fails', () => 
   const failed = applyEncodeProgress(failedJob, { ...progress('queue-failed', 1), message: 'FFmpeg failed.' });
   assert.equal(failed.status, 'failed');
   assert.deepEqual(failed.jobs.map((job) => job.status), ['failed', 'skipped', 'skipped']);
+});
+
+test('Done is available only after completion or a requested queue cancellation settles', () => {
+  const running = createEncodeQueueProgress(jobs);
+  assert.equal(canFinishEncodeQueue(running, false), false);
+  const failed = applyEncodeProgress(running, progress('queue-failed', 1));
+  assert.equal(canFinishEncodeQueue(failed, false), false);
+  const cancelled = applyEncodeProgress(running, progress('queue-cancelled', 1));
+  assert.equal(canFinishEncodeQueue(cancelled, false), false);
+  assert.equal(canFinishEncodeQueue(cancelled, true), true);
+  const completed = applyEncodeProgress(running, progress('queue-completed', 2));
+  assert.equal(canFinishEncodeQueue(completed, false), true);
 });

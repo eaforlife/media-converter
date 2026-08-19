@@ -39,7 +39,7 @@ export const createEncodeQueueProgress = (jobs: EncodeJob[]): EncodeQueueProgres
   jobs: jobs.map((job, index) => ({
     jobIndex: index + 1,
     sourceName: job.sourceName,
-    outputPath: job.outputPath,
+    outputPath: job.replaceSourcePath ?? job.outputPath,
     status: 'pending',
     percent: null,
     bitrate: EMPTY_STAT,
@@ -104,3 +104,10 @@ export const applyEncodeProgress = (
 };
 
 export const isQueueTerminal = (state: EncodeQueueProgressState) => state.status !== 'running';
+
+export const canFinishEncodeQueue = (
+  state: EncodeQueueProgressState,
+  cancelAllRequested: boolean,
+) => isQueueTerminal(state)
+  && state.jobs.every((job) => !['pending', 'starting', 'encoding'].includes(job.status))
+  && (state.status === 'completed' || cancelAllRequested);

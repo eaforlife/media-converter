@@ -6,6 +6,7 @@ import {
   friendlyUpdateError,
   isUpdateCheckAlreadyRunningError,
   manualUpdateUnavailableMessage,
+  releaseChangelogUrl,
   shouldInitializeAppUpdater,
   UpdateCheckState,
 } from './app-update.ts';
@@ -15,6 +16,13 @@ test('the updater uses the canonical repository slug', () => {
   equal(
     electronUpdateFeedUrl(APP_UPDATE_REPOSITORY, 'win32', 'x64', '0.3.1'),
     'https://update.electronjs.org/eaforlife/media-converter/win32-x64/0.3.1',
+  );
+});
+
+test('the installed changelog resolves to the matching GitHub release', () => {
+  equal(
+    releaseChangelogUrl(APP_UPDATE_REPOSITORY, '1.0.0'),
+    'https://api.github.com/repos/eaforlife/media-converter/releases/tags/v1.0.0',
   );
 });
 

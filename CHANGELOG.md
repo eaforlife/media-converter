@@ -4,10 +4,32 @@ All notable changes to EA Media Tools are documented here.
 
 ## [Unreleased]
 
+## [1.0.0] - 2026-08-19
+
+### Added
+
+- Add independent Video, Audio, and Subtitles processing switches. Enabled sections use their configured encoders, while disabled sections copy every matching source stream.
+- Add metadata-only stream-copy updates when all three processing sections are disabled, including editable language, default, forced, and hearing-impaired values for video, audio, and subtitle streams.
+- Add per-source metadata editing for batch queues, queue-indexed `_tmp00` staging files, and guarded same-directory source replacement with automatic restoration if finalization fails.
+- Add an installed-version **View Change Log** viewer to the gear menu, backed by the matching GitHub release notes.
+- Add the **ea-video** codename to the 1.0 identity.
+
+### Changed
+
+- Disable smart naming and processing controls during metadata-only updates, retain the original directory and filename, and show an explicit replacement confirmation before starting.
+- Follow the Live FFmpeg Output tail only while the viewer is already at the bottom, allowing earlier session commands to remain readable while active jobs append output.
+- Show elapsed time in the progress title and expose **Done** only after a successful queue completion or an explicitly cancelled queue has fully settled.
+- Keep startup on the loading screen while the Windows updater resolves, with live status through checking, download, restart confirmation, timeout, or failure.
+
 ### Fixed
 
-- Make manual update checks join an automatic check already in progress instead of starting a second Squirrel process.
-- Keep installed Windows x64 builds on the loading screen during the startup update check, with live checking, downloading, and restart-prompt status.
+- Make manual update checks join the automatic update process already in progress instead of launching a second Squirrel command.
+- Preserve copied stream language and disposition metadata when only selected media sections are processed.
+
+### Safety
+
+- Metadata-only updates never delete the source before FFmpeg produces a complete staged file.
+- If installing the staged file fails, restore the original from a temporary backup; retain and log that backup if cleanup cannot safely remove it.
 
 ## [0.4.0] - 2026-08-19
 
@@ -86,6 +108,7 @@ All notable changes to EA Media Tools are documented here.
 - Convert crop offsets to CUVID edge values with division by two and floor rounding.
 - Cancel all active parallel encodes and interrupt pending cooldowns when the queue is stopped or a job fails.
 
+[1.0.0]: https://github.com/eaforlife/media-converter/compare/v0.4.0...v1.0.0
 [0.4.0]: https://github.com/eaforlife/media-converter/compare/v0.3.0...v0.4.0
 [0.3.2]: https://github.com/eaforlife/media-converter/compare/v0.3.1...v0.3.2
 [0.3.1]: https://github.com/eaforlife/media-converter/compare/v0.3.0...v0.3.1

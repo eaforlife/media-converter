@@ -5,6 +5,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { BrowserWindow, type WebContents } from 'electron';
 import { logActivity } from './app-logger';
+import { replaceSourceWithMetadataOutput } from './metadata-replacement';
 import type { EncodeJob, EncodeProgress, EncodeStartResult } from './shared-types';
 
 const activeProcesses = new Map<number, ChildProcessWithoutNullStreams>();
@@ -124,7 +125,7 @@ const runJob = (
       jobIndex,
       totalJobs,
       sourceName: job.sourceName,
-      outputPath: job.outputPath,
+      outputPath: job.replaceSourcePath ?? job.outputPath,
       percent: phase === 'completed' ? 100 : percent,
       bitrate: block.bitrate && block.bitrate !== 'N/A' ? block.bitrate : '—',
       fps: block.fps && block.fps !== 'N/A' ? block.fps : '—',
@@ -205,9 +206,18 @@ const runJob = (
         if (fs.existsSync(job.outputPath)) throw new Error(`Output already exists: ${job.outputPath}`);
         await fs.promises.rename(temporaryOutput, job.outputPath);
         activePartialOutputs.delete(temporaryOutput);
+        if (job.replaceSourcePath) {
+          const replacement = await replaceSourceWithMetadataOutput(job.replaceSourcePath, job.outputPath);
+          if (replacement.backupPath) {
+            logActivity('WARN', 'ffmpeg.metadata.backup-retained', {
+              job: jobIndex,
+              backupPath: replacement.backupPath,
+            });
+          }
+        }
         logActivity('INFO', 'ffmpeg.encode.completed', {
           job: jobIndex,
-          outputPath: job.outputPath,
+          outputPath: job.replaceSourcePath ?? job.outputPath,
           runTimeSeconds: (Date.now() - startedAt) / 1000,
           ffmpegOutput: stderr.trim(),
         });
@@ -240,6 +250,14 @@ export const startEncodeQueue = async (
   if (!jobs.length) return { started: false, message: 'There are no jobs to encode.' };
   if (jobs.some((job) => !path.isAbsolute(job.sourcePath) || !path.isAbsolute(job.outputPath) || !job.args.length)) {
     return { started: false, message: 'The encoding queue contains an invalid path or command.' };
+  }
+  const invalidReplacement = jobs.find((job) => job.replaceSourcePath && (
+    !path.isAbsolute(job.replaceSourcePath)
+    || path.resolve(job.replaceSourcePath) !== path.resolve(job.sourcePath)
+    || path.dirname(job.outputPath) !== path.dirname(job.sourcePath)
+  ));
+  if (invalidReplacement) {
+    return { started: false, message: 'A metadata replacement job contains an invalid source or temporary path.' };
   }
   const missingSource = jobs.find((job) => !fs.existsSync(job.sourcePath));
   if (missingSource) {

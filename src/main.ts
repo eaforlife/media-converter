@@ -1,4 +1,4 @@
-import { app, autoUpdater, BrowserWindow, dialog, ipcMain, shell } from 'electron';
+import { app, autoUpdater, BrowserWindow, dialog, ipcMain, net, shell } from 'electron';
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -6,7 +6,7 @@ import { updateElectronApp, UpdateSourceType } from 'update-electron-app';
 import { APP_NAME, APP_UPDATE_REPOSITORY } from './config';
 import {
   electronUpdateFeedUrl, friendlyUpdateError, isUpdateCheckAlreadyRunningError,
-  manualUpdateUnavailableMessage, shouldInitializeAppUpdater, UpdateCheckState,
+  manualUpdateUnavailableMessage, releaseChangelogUrl, shouldInitializeAppUpdater, UpdateCheckState,
 } from './app-update';
 import { initializeLogger, logActivity, readLog, rotateLogForUpdate } from './app-logger';
 import { detectHardwareCapabilities } from './hardware-capabilities';
@@ -346,6 +346,36 @@ const checkForAppUpdate = () => {
   return manualUpdateCheck;
 };
 
+const readInstalledReleaseChangelog = async () => {
+  const version = app.getVersion();
+  const url = releaseChangelogUrl(APP_UPDATE_REPOSITORY, version);
+  logActivity('INFO', 'changelog.read.started', { version, url });
+  try {
+    const response = await net.fetch(url, {
+      headers: {
+        Accept: 'application/vnd.github+json',
+        'User-Agent': `${APP_NAME.replace(/\s+/g, '-')}/${version}`,
+        'X-GitHub-Api-Version': '2022-11-28',
+      },
+    });
+    if (!response.ok) throw new Error(`GitHub returned ${response.status} ${response.statusText}`);
+    const release = await response.json() as {
+      body?: string | null;
+      html_url?: string;
+      name?: string | null;
+      tag_name?: string;
+    };
+    const heading = release.name?.trim() || release.tag_name || `EA Media Tools v${version}`;
+    const notes = release.body?.trim() || 'This release does not include written change notes.';
+    logActivity('INFO', 'changelog.read.completed', { version });
+    return `${heading}\n${release.html_url ?? url}\n\n${notes}`;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    logActivity('ERROR', 'changelog.read.failed', { version, message });
+    return `Unable to load the change log for EA Media Tools v${version}.\n\n${message}\n\nRelease page: https://github.com/${APP_UPDATE_REPOSITORY}/releases/tag/v${version}`;
+  }
+};
+
 const registerIpc = () => {
   ipcMain.handle('runtime:initialize', async (event) => {
     await initializeStartupAppUpdate(event.sender);
@@ -373,6 +403,7 @@ const registerIpc = () => {
     app.quit();
   });
   ipcMain.handle('app:check-update', () => checkForAppUpdate());
+  ipcMain.handle('app:read-changelog', () => readInstalledReleaseChangelog());
 
   ipcMain.handle('source:open-file', async (event, initialDirectory?: string) => {
     const parent = BrowserWindow.fromWebContents(event.sender);

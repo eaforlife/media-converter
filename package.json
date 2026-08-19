@@ -1,7 +1,8 @@
 {
   "name": "ea-media-tools",
   "productName": "EA Media Tools",
-  "version": "0.4.0",
+  "version": "1.0.0",
+  "codename": "ea-video",
   "description": "A sleek desktop FFmpeg command builder and media transcoder.",
   "repository": {
     "type": "git",
@@ -21,7 +22,7 @@
     "lint": "eslint \"**/*.{ts,mts}\"",
     "typecheck": "tsc --noEmit",
     "typecheck:compat": "tsc6 --noEmit",
-    "test": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test src/video-output-profile.test.ts src/app-update.test.ts src/encode-progress-state.test.ts src/ffmpeg-command-display.test.ts",
+    "test": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test src/video-output-profile.test.ts src/app-update.test.ts src/encode-progress-state.test.ts src/ffmpeg-command-display.test.ts src/metadata-edit.test.ts src/metadata-replacement.test.ts",
     "check": "npm run lint && npm run typecheck && npm test",
     "version:patch": "npm version patch --no-git-tag-version",
     "version:minor": "npm version minor --no-git-tag-version",

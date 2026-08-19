@@ -2,7 +2,7 @@
 
 EA Media Tools is a desktop video converter powered by Jellyfin FFmpeg. It inspects video, audio, subtitle, chapter, HDR, and Dolby Vision metadata; selects a supported hardware encoder; and runs queued conversions with live progress information.
 
-Version 0.4.0 is the current stable release. Only video input is supported, and a compatible hardware video encoder is required. There is no software-encoding fallback.
+Version 1.0.0, codename **ea-video**, is the current stable release. Only video input is supported. A compatible hardware video encoder is required when processing video; metadata-only stream-copy updates do not re-encode the source.
 
 ## Download
 
@@ -41,7 +41,7 @@ The macOS app is not signed or notarized. To uninstall it, quit the app and move
 Install the downloaded package from a terminal. Replace the filename with the asset you downloaded:
 
 ```bash
-sudo apt install ./ea-media-tools_0.4.0_amd64.deb
+sudo apt install ./ea-media-tools_1.0.0_amd64.deb
 ```
 
 ARM64 systems use the package ending in `arm64.deb`. Launch **EA Media Tools** from the desktop application menu. Remove it with:
@@ -60,9 +60,13 @@ Folder analysis inspects up to two videos at a time. NVENC-only batches encode u
 
 The encode window keeps a separate progress page for every queued video. Browse pages with **Previous** and **Next** to inspect pending, active, completed, cancelled, or failed jobs. **Live FFmpeg Output** opens one console-style session log containing every command as its encode starts; executable and media paths are displayed as `ffmpeg`, `<input>`, and `<output>`. After the queue settles, **Show in folder**, **Start New**, and **Done** remain available. **Done** waits for active workers and partial-output cleanup before closing the app.
 
+Video, audio, and subtitle tabs each have a processing checkbox. Checked sections use their configured encoder settings; unchecked sections copy every source stream without re-encoding. Uncheck all three sections to enter metadata-only mode, where stream languages and default, forced, and hearing-impaired dispositions can be edited. Batch metadata changes stay local to each selected source. The app creates a same-directory `_tmp00` (or queue-indexed) stream copy, installs it only after FFmpeg succeeds, and restores the original if replacement cannot complete.
+
+Open the gear menu and choose **View Change Log** to read the installed version's GitHub release notes inside the app.
+
 ### Application updates
 
-Windows x64 builds check the public Squirrel feed at startup and once per hour. **Versions 0.3.0 and 0.3.1 use the repository's former URL and must be upgraded manually once.** Version 0.3.2 and later Windows x64 builds can discover v0.4.0 through **Check for update**. Windows ARM64 and unsigned macOS builds should download new releases manually; Linux updates are provided through the installed package manager.
+Windows x64 builds check the public Squirrel feed at startup and once per hour. The loading screen remains visible with live status until that startup check is resolved or the update restart prompt appears. **Versions 0.3.0 and 0.3.1 use the repository's former URL and must be upgraded manually once.** Version 0.3.2 and later Windows x64 builds can discover v1.0.0 through **Check for update**. Windows ARM64 and unsigned macOS builds should download new releases manually; Linux updates are provided through the installed package manager.
 
 Auto Scale chooses an output profile from the source resolution. Selecting a scale explicitly applies that output profile's dimensions, bitrate limits, buffer, and NVENC settings to the active built-in preset:
 
@@ -86,7 +90,7 @@ The operating-system floor was reviewed on August 18, 2026. Use a release that s
 
 Windows 11 24H2 Home and Pro receive updates through October 13, 2026, so upgrade to a newer serviced Windows release before that date. Microsoft publishes current dates on the [Windows 11 lifecycle page](https://learn.microsoft.com/en-us/lifecycle/products/windows-11-home-and-pro). Apple was still publishing Sonoma 14 security updates when this requirement was reviewed; see [Apple security releases](https://support.apple.com/100100). Debian 12 LTS is supported through June 30, 2028 according to the [Debian LTS announcement](https://www.debian.org/News/2026/20260712), and Ubuntu 24.04 LTS receives standard security maintenance through May 2029 according to the [Ubuntu release cycle](https://ubuntu.com/about/release-cycle).
 
-ARM64 describes the application and Jellyfin FFmpeg runtime architecture, not guaranteed GPU support. Qualcomm/Adreno on Windows and Mali/Rockchip on Linux are not supported in 0.4.0; those systems can encode only if one of the NVIDIA, Intel, or AMD backends below passes detection. Apple silicon uses VideoToolbox and is supported on macOS.
+ARM64 describes the application and Jellyfin FFmpeg runtime architecture, not guaranteed GPU support. Qualcomm/Adreno on Windows and Mali/Rockchip on Linux are not supported for video encoding in 1.0.0; those systems can encode video only if one of the NVIDIA, Intel, or AMD backends below passes detection. Apple silicon uses VideoToolbox and is supported on macOS.
 
 Also required:
 

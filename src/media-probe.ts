@@ -6,6 +6,7 @@ import type {
   SubtitleStreamInfo,
   VideoStreamInfo,
 } from './shared-types';
+import { mediaLanguageName, normalizeMediaLanguage } from './media-language';
 
 type ProbeStream = {
   index?: number;
@@ -41,18 +42,6 @@ const TEXT_SUBTITLE_CODECS = new Set([
   'mpl2', 'jacosub', 'sami', 'realtext', 'stl', 'subviewer', 'subviewer1',
 ]);
 
-const LANGUAGE_NAMES: Record<string, string> = {
-  eng: 'English', en: 'English', spa: 'Spanish', es: 'Spanish', fra: 'French', fre: 'French', fr: 'French',
-  deu: 'German', ger: 'German', de: 'German', ita: 'Italian', it: 'Italian', por: 'Portuguese', pt: 'Portuguese',
-  jpn: 'Japanese', ja: 'Japanese', kor: 'Korean', ko: 'Korean', zho: 'Chinese', chi: 'Chinese', zh: 'Chinese',
-  rus: 'Russian', ru: 'Russian', ara: 'Arabic', ar: 'Arabic', hin: 'Hindi', hi: 'Hindi', und: 'Unknown',
-};
-
-const languageName = (language?: string) => {
-  const normalized = (language || 'und').trim().toLowerCase();
-  return LANGUAGE_NAMES[normalized] ?? normalized.toUpperCase();
-};
-
 const flagsOf = (stream: ProbeStream): StreamFlags => ({
   default: Boolean(stream.disposition?.default),
   forced: Boolean(stream.disposition?.forced),
@@ -87,6 +76,9 @@ const videoInfo = (stream: ProbeStream): VideoStreamInfo => {
 
   return {
     index: stream.index ?? 0,
+    language: normalizeMediaLanguage(stream.tags?.language),
+    languageLabel: mediaLanguageName(stream.tags?.language),
+    flags: flagsOf(stream),
     codec: (stream.codec_name || 'unknown').toUpperCase(),
     profile: stream.profile || 'Unknown',
     pixelFormat: stream.pix_fmt || 'unknown',
@@ -127,14 +119,14 @@ const audioInfo = (stream: ProbeStream): AudioStreamInfo => {
   else if (codec === 'aac') family = 'AAC';
   else if (codec === 'opus') family = 'Opus';
 
-  const language = (stream.tags?.language || 'und').toLowerCase();
+  const language = normalizeMediaLanguage(stream.tags?.language);
   const layoutLabel = channelLabel(channels, layout);
   return {
     index: stream.index ?? 0,
     codec,
     codecLabel: channels <= 2 ? `${layoutLabel} · ${family}` : `${family} · ${layoutLabel}`,
     language,
-    languageLabel: languageName(language),
+    languageLabel: mediaLanguageName(language),
     channels,
     channelLayout: layoutLabel,
     isStereo: channels === 2,
@@ -150,7 +142,7 @@ const audioInfo = (stream: ProbeStream): AudioStreamInfo => {
 const subtitleInfo = (stream: ProbeStream): SubtitleStreamInfo => {
   const codec = (stream.codec_name || 'unknown').toLowerCase();
   const kind = TEXT_SUBTITLE_CODECS.has(codec) ? 'text' : 'image';
-  const language = (stream.tags?.language || 'und').toLowerCase();
+  const language = normalizeMediaLanguage(stream.tags?.language);
   const labels: Record<string, string> = {
     subrip: 'SubRip (SRT)', srt: 'SubRip (SRT)', webvtt: 'WebVTT', mov_text: 'MOV text',
     ass: 'ASS text', ssa: 'SSA text', hdmv_pgs_subtitle: 'PGS image', dvd_subtitle: 'VobSub image',
@@ -161,7 +153,7 @@ const subtitleInfo = (stream: ProbeStream): SubtitleStreamInfo => {
     codec,
     codecLabel: labels[codec] ?? `${codec.toUpperCase()} ${kind}`,
     language,
-    languageLabel: languageName(language),
+    languageLabel: mediaLanguageName(language),
     kind,
     isUtf8: kind === 'text',
     flags: flagsOf(stream),

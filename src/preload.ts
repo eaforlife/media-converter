@@ -20,6 +20,7 @@ contextBridge.exposeInMainWorld('mediaAPI', {
   closeWindow: (): Promise<void> => ipcRenderer.invoke('window:close'),
   finishAndClose: (): Promise<void> => ipcRenderer.invoke('app:finish-and-close'),
   checkForUpdates: (): Promise<string> => ipcRenderer.invoke('app:check-update'),
+  readChangelog: (): Promise<string> => ipcRenderer.invoke('app:read-changelog'),
   detectHardware: (): Promise<HardwareCapabilities> => ipcRenderer.invoke('hardware:detect'),
   readLog: (): Promise<string> => ipcRenderer.invoke('log:read'),
   readConfig: (settings: AppSettings): Promise<string> => ipcRenderer.invoke('config:read', settings),
@@ -53,6 +54,7 @@ declare global {
       closeWindow: () => Promise<void>;
       finishAndClose: () => Promise<void>;
       checkForUpdates: () => Promise<string>;
+      readChangelog: () => Promise<string>;
       detectHardware: () => Promise<HardwareCapabilities>;
       readLog: () => Promise<string>;
       readConfig: (settings: AppSettings) => Promise<string>;
