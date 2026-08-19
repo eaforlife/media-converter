@@ -1,7 +1,7 @@
 {
   "name": "ea-media-tools",
   "productName": "EA Media Tools",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "A sleek desktop FFmpeg command builder and media transcoder.",
   "repository": {
     "type": "git",

@@ -57,6 +57,7 @@ const VIDEO_EXTENSIONS = new Set([
 
 let runtimeState: RuntimeState | null = null;
 let hardwareCheck: Promise<HardwareCapabilities> | null = null;
+let manualUpdateCheck: Promise<string> | null = null;
 const developmentFfmpeg = () => process.env.EA_FFMPEG_PATH || (process.platform === 'win32' ? 'jellyffmpeg' : 'ffmpeg');
 const developmentFfprobe = () => process.env.EA_FFPROBE_PATH || 'ffprobe';
 const activeFfmpeg = () => runtimeState?.ffmpegPath || developmentFfmpeg();
@@ -116,12 +117,68 @@ const inspectSource = async (file: SourceFile): Promise<SourceFile | null> => {
 };
 
 const inspectSources = async (files: SourceFile[]) => {
-  const inspected: SourceFile[] = [];
-  for (const file of files) {
-    const result = await inspectSource(file);
-    if (result) inspected.push(result);
+  const inspected = new Array<SourceFile | null>(files.length).fill(null);
+  let nextIndex = 0;
+  const worker = async () => {
+    while (nextIndex < files.length) {
+      const index = nextIndex;
+      nextIndex += 1;
+      inspected[index] = await inspectSource(files[index]);
+    }
+  };
+  const workerCount = Math.min(2, files.length);
+  await Promise.all(Array.from({ length: workerCount }, worker));
+  return inspected.filter((file): file is SourceFile => file !== null);
+};
+
+const checkForAppUpdate = () => {
+  if (!app.isPackaged) return Promise.resolve('Update checks are available in installed builds.');
+  if (process.platform === 'linux') {
+    return Promise.resolve('Updates on Linux are provided through the installed package manager.');
   }
-  return inspected;
+  if (manualUpdateCheck) return manualUpdateCheck;
+
+  const check = new Promise<string>((resolve) => {
+    const finish = (message: string, level: 'INFO' | 'ERROR', event: string) => {
+      clearTimeout(timeout);
+      autoUpdater.removeListener('update-available', onAvailable);
+      autoUpdater.removeListener('update-not-available', onNotAvailable);
+      autoUpdater.removeListener('error', onError);
+      logActivity(level, event, { version: app.getVersion(), message });
+      resolve(message);
+    };
+    const onAvailable = () => finish(
+      'An update is available and is downloading in the background.',
+      'INFO',
+      'update.manual-check.available',
+    );
+    const onNotAvailable = () => finish(
+      `EA Media Tools ${app.getVersion()} is up to date.`,
+      'INFO',
+      'update.manual-check.current',
+    );
+    const onError = (error: Error) => finish(
+      `Update check failed: ${error.message}`,
+      'ERROR',
+      'update.manual-check.failed',
+    );
+    const timeout = setTimeout(() => finish(
+      'The update check timed out. Please try again.',
+      'ERROR',
+      'update.manual-check.timed-out',
+    ), 30_000);
+    autoUpdater.once('update-available', onAvailable);
+    autoUpdater.once('update-not-available', onNotAvailable);
+    autoUpdater.once('error', onError);
+    try {
+      autoUpdater.checkForUpdates();
+      logActivity('INFO', 'update.manual-check.started');
+    } catch (error) {
+      onError(error instanceof Error ? error : new Error(String(error)));
+    }
+  });
+  manualUpdateCheck = check.finally(() => { manualUpdateCheck = null; });
+  return manualUpdateCheck;
 };
 
 const registerIpc = () => {
@@ -144,17 +201,7 @@ const registerIpc = () => {
   ipcMain.handle('config:read', (_event, settings?: AppSettings) => readConfig(settings));
   ipcMain.handle('window:minimize', (event) => BrowserWindow.fromWebContents(event.sender)?.minimize());
   ipcMain.handle('window:close', (event) => BrowserWindow.fromWebContents(event.sender)?.close());
-  ipcMain.handle('app:check-update', async () => {
-    if (!app.isPackaged) return 'Update checks are available in installed builds.';
-    try {
-      await autoUpdater.checkForUpdates();
-      logActivity('INFO', 'update.manual-check.started');
-      return 'Checking for updates…';
-    } catch (error) {
-      logActivity('ERROR', 'update.manual-check.failed', error instanceof Error ? error.message : String(error));
-      return error instanceof Error ? `Update check failed: ${error.message}` : 'Update check failed.';
-    }
-  });
+  ipcMain.handle('app:check-update', () => checkForAppUpdate());
 
   ipcMain.handle('source:open-file', async (event, initialDirectory?: string) => {
     const parent = BrowserWindow.fromWebContents(event.sender);

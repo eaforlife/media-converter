@@ -7,9 +7,14 @@ import { BrowserWindow, type WebContents } from 'electron';
 import { logActivity } from './app-logger';
 import type { EncodeJob, EncodeProgress, EncodeStartResult } from './shared-types';
 
-let activeProcess: ChildProcessWithoutNullStreams | null = null;
+const activeProcesses = new Set<ChildProcessWithoutNullStreams>();
+const cancelCooldowns = new Set<() => void>();
 let queueRunning = false;
 let cancellationRequested = false;
+let cancellationEventEmitted = false;
+let queueFailureRequested = false;
+
+const ENCODE_COOLDOWN_MS = 10_000;
 
 const parseClock = (value: string | undefined) => {
   const match = value?.match(/^(\d+):(\d+):(\d+(?:\.\d+)?)$/);
@@ -38,6 +43,27 @@ const emit = (webContents: WebContents, progress: EncodeProgress) => {
 
 const removePartialOutput = async (outputPath: string) => {
   await fs.promises.rm(outputPath, { force: true }).catch(() => undefined);
+};
+
+const waitForEncodeCooldown = () => new Promise<boolean>((resolve) => {
+  const state: { settled: boolean; timer?: ReturnType<typeof setTimeout> } = { settled: false };
+  const cancel = () => finish(false);
+  const finish = (elapsed: boolean) => {
+    if (state.settled) return;
+    state.settled = true;
+    if (state.timer) clearTimeout(state.timer);
+    cancelCooldowns.delete(cancel);
+    resolve(elapsed);
+  };
+  state.timer = setTimeout(() => finish(true), ENCODE_COOLDOWN_MS);
+  cancelCooldowns.add(cancel);
+});
+
+const isNvencJob = (job: EncodeJob) => job.args.some((argument, index) =>
+  argument === '-c:v' && job.args[index + 1]?.endsWith('_nvenc'));
+
+const stopActiveProcesses = () => {
+  for (const process of activeProcesses) process.kill();
 };
 
 const runJob = (
@@ -99,7 +125,7 @@ const runJob = (
   const child = spawn(ffmpegPath, [
     '-hide_banner', '-nostdin', '-nostats', '-progress', 'pipe:1', ...processArguments,
   ], { windowsHide: true, shell: false });
-  activeProcess = child;
+  activeProcesses.add(child);
 
   child.stdout.setEncoding('utf8');
   child.stdout.on('data', (chunk: string) => {
@@ -126,7 +152,7 @@ const runJob = (
   child.on('error', (error) => {
     if (settled) return;
     settled = true;
-    activeProcess = null;
+    activeProcesses.delete(child);
     void removePartialOutput(temporaryOutput);
     logActivity('ERROR', 'ffmpeg.encode.failed', { job: jobIndex, error: error.message });
     emit(webContents, status('failed', error.message));
@@ -135,11 +161,17 @@ const runJob = (
   child.on('close', async (code) => {
     if (settled) return;
     settled = true;
-    activeProcess = null;
+    activeProcesses.delete(child);
     if (cancellationRequested) {
       await removePartialOutput(temporaryOutput);
+      cancellationEventEmitted = true;
       emit(webContents, status('cancelled', 'Encoding was cancelled.'));
       reject(new Error('Encoding was cancelled.'));
+      return;
+    }
+    if (queueFailureRequested) {
+      await removePartialOutput(temporaryOutput);
+      reject(new Error('Encoding stopped because another job failed.'));
       return;
     }
     if (code === 0) {
@@ -200,25 +232,49 @@ export const startEncodeQueue = async (
   await Promise.all(jobs.map((job) => fs.promises.mkdir(path.dirname(job.outputPath), { recursive: true })));
   queueRunning = true;
   cancellationRequested = false;
+  cancellationEventEmitted = false;
+  queueFailureRequested = false;
   const queueStartedAt = Date.now();
+  const concurrency = jobs.length > 1 && jobs.every(isNvencJob) ? 2 : 1;
+  logActivity('INFO', 'ffmpeg.queue.started', { jobs: jobs.length, concurrency, cooldownSeconds: 10 });
 
   void (async () => {
     try {
-      for (let index = 0; index < jobs.length; index += 1) {
-        if (cancellationRequested) {
-          const job = jobs[index];
-          emit(webContents, {
-            phase: 'cancelled', jobIndex: index + 1, totalJobs: jobs.length,
-            sourceName: job.sourceName, outputPath: job.outputPath, percent: null,
-            bitrate: '—', fps: '—', runTimeSeconds: (Date.now() - queueStartedAt) / 1000,
-            etaSeconds: null, speed: '—',
-            message: 'Encoding was cancelled.',
-          });
-          return;
+      let nextIndex = 0;
+      const runWorker = async () => {
+        let completedAJob = false;
+        while (!cancellationRequested && !queueFailureRequested) {
+          if (completedAJob && nextIndex < jobs.length) {
+            const elapsed = await waitForEncodeCooldown();
+            if (!elapsed || cancellationRequested || queueFailureRequested) return;
+          }
+          if (nextIndex >= jobs.length) return;
+          const index = nextIndex;
+          nextIndex += 1;
+          try {
+            await runJob(ffmpegPath, jobs[index], index + 1, jobs.length, webContents);
+            completedAJob = true;
+          } catch (error) {
+            if (!cancellationRequested && !queueFailureRequested) {
+              queueFailureRequested = true;
+              for (const cancel of [...cancelCooldowns]) cancel();
+              stopActiveProcesses();
+            }
+            throw error;
+          }
         }
-        await runJob(ffmpegPath, jobs[index], index + 1, jobs.length, webContents);
-      }
-      if (!cancellationRequested) {
+      };
+      await Promise.allSettled(Array.from({ length: concurrency }, runWorker));
+      if (cancellationRequested && !cancellationEventEmitted) {
+        const index = Math.min(nextIndex, jobs.length - 1);
+        const job = jobs[index];
+        emit(webContents, {
+          phase: 'cancelled', jobIndex: index + 1, totalJobs: jobs.length,
+          sourceName: job.sourceName, outputPath: job.outputPath, percent: null,
+          bitrate: '—', fps: '—', runTimeSeconds: (Date.now() - queueStartedAt) / 1000,
+          etaSeconds: null, speed: '—', message: 'Encoding was cancelled.',
+        });
+      } else if (!cancellationRequested && !queueFailureRequested) {
         const last = jobs[jobs.length - 1];
         emit(webContents, {
           phase: 'queue-completed', jobIndex: jobs.length, totalJobs: jobs.length,
@@ -227,12 +283,13 @@ export const startEncodeQueue = async (
           etaSeconds: 0, speed: '—',
         });
       }
-    } catch {
-      // The job-level progress event contains the actionable FFmpeg error.
     } finally {
-      activeProcess = null;
+      activeProcesses.clear();
+      cancelCooldowns.clear();
       queueRunning = false;
       cancellationRequested = false;
+      cancellationEventEmitted = false;
+      queueFailureRequested = false;
     }
   })();
 
@@ -242,6 +299,7 @@ export const startEncodeQueue = async (
 export const cancelEncoding = () => {
   if (!queueRunning) return false;
   cancellationRequested = true;
-  activeProcess?.kill();
+  for (const cancel of [...cancelCooldowns]) cancel();
+  stopActiveProcesses();
   return true;
 };

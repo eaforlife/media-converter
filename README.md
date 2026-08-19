@@ -2,11 +2,11 @@
 
 EA Media Tools is a desktop video converter powered by Jellyfin FFmpeg. It inspects video, audio, subtitle, chapter, HDR, and Dolby Vision metadata; selects a supported hardware encoder; and runs queued conversions with live progress information.
 
-Version 0.2.0 is a prerelease. Only video input is supported, and a compatible hardware video encoder is required. There is no software-encoding fallback.
+Version 0.3.0 is the current stable release. Only video input is supported, and a compatible hardware video encoder is required. There is no software-encoding fallback.
 
 ## Download
 
-Download the newest build from the [GitHub Releases page](https://github.com/eaforlife/EA-Media-Tools/releases). Prereleases are marked **Pre-release**.
+Download the newest build from the [GitHub Releases page](https://github.com/eaforlife/EA-Media-Tools/releases).
 
 Choose the asset that matches your operating system and CPU:
 
@@ -26,22 +26,22 @@ Do not download `.nupkg` or `RELEASES`; those files are used by the Windows upda
 2. Double-click the installer and wait for EA Media Tools to open.
 3. If Microsoft Defender SmartScreen warns about an unrecognized app, verify that the file came from this repository before selecting **More info** and **Run anyway**.
 
-The prerelease installer is not digitally signed. Remove the app later from **Settings > Apps > Installed apps > EA Media Tools**. The uninstaller also clears the app-managed settings, runtime, cache, cookies, logs, and previews.
+The installer is not digitally signed. Remove the app later from **Settings > Apps > Installed apps > EA Media Tools**. The uninstaller also clears the app-managed settings, runtime, cache, cookies, logs, and previews.
 
 ### macOS
 
 1. Download the ZIP for `darwin-arm64` on Apple silicon or `darwin-x64` on an Intel Mac.
 2. Extract the ZIP and move **EA Media Tools.app** into **Applications**.
-3. On first launch, Control-click the app, select **Open**, and confirm the prompt if Gatekeeper blocks the unsigned prerelease.
+3. On first launch, Control-click the app, select **Open**, and confirm the prompt if Gatekeeper blocks the unsigned app.
 
-The macOS prerelease is not signed or notarized. To uninstall it, quit the app and move it from **Applications** to the Trash.
+The macOS app is not signed or notarized. To uninstall it, quit the app and move it from **Applications** to the Trash.
 
 ### Debian and Ubuntu
 
 Install the downloaded package from a terminal. Replace the filename with the asset you downloaded:
 
 ```bash
-sudo apt install ./ea-media-tools_0.2.0_amd64.deb
+sudo apt install ./ea-media-tools_0.3.0_amd64.deb
 ```
 
 ARM64 systems use the package ending in `arm64.deb`. Launch **EA Media Tools** from the desktop application menu. Remove it with:
@@ -56,6 +56,8 @@ An internet connection is required the first time the packaged app runs. EA Medi
 
 The app then checks the GPU driving the primary physical display. Virtual and secondary display adapters are ignored and recorded in **View Logs**. An encoder appears only after the corresponding Jellyfin FFmpeg flag completes an actual test encode on the installed hardware.
 
+Folder analysis inspects up to two videos at a time. NVENC-only batches encode up to two files simultaneously; each available encode slot waits 10 seconds before starting its next file. Batches using another hardware encoder remain serial.
+
 ## System requirements
 
 The operating-system floor was reviewed on August 18, 2026. Use a release that still receives vendor security updates:
@@ -69,7 +71,7 @@ The operating-system floor was reviewed on August 18, 2026. Use a release that s
 
 Windows 11 24H2 Home and Pro receive updates through October 13, 2026, so upgrade to a newer serviced Windows release before that date. Microsoft publishes current dates on the [Windows 11 lifecycle page](https://learn.microsoft.com/en-us/lifecycle/products/windows-11-home-and-pro). Apple was still publishing Sonoma 14 security updates when this requirement was reviewed; see [Apple security releases](https://support.apple.com/100100). Debian 12 LTS is supported through June 30, 2028 according to the [Debian LTS announcement](https://www.debian.org/News/2026/20260712), and Ubuntu 24.04 LTS receives standard security maintenance through May 2029 according to the [Ubuntu release cycle](https://ubuntu.com/about/release-cycle).
 
-ARM64 describes the application and Jellyfin FFmpeg runtime architecture, not guaranteed GPU support. Qualcomm/Adreno on Windows and Mali/Rockchip on Linux are not supported in 0.2.0; those systems can encode only if one of the NVIDIA, Intel, or AMD backends below passes detection. Apple silicon uses VideoToolbox and is supported on macOS.
+ARM64 describes the application and Jellyfin FFmpeg runtime architecture, not guaranteed GPU support. Qualcomm/Adreno on Windows and Mali/Rockchip on Linux are not supported in 0.3.0; those systems can encode only if one of the NVIDIA, Intel, or AMD backends below passes detection. Apple silicon uses VideoToolbox and is supported on macOS.
 
 Also required:
 

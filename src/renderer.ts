@@ -2,6 +2,7 @@ import './index.css';
 import { parseEpisodeIdentity, sanitizePathSegment, smartSeriesBaseName } from './output-naming';
 import { BUILT_IN_PRESETS, BUILT_IN_PRESET_NAMES } from './presets';
 import type { BuiltInPresetDefinition, BuiltInPresetName, PreferredVideoCodec, PresetAudioCodec, QualityFamily } from './presets';
+import { cuvidCrop, detectedCrop } from './video-crop';
 import type {
   AppSettings, AudioStreamInfo, EncodeJob, EncodeProgress, FilterSettings, HardwareCapabilities, RuntimeState, SavedPreset,
   ScaleMode, SourceFile, StreamFlags, SubtitleStreamInfo,
@@ -440,25 +441,18 @@ const hardwareDecoderName = (source: SourceFile, suffix: 'cuvid' | 'qsv') => {
   const base = codecNames[source.media?.video?.codec.toUpperCase() ?? ''];
   return base ? `${base}_${suffix}` : null;
 };
-const cuvidCrop = (source: SourceFile) => {
-  const crop = source.media?.suggestedCrop?.split(':').map(Number);
+const detectedCropForSource = (source: SourceFile) => {
   const video = source.media?.video;
-  if (!crop || crop.length !== 4 || !video) return null;
-  const [cropWidth, cropHeight, cropX, cropY] = crop;
-  const top = Math.max(0, Math.round(cropY / 2));
-  const bottom = Math.max(0, Math.round((video.height - cropHeight - cropY) / 2));
-  const left = Math.max(0, Math.round(cropX / 2));
-  const right = Math.max(0, Math.round((video.width - cropWidth - cropX) / 2));
-  return top || bottom || left || right ? `${top}x${bottom}x${left}x${right}` : null;
+  return video ? detectedCrop(source.media?.suggestedCrop, video.width, video.height) : null;
 };
 const hardwareInputArguments = (source: SourceFile, settings: JobSettings) => {
   if (settings.encoder.endsWith('_vaapi') && hardwareCapabilities.vaapiAvailable && hardwareCapabilities.vaapiDevice) {
     return {
       args: ['-vaapi_device', hardwareCapabilities.vaapiDevice],
-      cuvidCropApplied: false, backend: 'vaapi' as const,
+      cropHandledByDecoder: false, backend: 'vaapi' as const,
     };
   }
-  if (!appSettings.hardwareAcceleration) return { args: [] as string[], cuvidCropApplied: false, backend: 'software' as const };
+  if (!appSettings.hardwareAcceleration) return { args: [] as string[], cropHandledByDecoder: false, backend: 'software' as const };
   if (settings.encoder.endsWith('_nvenc') && hardwareCapabilities.cudaAvailable && hardwareCapabilities.nvdecAvailable) {
     const decoder = hardwareDecoderName(source, 'cuvid');
     if (decoder && hardwareCapabilities.cuvidDecoders.includes(decoder)) {
@@ -466,27 +460,31 @@ const hardwareInputArguments = (source: SourceFile, settings: JobSettings) => {
         '-init_hw_device', 'cuda=cu:0', '-filter_hw_device', 'cu', '-hwaccel', 'cuda',
         '-hwaccel_output_format', 'cuda', '-hwaccel_flags', '+unsafe_output', '-c:v:0', decoder,
       ];
-      const crop = settings.filters.autoCrop ? cuvidCrop(source) : null;
-      if (crop) args.push('-crop', crop);
-      return { args, cuvidCropApplied: Boolean(crop), backend: 'cuda' as const };
+      const video = source.media?.video;
+      const crop = detectedCropForSource(source);
+      const decoderCrop = settings.filters.autoCrop && crop && video
+        ? cuvidCrop(crop, video.width, video.height)
+        : null;
+      if (decoderCrop) args.push('-crop', decoderCrop);
+      return { args, cropHandledByDecoder: true, backend: 'cuda' as const };
     }
   }
   if (settings.encoder.endsWith('_amf') && hardwareCapabilities.amfDecodeAvailable) {
     return {
       args: ['-init_hw_device', 'amf=am:0', '-filter_hw_device', 'am', '-hwaccel', 'amf', '-hwaccel_flags', '+unsafe_output'],
-      cuvidCropApplied: false, backend: 'amf' as const,
+      cropHandledByDecoder: false, backend: 'amf' as const,
     };
   }
   if (settings.encoder.endsWith('_qsv') && hardwareCapabilities.qsvDecodeAvailable) {
     const decoder = hardwareDecoderName(source, 'qsv');
     const args = ['-init_hw_device', 'qsv=qs:hw', '-filter_hw_device', 'qs', '-hwaccel', 'qsv', '-hwaccel_flags', '+unsafe_output'];
     if (decoder && hardwareCapabilities.qsvDecoders.includes(decoder)) args.push('-c:v:0', decoder);
-    return { args, cuvidCropApplied: false, backend: 'qsv' as const };
+    return { args, cropHandledByDecoder: false, backend: 'qsv' as const };
   }
   if (settings.encoder.endsWith('_videotoolbox')) {
-    return { args: ['-hwaccel', 'videotoolbox'], cuvidCropApplied: false, backend: 'software' as const };
+    return { args: ['-hwaccel', 'videotoolbox'], cropHandledByDecoder: false, backend: 'software' as const };
   }
-  return { args: ['-hwaccel', 'auto'], cuvidCropApplied: false, backend: 'software' as const };
+  return { args: ['-hwaccel', 'auto'], cropHandledByDecoder: false, backend: 'software' as const };
 };
 const hardwareScaleDimensions = (source: SourceFile, settings: JobSettings): [string, string] | null => {
   if (settings.filters.scale === 'disabled') return null;
@@ -576,8 +574,9 @@ const getCommandArguments = (source: SourceFile) => {
   const main10Output = Boolean(settings.filters.pixelFormat10Bit && canUse10Bit);
   const toneMapFormat: 'nv12' | 'p010le' = main10Output ? 'p010le' : 'nv12';
   const dimensions = hardwareScaleDimensions(source, settings);
-  if (settings.filters.autoCrop && source.media?.suggestedCrop && !hardwareInput.cuvidCropApplied) {
-    filters.push(`crop=${source.media.suggestedCrop}`);
+  const crop = detectedCropForSource(source);
+  if (settings.filters.autoCrop && crop && !hardwareInput.cropHandledByDecoder) {
+    filters.push(`crop=${crop.filter}`);
   }
 
   if (hardwareInput.backend === 'cuda') {
@@ -845,7 +844,7 @@ const showAppMenu = () => {
   document.querySelector('.app-menu')?.remove();
   const menu = document.createElement('div');
   menu.className = 'app-menu';
-  menu.innerHTML = `<div class="menu-identity"><strong>EA Media Tools</strong><span>Version ${escapeHtml(runtimeState?.appVersion ?? '0.2.0')}</span></div><label class="menu-check"><input id="hardware-acceleration" type="checkbox"${checked(appSettings.hardwareAcceleration)}/><span>Use hardware encoding/decoding acceleration</span></label><button id="view-logs">View Logs</button><button id="view-config">View Running Config</button><button id="check-update">Check for update</button><button class="danger" id="exit-app">Exit</button>`;
+  menu.innerHTML = `<div class="menu-identity"><strong>EA Media Tools</strong><span>Version ${escapeHtml(runtimeState?.appVersion ?? '0.3.0')}</span></div><label class="menu-check"><input id="hardware-acceleration" type="checkbox"${checked(appSettings.hardwareAcceleration)}/><span>Use hardware encoding/decoding acceleration</span></label><button id="view-logs">View Logs</button><button id="view-config">View Running Config</button><button id="check-update">Check for update</button><button class="danger" id="exit-app">Exit</button>`;
   document.body.appendChild(menu);
   menu.querySelector<HTMLInputElement>('#hardware-acceleration')?.addEventListener('change', (event) => {
     appSettings.hardwareAcceleration = (event.currentTarget as HTMLInputElement).checked;
@@ -860,7 +859,10 @@ const showAppMenu = () => {
   menu.querySelector('#view-config')?.addEventListener('click', () => void showTextReader(
     'EA Media Tools running config', 'config · fixed and user presets', () => window.mediaAPI.readConfig(appSettings),
   ));
-  menu.querySelector('#check-update')?.addEventListener('click', async () => showToast(await window.mediaAPI.checkForUpdates()));
+  menu.querySelector('#check-update')?.addEventListener('click', async () => {
+    showToast('Checking for updates…');
+    showToast(await window.mediaAPI.checkForUpdates());
+  });
   menu.querySelector('#exit-app')?.addEventListener('click', () => void window.mediaAPI.closeWindow());
   window.setTimeout(() => document.addEventListener('click', () => menu.remove(), { once: true }), 0);
 };
@@ -1057,7 +1059,8 @@ const renderFilterSettings = (source: SourceFile, settings: JobSettings) => {
   const allow10Bit = hevcOutput && (isHdr || Boolean(video?.isHevcMain10));
   const supports10Bit = encoderCanOutput10Bit(settings.encoder);
   const hasSurround = Boolean(source.media?.audio.some((track) => settings.audio[track.index]?.enabled && !track.isStereo));
-  const cropDetail = source.media?.suggestedCrop ? `Detected ${source.media.suggestedCrop}` : 'No crop detected; full frame will be retained';
+  const crop = detectedCropForSource(source);
+  const cropDetail = crop ? `Detected ${crop.filter}` : 'No crop detected; full frame will be retained';
   return `<div class="filter-layout"><section class="settings-card"><div class="card-title"><div><span>PICTURE FILTERS</span><h3>Automatic processing</h3></div>${icon('sliders', 22)}</div>
     <div class="filter-options"><label class="toggle-row"><span><strong>Auto Crop</strong><small>${escapeHtml(cropDetail)}</small></span><input type="checkbox" data-filter="autoCrop"${checked(settings.filters.autoCrop)}/><i></i></label>
     <label class="toggle-row ${isHdr ? '' : 'disabled'}"><span><strong>HDR to SDR</strong><small>${isHdr ? `Tone-map ${escapeHtml(hdrLabel(source))} to SDR` : 'Unavailable because the source is SDR'}</small></span><input type="checkbox" data-filter="toneMapHdrToSdr"${checked(settings.filters.toneMapHdrToSdr)}${isHdr ? '' : ' disabled'}/><i></i></label>
@@ -1264,7 +1267,7 @@ const startApplication = async () => {
     }
     await new Promise((resolve) => window.setTimeout(resolve, runtimeState?.phase === 'error' ? 900 : 350));
   } catch (error) {
-    runtimeState = { phase: 'error', message: error instanceof Error ? error.message : 'Unable to initialize FFmpeg', progress: null, appVersion: '0.2.0', isPackaged: false, updateEnabled: false, ffmpegAvailable: false, ffmpegPath: '', ffprobePath: '', ffmpegVersion: null, releaseTag: null };
+    runtimeState = { phase: 'error', message: error instanceof Error ? error.message : 'Unable to initialize FFmpeg', progress: null, appVersion: '0.3.0', isPackaged: false, updateEnabled: false, ffmpegAvailable: false, ffmpegPath: '', ffprobePath: '', ffmpegVersion: null, releaseTag: null };
     renderBootstrap(runtimeState); await new Promise((resolve) => window.setTimeout(resolve, 900));
   } finally { removeProgressListener(); }
   renderWelcome();
