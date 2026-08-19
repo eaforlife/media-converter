@@ -18,6 +18,7 @@ contextBridge.exposeInMainWorld('mediaAPI', {
   releasePreviews: (ids: string[]): Promise<void> => ipcRenderer.invoke('source:release-previews', ids),
   minimizeWindow: (): Promise<void> => ipcRenderer.invoke('window:minimize'),
   closeWindow: (): Promise<void> => ipcRenderer.invoke('window:close'),
+  finishAndClose: (): Promise<void> => ipcRenderer.invoke('app:finish-and-close'),
   checkForUpdates: (): Promise<string> => ipcRenderer.invoke('app:check-update'),
   detectHardware: (): Promise<HardwareCapabilities> => ipcRenderer.invoke('hardware:detect'),
   readLog: (): Promise<string> => ipcRenderer.invoke('log:read'),
@@ -50,6 +51,7 @@ declare global {
       releasePreviews: (ids: string[]) => Promise<void>;
       minimizeWindow: () => Promise<void>;
       closeWindow: () => Promise<void>;
+      finishAndClose: () => Promise<void>;
       checkForUpdates: () => Promise<string>;
       detectHardware: () => Promise<HardwareCapabilities>;
       readLog: () => Promise<string>;

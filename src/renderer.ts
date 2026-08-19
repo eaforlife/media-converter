@@ -6,6 +6,7 @@ import { cuvidCrop, detectedCrop } from './video-crop';
 import { bufferSizeFor, deliveryPresetForOutput, scaleDimensionsFor, videoOutputProfile } from './video-output-profile';
 import { applyEncodeProgress, createEncodeQueueProgress, isQueueTerminal } from './encode-progress-state';
 import type { EncodeJobProgressState, EncodeQueueProgressState } from './encode-progress-state';
+import { formatSessionFfmpegCommand } from './ffmpeg-command-display';
 import type {
   AppSettings, AudioStreamInfo, EncodeJob, EncodeProgress, FilterSettings, HardwareCapabilities, RuntimeState, SavedPreset,
   ScaleMode, SourceFile, StreamFlags, SubtitleStreamInfo,
@@ -721,8 +722,6 @@ const createEncodeJob = (source: SourceFile): EncodeJob | null => {
   };
 };
 
-const formatEncodeArguments = (command: string[]) => command.slice(1).map(displayArgument).join(' ');
-
 const formatElapsed = (seconds: number | null) => {
   if (seconds === null || !Number.isFinite(seconds)) return 'Calculating…';
   const whole = Math.max(0, Math.round(seconds));
@@ -740,6 +739,32 @@ const encodeStatusLabel = (job: EncodeJobProgressState) => {
   if (job.status === 'failed') return 'Failed';
   if (job.status === 'cancelled') return 'Cancelled';
   return 'Not encoded';
+};
+
+const renderLiveFfmpegOutput = () => {
+  const modal = document.querySelector<HTMLElement>('.encode-modal');
+  const output = modal?.querySelector<HTMLElement>('#encode-live-output');
+  if (!output || !encodeQueueProgress) return;
+  const commands = encodeQueueProgress.jobs.filter((job) => job.command);
+  output.replaceChildren();
+  if (!commands.length) {
+    const waiting = document.createElement('p');
+    waiting.className = 'encode-live-waiting';
+    waiting.textContent = 'Waiting for the first FFmpeg process to start…';
+    output.appendChild(waiting);
+    return;
+  }
+  commands.forEach((job) => {
+    const entry = document.createElement('section');
+    entry.className = 'encode-live-entry';
+    const label = document.createElement('strong');
+    label.textContent = `encode ${job.jobIndex} · ${job.sourceName}`;
+    const command = document.createElement('pre');
+    command.textContent = `$ ${formatSessionFfmpegCommand(job.command ?? [])}`;
+    entry.append(label, command);
+    output.appendChild(entry);
+  });
+  output.scrollTop = output.scrollHeight;
 };
 
 const renderEncodePage = () => {
@@ -772,10 +797,7 @@ const renderEncodePage = () => {
   const fill = progressBar?.querySelector<HTMLElement>('span');
   if (fill) fill.style.width = `${percent ?? (active ? 36 : 0)}%`;
 
-  const command = modal.querySelector<HTMLElement>('#encode-command');
-  if (command) command.textContent = job.command
-    ? formatEncodeArguments(job.command)
-    : 'The FFmpeg command will appear when this encode begins.';
+  renderLiveFfmpegOutput();
 
   const error = modal.querySelector<HTMLElement>('#encode-error');
   const message = job.message ?? (terminal ? encodeQueueProgress.message : undefined);
@@ -824,6 +846,12 @@ const renderEncodePage = () => {
       queueAction.textContent = 'Start New';
     }
   }
+  const doneAction = modal.querySelector<HTMLButtonElement>('#encode-done-action');
+  if (doneAction) {
+    doneAction.hidden = !terminal;
+    doneAction.disabled = false;
+    doneAction.textContent = 'Done';
+  }
 };
 
 const startNewEncode = async () => {
@@ -868,16 +896,18 @@ const showEncodeDialog = (jobs: EncodeJob[]) => {
     <div class="encode-progress indeterminate" id="encode-progress"><span></span></div>
     <div class="encode-stats"><div><span>BITRATE</span><strong id="encode-bitrate">—</strong></div><div><span>FPS</span><strong id="encode-fps">—</strong></div><div><span>RUN TIME</span><strong id="encode-runtime">00:00:00</strong></div><div><span>ETA</span><strong id="encode-eta">Calculating…</strong></div></div>
     <div class="encode-output"><div><span>OUTPUT FILE</span><strong id="encode-output-file"></strong></div><div><span>DIRECTORY</span><strong id="encode-output-directory"></strong></div></div>
-    <div class="encode-command-panel"><button id="toggle-encode-command" aria-expanded="false">${icon('chevron', 15)} Show FFmpeg command</button><div class="encode-command-history" id="encode-command-panel" hidden><pre id="encode-command"></pre></div></div>
-    <pre class="encode-error" id="encode-error" hidden></pre><footer><div class="encode-pagination"><button id="encode-previous" aria-label="Previous encode">Previous</button><strong id="encode-page-number"></strong><button id="encode-next" aria-label="Next encode">Next</button></div><div class="encode-modal-actions"><button class="secondary-button encode-dialog-button" id="encode-job-action"></button><button class="encode-cancel encode-dialog-button" id="encode-queue-action">Cancel all active encodes</button></div></footer></section>`;
+    <pre class="encode-error" id="encode-error" hidden></pre>
+    <div class="encode-live-console" id="encode-live-console" hidden><div class="encode-live-title"><span><i></i> LIVE FFMPEG OUTPUT</span><small>Current encoding session · paths redacted</small></div><div class="encode-live-output" id="encode-live-output"></div></div>
+    <footer><div class="encode-pagination"><button id="encode-previous" aria-label="Previous encode">Previous</button><strong id="encode-page-number"></strong><button id="encode-next" aria-label="Next encode">Next</button><button class="encode-live-button" id="toggle-live-output" aria-expanded="false">Live FFmpeg Output</button></div><div class="encode-modal-actions"><button class="secondary-button encode-dialog-button" id="encode-job-action"></button><button class="encode-cancel encode-dialog-button" id="encode-queue-action">Cancel all active encodes</button><button class="secondary-button encode-dialog-button" id="encode-done-action" hidden>Done</button></div></footer></section>`;
   document.body.appendChild(modal);
-  modal.querySelector<HTMLButtonElement>('#toggle-encode-command')?.addEventListener('click', (event) => {
+  modal.querySelector<HTMLButtonElement>('#toggle-live-output')?.addEventListener('click', (event) => {
     const button = event.currentTarget as HTMLButtonElement;
-    const command = modal.querySelector<HTMLElement>('#encode-command-panel');
+    const consolePanel = modal.querySelector<HTMLElement>('#encode-live-console');
     const expanded = button.getAttribute('aria-expanded') === 'true';
     button.setAttribute('aria-expanded', String(!expanded));
-    button.innerHTML = `${icon('chevron', 15)} ${expanded ? 'Show' : 'Hide'} FFmpeg command`;
-    if (command) command.hidden = expanded;
+    button.classList.toggle('active', !expanded);
+    if (consolePanel) consolePanel.hidden = expanded;
+    if (!expanded) renderLiveFfmpegOutput();
   });
   modal.querySelector('#encode-previous')?.addEventListener('click', () => {
     encodePageIndex -= 1;
@@ -925,6 +955,17 @@ const showEncodeDialog = (jobs: EncodeJob[]) => {
         renderEncodePage();
       }
     }
+  });
+  modal.querySelector<HTMLButtonElement>('#encode-done-action')?.addEventListener('click', async (event) => {
+    const button = event.currentTarget as HTMLButtonElement;
+    if (!encodeQueueProgress || !isQueueTerminal(encodeQueueProgress)) return;
+    button.disabled = true;
+    button.textContent = 'Closing…';
+    await window.mediaAPI.finishAndClose().catch(() => {
+      button.disabled = false;
+      button.textContent = 'Done';
+      showToast('Unable to close the application cleanly');
+    });
   });
   renderEncodePage();
 };
@@ -988,7 +1029,7 @@ const showAppMenu = () => {
   document.querySelector('.app-menu')?.remove();
   const menu = document.createElement('div');
   menu.className = 'app-menu';
-  menu.innerHTML = `<div class="menu-identity"><strong>EA Media Tools</strong><span>Version ${escapeHtml(runtimeState?.appVersion ?? '0.3.2')}</span></div><label class="menu-check"><input id="hardware-acceleration" type="checkbox"${checked(appSettings.hardwareAcceleration)}/><span>Use hardware encoding/decoding acceleration</span></label><button id="view-logs">View Logs</button><button id="view-config">View Running Config</button><button id="check-update">Check for update</button><button class="danger" id="exit-app">Exit</button>`;
+  menu.innerHTML = `<div class="menu-identity"><strong>EA Media Tools</strong><span>Version ${escapeHtml(runtimeState?.appVersion ?? '0.4.0')}</span></div><label class="menu-check"><input id="hardware-acceleration" type="checkbox"${checked(appSettings.hardwareAcceleration)}/><span>Use hardware encoding/decoding acceleration</span></label><button id="view-logs">View Logs</button><button id="view-config">View Running Config</button><button id="check-update">Check for update</button><button class="danger" id="exit-app">Exit</button>`;
   document.body.appendChild(menu);
   menu.querySelector<HTMLInputElement>('#hardware-acceleration')?.addEventListener('change', (event) => {
     appSettings.hardwareAcceleration = (event.currentTarget as HTMLInputElement).checked;
@@ -1434,7 +1475,7 @@ const startApplication = async () => {
     }
     await new Promise((resolve) => window.setTimeout(resolve, runtimeState?.phase === 'error' ? 900 : 350));
   } catch (error) {
-    runtimeState = { phase: 'error', message: error instanceof Error ? error.message : 'Unable to initialize FFmpeg', progress: null, appVersion: '0.3.2', isPackaged: false, updateEnabled: false, ffmpegAvailable: false, ffmpegPath: '', ffprobePath: '', ffmpegVersion: null, releaseTag: null };
+    runtimeState = { phase: 'error', message: error instanceof Error ? error.message : 'Unable to initialize FFmpeg', progress: null, appVersion: '0.4.0', isPackaged: false, updateEnabled: false, ffmpegAvailable: false, ffmpegPath: '', ffprobePath: '', ffmpegVersion: null, releaseTag: null };
     renderBootstrap(runtimeState); await new Promise((resolve) => window.setTimeout(resolve, 900));
   } finally { removeProgressListener(); }
   renderWelcome();

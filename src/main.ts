@@ -9,7 +9,7 @@ import {
 } from './app-update';
 import { initializeLogger, logActivity, readLog, rotateLogForUpdate } from './app-logger';
 import { detectHardwareCapabilities } from './hardware-capabilities';
-import { cancelEncoding, startEncodeQueue } from './encode-runner';
+import { cancelEncoding, cancelEncodingAndWait, startEncodeQueue } from './encode-runner';
 import { analyzeVisual, cleanupPreviews, initializePreviewStorage, releasePreviews } from './media-analysis';
 import { probeMedia } from './media-probe';
 import { initializeRuntime } from './runtime-manager';
@@ -203,6 +203,11 @@ const registerIpc = () => {
   ipcMain.handle('config:read', (_event, settings?: AppSettings) => readConfig(settings));
   ipcMain.handle('window:minimize', (event) => BrowserWindow.fromWebContents(event.sender)?.minimize());
   ipcMain.handle('window:close', (event) => BrowserWindow.fromWebContents(event.sender)?.close());
+  ipcMain.handle('app:finish-and-close', async () => {
+    logActivity('INFO', 'app.done.requested');
+    await cancelEncodingAndWait();
+    app.quit();
+  });
   ipcMain.handle('app:check-update', () => checkForAppUpdate());
 
   ipcMain.handle('source:open-file', async (event, initialDirectory?: string) => {
@@ -353,6 +358,5 @@ app.on('before-quit', (event) => {
   if (handlingSquirrelEvent || cleaningUp) return;
   cleaningUp = true;
   event.preventDefault();
-  cancelEncoding();
-  void cleanupPreviews().finally(() => app.exit(0));
+  void Promise.all([cancelEncodingAndWait(), cleanupPreviews()]).finally(() => app.exit(0));
 });

@@ -10,12 +10,16 @@ import type { EncodeJob, EncodeProgress, EncodeStartResult } from './shared-type
 const activeProcesses = new Map<number, ChildProcessWithoutNullStreams>();
 const cancelCooldowns = new Set<() => void>();
 const cancelledJobs = new Set<number>();
+const activePartialOutputs = new Set<string>();
 let queueRunning = false;
 let cancellationRequested = false;
 let queueFailureRequested = false;
 let queueFailureMessage: string | undefined;
+let activeQueuePromise: Promise<void> | null = null;
 
 const ENCODE_COOLDOWN_MS = 10_000;
+const SHUTDOWN_GRACE_MS = 8_000;
+const SHUTDOWN_FORCE_MS = 2_000;
 
 const parseClock = (value: string | undefined) => {
   const match = value?.match(/^(\d+):(\d+):(\d+(?:\.\d+)?)$/);
@@ -43,8 +47,22 @@ const emit = (webContents: WebContents, progress: EncodeProgress) => {
 };
 
 const removePartialOutput = async (outputPath: string) => {
-  await fs.promises.rm(outputPath, { force: true }).catch(() => undefined);
+  try {
+    await fs.promises.rm(outputPath, { force: true });
+  } catch {
+    // A final shutdown pass retries files that were still locked by FFmpeg.
+  } finally {
+    if (!fs.existsSync(outputPath)) activePartialOutputs.delete(outputPath);
+  }
 };
+
+const waitForQueue = (queue: Promise<void>, timeoutMs: number) => new Promise<boolean>((resolve) => {
+  const timer = setTimeout(() => resolve(false), timeoutMs);
+  void queue.then(
+    () => { clearTimeout(timer); resolve(true); },
+    () => { clearTimeout(timer); resolve(true); },
+  );
+});
 
 const waitForEncodeCooldown = () => new Promise<boolean>((resolve) => {
   const state: { settled: boolean; timer?: ReturnType<typeof setTimeout> } = { settled: false };
@@ -86,6 +104,7 @@ const runJob = (
     outputParts.dir,
     `.${outputParts.name}.ea-part-${crypto.randomUUID()}${outputParts.ext}`,
   );
+  activePartialOutputs.add(temporaryOutput);
   const processArguments = [...job.args];
   processArguments[processArguments.length - 1] = temporaryOutput;
   let stdoutBuffer = '';
@@ -185,6 +204,7 @@ const runJob = (
       try {
         if (fs.existsSync(job.outputPath)) throw new Error(`Output already exists: ${job.outputPath}`);
         await fs.promises.rename(temporaryOutput, job.outputPath);
+        activePartialOutputs.delete(temporaryOutput);
         logActivity('INFO', 'ffmpeg.encode.completed', {
           job: jobIndex,
           outputPath: job.outputPath,
@@ -246,7 +266,7 @@ export const startEncodeQueue = async (
   const concurrency = jobs.length > 1 && jobs.every(isNvencJob) ? 2 : 1;
   logActivity('INFO', 'ffmpeg.queue.started', { jobs: jobs.length, concurrency, cooldownSeconds: 10 });
 
-  void (async () => {
+  const queuePromise = (async () => {
     try {
       let nextIndex = 0;
       const runWorker = async () => {
@@ -313,6 +333,11 @@ export const startEncodeQueue = async (
       queueFailureMessage = undefined;
     }
   })();
+  activeQueuePromise = queuePromise;
+  const clearActiveQueue = () => {
+    if (activeQueuePromise === queuePromise) activeQueuePromise = null;
+  };
+  void queuePromise.then(clearActiveQueue, clearActiveQueue);
 
   return { started: true };
 };
@@ -331,4 +356,15 @@ export const cancelEncoding = (jobIndex?: number) => {
   for (const cancel of [...cancelCooldowns]) cancel();
   stopActiveProcesses();
   return true;
+};
+
+export const cancelEncodingAndWait = async () => {
+  cancelEncoding();
+  const queue = activeQueuePromise;
+  if (queue && !(await waitForQueue(queue, SHUTDOWN_GRACE_MS))) {
+    logActivity('WARN', 'ffmpeg.queue.shutdown-timeout', { activeJobs: [...activeProcesses.keys()] });
+    for (const process of activeProcesses.values()) process.kill('SIGKILL');
+    await waitForQueue(queue, SHUTDOWN_FORCE_MS);
+  }
+  await Promise.all([...activePartialOutputs].map(removePartialOutput));
 };

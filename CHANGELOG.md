@@ -2,6 +2,30 @@
 
 All notable changes to EA Media Tools are documented here.
 
+## [0.4.0] - 2026-08-19
+
+### Added
+
+- Add a paginated progress page for every queued encode, with job-specific pending, active, completed, failed, cancelled, and skipped states.
+- Add individual active-job cancellation alongside queue-wide cancellation for parallel NVENC sessions.
+- Add a session-wide **Live FFmpeg Output** console that appends commands as jobs start and redacts executable, input, and output paths.
+- Add terminal **Start New** and **Done** actions. **Start New** clears the working encode session; **Done** waits for queue and partial-output cleanup before closing the app.
+- Add regression coverage for queue progress state and FFmpeg command redaction.
+
+### Changed
+
+- Keep the progress window open after both single-file and batch queues settle, without a dismiss control during active encoding.
+- Upgrade Electron, ESLint, TypeScript lint integration, update-electron-app, and the latest stable Electron Forge-compatible Vite toolchain.
+- Move Vite configuration to explicit ESM configuration files and remove deprecated build-option warnings.
+- Use the operating system's bsdtar implementation for verified FFmpeg ZIP archives instead of the vulnerable `extract-zip` package.
+
+### Fixed
+
+- Apply strict output-tier scaling, bitrate, buffer, quality, audio, and NVENC settings when a built-in output resolution is selected.
+- Keep buffer size synchronized with maximum bitrate using the active preset multiplier.
+- Correct the Windows x64 updater feed and replace verbose Squirrel failures with actionable feedback.
+- Preserve completed job details and output actions while other files remain active or pending.
+
 ## [0.3.2] - 2026-08-19
 
 ### Changed
@@ -55,6 +79,7 @@ All notable changes to EA Media Tools are documented here.
 - Convert crop offsets to CUVID edge values with division by two and floor rounding.
 - Cancel all active parallel encodes and interrupt pending cooldowns when the queue is stopped or a job fails.
 
+[0.4.0]: https://github.com/eaforlife/media-converter/compare/v0.3.0...v0.4.0
 [0.3.2]: https://github.com/eaforlife/media-converter/compare/v0.3.1...v0.3.2
 [0.3.1]: https://github.com/eaforlife/media-converter/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/eaforlife/media-converter/releases/tag/v0.3.0
