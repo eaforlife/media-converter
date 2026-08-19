@@ -2,13 +2,26 @@
 
 All notable changes to EA Media Tools are documented here.
 
-## [Unreleased]
+## [0.3.1] - 2026-08-19
+
+### Added
+
+- Added automated coverage for automatic, explicit, disabled, and Cellular scaling profiles.
 
 ### Changed
 
 - Moved the development and release-build toolchain to Node.js 24.
 - Updated GitHub Actions to supported releases that run on the Node.js 24 Actions runtime.
 - Kept clean npm 12 installs compatible with Electron Forge's pinned Git-based `node-gyp` dependency.
+- Unified CUDA, QSV, AMF, VA-API, and software scaling around the strict 4K (`2720:-2`), 1080p (`1760:-2`), 720p (`1320:-2`), and 360p/Cellular (`720:-2`) output profiles.
+- Prepend curated release highlights to GitHub's automatically generated full changelog.
+
+### Fixed
+
+- Apply bitrate, buffer, quality, audio, and NVENC multipass settings from the selected output tier instead of the source resolution.
+- Make Streaming at 360p use the same quality and audio profile as Cellular.
+- Preserve an explicitly selected built-in scale profile across every item in a batch and newly added source files.
+- Update buffer size immediately when maximum bitrate changes and preserve the preset buffer multiplier in custom settings.
 
 ## [0.3.0] - 2026-08-19
 
@@ -30,4 +43,5 @@ All notable changes to EA Media Tools are documented here.
 - Convert crop offsets to CUVID edge values with division by two and floor rounding.
 - Cancel all active parallel encodes and interrupt pending cooldowns when the queue is stopped or a job fails.
 
+[0.3.1]: https://github.com/eaforlife/EA-Media-Tools/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/eaforlife/EA-Media-Tools/releases/tag/v0.3.0

@@ -3,6 +3,7 @@ import { parseEpisodeIdentity, sanitizePathSegment, smartSeriesBaseName } from '
 import { BUILT_IN_PRESETS, BUILT_IN_PRESET_NAMES } from './presets';
 import type { BuiltInPresetDefinition, BuiltInPresetName, PreferredVideoCodec, PresetAudioCodec, QualityFamily } from './presets';
 import { cuvidCrop, detectedCrop } from './video-crop';
+import { bufferSizeFor, deliveryPresetForOutput, scaleDimensionsFor, videoOutputProfile } from './video-output-profile';
 import type {
   AppSettings, AudioStreamInfo, EncodeJob, EncodeProgress, FilterSettings, HardwareCapabilities, RuntimeState, SavedPreset,
   ScaleMode, SourceFile, StreamFlags, SubtitleStreamInfo,
@@ -95,12 +96,8 @@ const displayArgument = (value: string) => /^[A-Za-z0-9_./:@=+\\-]+$/.test(value
   : `"${value.replace(/"/g, '\\"')}"`;
 const isDeliveryPreset = (settings: JobSettings) => settings.deliveryMode;
 const builtInPreset = (name: string) => BUILT_IN_PRESETS[name as BuiltInPresetName];
-const recommendedMaxRate = (source: SourceFile) => {
-  const height = source.media?.video?.height ?? 0;
-  if (height > 1080) return 9500;
-  if (height <= 720) return 2500;
-  return 7000;
-};
+const outputProfileFor = (source: SourceFile, scale: ScaleMode, preset: string) =>
+  videoOutputProfile(source.media?.video?.height ?? 0, scale, preset === 'Cellular');
 const hardwareEncoderFor = (codec: PreferredVideoCodec) =>
   hardwareCapabilities.encoders.find((encoder) => encoder.codec === codec)?.id
   ?? hardwareCapabilities.encoders[0]?.id
@@ -207,14 +204,16 @@ const normalizeUniqueFlags = <T extends { flags: StreamFlags }>(record: Record<n
 };
 const initialSettings = (source: SourceFile): JobSettings => {
   const preset = BUILT_IN_PRESETS.Streaming;
-  const maxRate = recommendedMaxRate(source);
+  const outputProfile = outputProfileFor(source, preset.scale, preset.name);
+  const profilePreset = builtInPreset(deliveryPresetForOutput(preset.name, outputProfile.tier)) ?? preset;
+  const maxRate = outputProfile.maxRate;
   const encoder = hardwareEncoderFor(preset.preferredVideoCodec);
   const selectedAudio = preferredAudioIndexes(source.media?.audio ?? []);
   const settings: JobSettings = {
-    preset: 'Streaming', format: preset.format, encoder, resolution: preset.resolution, quality: presetQuality(preset, encoder),
-    videoBitrate: '0', maxRate: String(maxRate), bufferMultiplier: preset.bufferMultiplier, bufferSize: String(maxRate * preset.bufferMultiplier),
+    preset: 'Streaming', format: preset.format, encoder, resolution: outputProfile.scale.join(':'), quality: presetQuality(profilePreset, encoder),
+    videoBitrate: '0', maxRate: String(maxRate), bufferMultiplier: preset.bufferMultiplier, bufferSize: String(bufferSizeFor(maxRate, preset.bufferMultiplier)),
     audio: Object.fromEntries((source.media?.audio ?? []).map((track) => [track.index, {
-      enabled: selectedAudio.has(track.index), codec: 'libfdk_aac', bitrate: audioBitrateFor('Streaming', 'libfdk_aac', track.isStereo),
+      enabled: selectedAudio.has(track.index), codec: 'libfdk_aac', bitrate: audioBitrateFor(profilePreset.name, 'libfdk_aac', track.isStereo),
       flags: selectedAudio.has(track.index)
         ? preferredAudioFlags(track, source.media?.audio ?? [])
         : { default: false, forced: false, hearingImpaired: false },
@@ -251,18 +250,22 @@ const applyPreset = (source: SourceFile, preset: string, persist = true) => {
     : hardwareCapabilities.encoders.some((item) => item.id === saved!.encoder)
       ? saved!.encoder
       : hardwareEncoderFor(preferredCodecForEncoder(saved!.encoder));
+  const outputProfile = defaults ? outputProfileFor(source, defaults.scale, defaults.name) : null;
+  const profileDefaults = defaults && outputProfile
+    ? builtInPreset(deliveryPresetForOutput(defaults.name, outputProfile.tier)) ?? defaults
+    : null;
   Object.assign(settings, {
     preset,
     format: selectedPreset.format,
     encoder,
-    quality: defaults ? presetQuality(defaults, encoder) : normalizeQuality(saved!.quality),
+    quality: defaults ? presetQuality(profileDefaults!, encoder) : normalizeQuality(saved!.quality),
     videoBitrate: defaults ? '0' : saved!.videoBitrate,
-    maxRate: defaults ? String(defaults.bitrateControl ? recommendedMaxRate(source) : 0) : saved!.maxRate,
+    maxRate: defaults ? String(defaults.bitrateControl ? outputProfile!.maxRate : 0) : saved!.maxRate,
     bufferMultiplier: defaults ? defaults.bufferMultiplier : saved!.bufferMultiplier,
-    bufferSize: defaults ? String(recommendedMaxRate(source) * defaults.bufferMultiplier) : saved!.bufferSize,
+    bufferSize: defaults ? String(bufferSizeFor(outputProfile!.maxRate, defaults.bufferMultiplier)) : saved!.bufferSize,
     deliveryMode: selectedPreset.deliveryMode,
   });
-  if (defaults) settings.resolution = defaults.resolution;
+  if (defaults) settings.resolution = defaults.scale === 'disabled' ? defaults.resolution : outputProfile!.scale.join(':');
   settings.filters = defaults
     ? { ...defaultFilters(source), scale: defaults.scale, scaleLocked: defaults.scaleLocked }
     : { ...saved!.filters };
@@ -270,7 +273,7 @@ const applyPreset = (source: SourceFile, preset: string, persist = true) => {
   const selectedAudio = preferredAudioIndexes(source.media?.audio ?? []);
   for (const track of source.media?.audio ?? []) settings.audio[track.index] = {
     enabled: selectedAudio.has(track.index), codec,
-    bitrate: defaults ? audioBitrateFor(preset, codec, track.isStereo) : saved!.audioBitrate,
+    bitrate: defaults ? audioBitrateFor(profileDefaults!.name, codec, track.isStereo) : saved!.audioBitrate,
     flags: selectedAudio.has(track.index)
       ? preferredAudioFlags(track, source.media?.audio ?? [])
       : { default: false, forced: false, hearingImpaired: false },
@@ -287,6 +290,32 @@ const applyPreset = (source: SourceFile, preset: string, persist = true) => {
     appSettings.lastPreset = preset;
     void persistAppSettings();
   }
+};
+const applyBuiltInScaleProfile = (
+  source: SourceFile,
+  settings: JobSettings,
+  scale: ScaleMode,
+) => {
+  const defaults = builtInPreset(settings.preset);
+  if (!defaults) return false;
+  const outputProfile = outputProfileFor(source, scale, defaults.name);
+  const profileDefaults = builtInPreset(deliveryPresetForOutput(defaults.name, outputProfile.tier)) ?? defaults;
+  settings.filters.scale = scale;
+  settings.filters.scaleLocked = defaults.scaleLocked;
+  settings.resolution = scale === 'disabled' ? defaults.resolution : outputProfile.scale.join(':');
+  settings.quality = presetQuality(profileDefaults, settings.encoder);
+  settings.videoBitrate = '0';
+  settings.maxRate = String(defaults.bitrateControl ? outputProfile.maxRate : 0);
+  settings.bufferMultiplier = defaults.bufferMultiplier;
+  settings.bufferSize = String(bufferSizeFor(outputProfile.maxRate, defaults.bufferMultiplier));
+  settings.deliveryMode = profileDefaults.deliveryMode;
+  for (const track of source.media?.audio ?? []) {
+    const audio = settings.audio[track.index];
+    if (audio && audio.codec !== 'copy') {
+      audio.bitrate = audioBitrateFor(profileDefaults.name, audio.codec, track.isStereo);
+    }
+  }
+  return true;
 };
 const matchingTrackIndex = <T extends { index: number; language: string }>(
   originTracks: T[],
@@ -331,7 +360,6 @@ const syncBatchTrackSettings = (
 };
 const markCustom = (settings: JobSettings) => {
   settings.preset = 'Custom';
-  settings.bufferMultiplier = 1;
   settings.filters.scaleLocked = false;
   appSettings.lastPreset = 'Custom';
   appSettings.workingPreset = snapshotPreset(settings, 'Custom');
@@ -356,7 +384,7 @@ const snapshotPreset = (settings: JobSettings, name: string): SavedPreset => {
     quality: settings.quality,
     videoBitrate: settings.videoBitrate,
     maxRate: settings.maxRate,
-    bufferMultiplier: 1,
+    bufferMultiplier: settings.bufferMultiplier,
     bufferSize: settings.bufferSize,
     deliveryMode: settings.deliveryMode,
     audioCodec: firstAudio.codec,
@@ -487,23 +515,17 @@ const hardwareInputArguments = (source: SourceFile, settings: JobSettings) => {
   return { args: ['-hwaccel', 'auto'], cropHandledByDecoder: false, backend: 'software' as const };
 };
 const hardwareScaleDimensions = (source: SourceFile, settings: JobSettings): [string, string] | null => {
-  if (settings.filters.scale === 'disabled') return null;
-  if (settings.preset === 'Cellular') return ['720', '-2'];
-  if (settings.filters.scale === 'auto') {
-    const height = source.media?.video?.height ?? 0;
-    if (height > 1440) return ['2720', '-2'];
-    if (height > 720) return ['1780', '-2'];
-    return ['1320', '-2'];
-  }
-  const overrides: Record<Exclude<ScaleMode, 'auto' | 'disabled'>, [string, string]> = {
-    '1080p': ['1920', '-2'], '720p': ['1280', '-2'], '360p': ['720', '-2'],
-  };
-  return overrides[settings.filters.scale];
+  const dimensions = scaleDimensionsFor(
+    source.media?.video?.height ?? 0,
+    settings.filters.scale,
+    settings.preset === 'Cellular',
+  );
+  return dimensions ? [dimensions[0], dimensions[1]] : null;
 };
-const softwareScaleFilter = (scale: ScaleMode) => ({
-  auto: "scale=w='min(1920,iw)':h=-2", '1080p': 'scale=-2:1080',
-  '720p': 'scale=-2:720', '360p': 'scale=-2:360', disabled: null,
-} satisfies Record<ScaleMode, string | null>)[scale];
+const softwareScaleFilter = (source: SourceFile, settings: JobSettings) => {
+  const dimensions = hardwareScaleDimensions(source, settings);
+  return dimensions ? `scale=${dimensions[0]}:${dimensions[1]}` : null;
+};
 const softwareToneMapFilters = (dolbyVision: boolean, format: 'nv12' | 'p010le') => [
   ...(dolbyVision ? ['setparams=color_primaries=bt2020:color_trc=smpte2084:colorspace=bt2020nc'] : []),
   'zscale=t=linear:npl=100', 'format=gbrpf32le', 'zscale=p=bt709',
@@ -517,7 +539,7 @@ const nvencDeliveryArguments = (settings: JobSettings) => settings.deliveryMode 
 ] : [];
 const nvencFeatureStatuses = (source: SourceFile, settings: JobSettings) => {
   const delivery = settings.deliveryMode;
-  const multipass = (source.media?.video?.height ?? 0) <= 1080;
+  const multipass = outputProfileFor(source, settings.filters.scale, settings.preset).nvencMultipass;
   return [
     { label: 'HQ Tune', active: true, detail: 'tune hq' },
     { label: 'Multipass', active: multipass, detail: multipass ? 'Quarter-resolution pass' : 'Disabled above 1080p' },
@@ -550,7 +572,7 @@ const getCommandArguments = (source: SourceFile) => {
   if (settings.encoder.endsWith('_nvenc')) {
     args.push(
       '-preset', nvencPreset(settings.preset), '-tune', 'hq', '-rc:v', 'vbr', '-cq:v', settings.quality,
-      '-multipass', (source.media?.video?.height ?? 0) <= 1080 ? '1' : '0',
+      '-multipass', outputProfileFor(source, settings.filters.scale, settings.preset).nvencMultipass ? '1' : '0',
     );
     args.push(...nvencDeliveryArguments(settings));
   }
@@ -612,12 +634,12 @@ const getCommandArguments = (source: SourceFile) => {
       filters.push('hwdownload', `format=${downloadFormat}`, ...softwareToneMapFilters(Boolean(video?.hasDolbyVision), toneMapFormat));
     }
   } else if (hardwareInput.backend === 'vaapi') {
-    const scale = softwareScaleFilter(settings.filters.scale);
+    const scale = softwareScaleFilter(source, settings);
     if (scale) filters.push(scale);
     if (toneMap) filters.push(...softwareToneMapFilters(Boolean(video?.hasDolbyVision), toneMapFormat));
     filters.push(`format=${main10Output ? 'p010le' : 'nv12'}`, 'hwupload');
   } else {
-    const scale = softwareScaleFilter(settings.filters.scale);
+    const scale = softwareScaleFilter(source, settings);
     if (scale) filters.push(scale);
     if (toneMap) filters.push(...softwareToneMapFilters(Boolean(video?.hasDolbyVision), toneMapFormat));
     else if (main10Output) filters.push('format=p010le');
@@ -844,7 +866,7 @@ const showAppMenu = () => {
   document.querySelector('.app-menu')?.remove();
   const menu = document.createElement('div');
   menu.className = 'app-menu';
-  menu.innerHTML = `<div class="menu-identity"><strong>EA Media Tools</strong><span>Version ${escapeHtml(runtimeState?.appVersion ?? '0.3.0')}</span></div><label class="menu-check"><input id="hardware-acceleration" type="checkbox"${checked(appSettings.hardwareAcceleration)}/><span>Use hardware encoding/decoding acceleration</span></label><button id="view-logs">View Logs</button><button id="view-config">View Running Config</button><button id="check-update">Check for update</button><button class="danger" id="exit-app">Exit</button>`;
+  menu.innerHTML = `<div class="menu-identity"><strong>EA Media Tools</strong><span>Version ${escapeHtml(runtimeState?.appVersion ?? '0.3.1')}</span></div><label class="menu-check"><input id="hardware-acceleration" type="checkbox"${checked(appSettings.hardwareAcceleration)}/><span>Use hardware encoding/decoding acceleration</span></label><button id="view-logs">View Logs</button><button id="view-config">View Running Config</button><button id="check-update">Check for update</button><button class="danger" id="exit-app">Exit</button>`;
   document.body.appendChild(menu);
   menu.querySelector<HTMLInputElement>('#hardware-acceleration')?.addEventListener('change', (event) => {
     appSettings.hardwareAcceleration = (event.currentTarget as HTMLInputElement).checked;
@@ -1099,13 +1121,26 @@ const bindContentEvents = () => {
   if (!source) return;
   const settings = getSettings(source);
   document.querySelector<HTMLInputElement>('#quality')?.addEventListener('input', (event) => { settings.quality = (event.currentTarget as HTMLInputElement).value; markCustom(settings); updateCommand(); });
-  document.querySelectorAll<HTMLInputElement>('[data-video-rate]').forEach((control) => control.addEventListener('change', () => {
+  const updateVideoRate = (control: HTMLInputElement) => {
     const field = control.dataset.videoRate as 'videoBitrate' | 'maxRate' | 'bufferSize';
     settings[field] = String(Math.max(0, Number(control.value) || 0));
-    if (field === 'maxRate') settings.bufferSize = String(Number(settings.maxRate) * settings.bufferMultiplier);
-    markCustom(settings);
-    renderWorkspace();
-  }));
+    if (field === 'maxRate') {
+      settings.bufferSize = String(bufferSizeFor(Number(settings.maxRate), settings.bufferMultiplier));
+      const buffer = document.querySelector<HTMLInputElement>('[data-video-rate="bufferSize"]');
+      if (buffer) buffer.value = settings.bufferSize;
+    }
+  };
+  document.querySelectorAll<HTMLInputElement>('[data-video-rate]').forEach((control) => {
+    control.addEventListener('input', () => {
+      updateVideoRate(control);
+      updateCommand();
+    });
+    control.addEventListener('change', () => {
+      updateVideoRate(control);
+      markCustom(settings);
+      renderWorkspace();
+    });
+  });
   (['format', 'encoder'] as const).forEach((field) => document.querySelector<HTMLSelectElement>(`#${field}`)?.addEventListener('change', (event) => {
     const value = (event.currentTarget as HTMLSelectElement).value;
     if (field === 'format') {
@@ -1170,8 +1205,14 @@ const bindContentEvents = () => {
     renderWorkspace();
   }));
   document.querySelector<HTMLSelectElement>('#filter-scale')?.addEventListener('change', (event) => {
-    settings.filters.scale = (event.currentTarget as HTMLSelectElement).value as ScaleMode;
-    markCustom(settings);
+    const scale = (event.currentTarget as HTMLSelectElement).value as ScaleMode;
+    if (builtInPreset(settings.preset)) {
+      for (const item of sources) applyBuiltInScaleProfile(item, getSettings(item), scale);
+      void persistAppSettings();
+    } else {
+      settings.filters.scale = scale;
+      markCustom(settings);
+    }
     renderWorkspace();
   });
   document.querySelector<HTMLInputElement>('[data-job-behavior="doNotReplaceAudio"]')?.addEventListener('change', (event) => {
@@ -1249,6 +1290,9 @@ const addSources = async () => {
   if (referenceSource && referenceSettings) {
     additions.forEach((item) => {
       applyPreset(item, referenceSettings.preset, false);
+      if (builtInPreset(referenceSettings.preset)) {
+        applyBuiltInScaleProfile(item, getSettings(item), referenceSettings.filters.scale);
+      }
       syncBatchTrackSettings(referenceSource, referenceSettings, item, getSettings(item));
     });
   }
@@ -1267,7 +1311,7 @@ const startApplication = async () => {
     }
     await new Promise((resolve) => window.setTimeout(resolve, runtimeState?.phase === 'error' ? 900 : 350));
   } catch (error) {
-    runtimeState = { phase: 'error', message: error instanceof Error ? error.message : 'Unable to initialize FFmpeg', progress: null, appVersion: '0.3.0', isPackaged: false, updateEnabled: false, ffmpegAvailable: false, ffmpegPath: '', ffprobePath: '', ffmpegVersion: null, releaseTag: null };
+    runtimeState = { phase: 'error', message: error instanceof Error ? error.message : 'Unable to initialize FFmpeg', progress: null, appVersion: '0.3.1', isPackaged: false, updateEnabled: false, ffmpegAvailable: false, ffmpegPath: '', ffprobePath: '', ffmpegVersion: null, releaseTag: null };
     renderBootstrap(runtimeState); await new Promise((resolve) => window.setTimeout(resolve, 900));
   } finally { removeProgressListener(); }
   renderWelcome();

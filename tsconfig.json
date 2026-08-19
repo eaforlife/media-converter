@@ -13,7 +13,8 @@
     "skipLibCheck": true,
     "sourceMap": true,
     "noEmit": true,
-    "resolveJsonModule": true
+    "resolveJsonModule": true,
+    "allowImportingTsExtensions": true
   },
   "include": ["src/**/*.ts", "*.ts", "*.d.ts"],
   "exclude": ["node_modules", ".vite", "out"]

@@ -2,7 +2,7 @@
 
 EA Media Tools is a desktop video converter powered by Jellyfin FFmpeg. It inspects video, audio, subtitle, chapter, HDR, and Dolby Vision metadata; selects a supported hardware encoder; and runs queued conversions with live progress information.
 
-Version 0.3.0 is the current stable release. Only video input is supported, and a compatible hardware video encoder is required. There is no software-encoding fallback.
+Version 0.3.1 is the current stable release. Only video input is supported, and a compatible hardware video encoder is required. There is no software-encoding fallback.
 
 ## Download
 
@@ -41,7 +41,7 @@ The macOS app is not signed or notarized. To uninstall it, quit the app and move
 Install the downloaded package from a terminal. Replace the filename with the asset you downloaded:
 
 ```bash
-sudo apt install ./ea-media-tools_0.3.0_amd64.deb
+sudo apt install ./ea-media-tools_0.3.1_amd64.deb
 ```
 
 ARM64 systems use the package ending in `arm64.deb`. Launch **EA Media Tools** from the desktop application menu. Remove it with:
@@ -58,6 +58,15 @@ The app then checks the GPU driving the primary physical display. Virtual and se
 
 Folder analysis inspects up to two videos at a time. NVENC-only batches encode up to two files simultaneously; each available encode slot waits 10 seconds before starting its next file. Batches using another hardware encoder remain serial.
 
+Auto Scale chooses an output profile from the source resolution. Selecting a scale explicitly applies that output profile's dimensions, bitrate limits, buffer, and NVENC settings to the active built-in preset:
+
+| Output profile | FFmpeg scale | Maximum video rate |
+| --- | --- | --- |
+| 4K | `2720:-2` | 9500 kbps |
+| 1080p | `1760:-2` | 7000 kbps |
+| 720p | `1320:-2` | 2500 kbps |
+| 360p / Cellular | `720:-2` | 2500 kbps |
+
 ## System requirements
 
 The operating-system floor was reviewed on August 18, 2026. Use a release that still receives vendor security updates:
@@ -71,7 +80,7 @@ The operating-system floor was reviewed on August 18, 2026. Use a release that s
 
 Windows 11 24H2 Home and Pro receive updates through October 13, 2026, so upgrade to a newer serviced Windows release before that date. Microsoft publishes current dates on the [Windows 11 lifecycle page](https://learn.microsoft.com/en-us/lifecycle/products/windows-11-home-and-pro). Apple was still publishing Sonoma 14 security updates when this requirement was reviewed; see [Apple security releases](https://support.apple.com/100100). Debian 12 LTS is supported through June 30, 2028 according to the [Debian LTS announcement](https://www.debian.org/News/2026/20260712), and Ubuntu 24.04 LTS receives standard security maintenance through May 2029 according to the [Ubuntu release cycle](https://ubuntu.com/about/release-cycle).
 
-ARM64 describes the application and Jellyfin FFmpeg runtime architecture, not guaranteed GPU support. Qualcomm/Adreno on Windows and Mali/Rockchip on Linux are not supported in 0.3.0; those systems can encode only if one of the NVIDIA, Intel, or AMD backends below passes detection. Apple silicon uses VideoToolbox and is supported on macOS.
+ARM64 describes the application and Jellyfin FFmpeg runtime architecture, not guaranteed GPU support. Qualcomm/Adreno on Windows and Mali/Rockchip on Linux are not supported in 0.3.1; those systems can encode only if one of the NVIDIA, Intel, or AMD backends below passes detection. Apple silicon uses VideoToolbox and is supported on macOS.
 
 Also required:
 
