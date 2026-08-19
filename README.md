@@ -124,6 +124,17 @@ See Jellyfin's [AMD codec-generation guide](https://jellyfin.org/docs/general/po
 
 Codec generation is not a guarantee: laptop variants, disabled iGPUs, missing firmware, driver versions, Linux media packages, and manufacturer-specific GPU configurations can change what is available. EA Media Tools only enables flags that pass its runtime hardware test.
 
+## Development
+
+Development and release builds require Node.js 24. Use the version declared in `.nvmrc`, then install and verify the project:
+
+```bash
+nvm use
+npm ci
+npm run check
+npm run typecheck:compat
+```
+
 ## Licensing
 
 EA Media Tools source code is available under the [MIT License](LICENSE).

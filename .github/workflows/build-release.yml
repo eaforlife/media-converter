@@ -13,10 +13,10 @@ jobs:
   verify:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v7
         with:
-          node-version: 22
+          node-version-file: '.nvmrc'
           cache: npm
       - run: npm ci
       - run: npm run check
@@ -30,23 +30,23 @@ jobs:
         arch: [x64, arm64]
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v7
         with:
-          node-version: 22
+          node-version-file: '.nvmrc'
           cache: npm
       - run: npm ci
       - run: npm run make -- --platform=win32 --arch=${{ matrix.arch }}
         env:
           EA_RELEASE_ARCH: ${{ matrix.arch }}
       - if: matrix.arch == 'x64'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ea-media-tools-windows-${{ matrix.arch }}
           path: out/make/squirrel.windows/${{ matrix.arch }}/**/*
           if-no-files-found: error
       - if: matrix.arch == 'arm64'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ea-media-tools-windows-${{ matrix.arch }}
           path: out/make/squirrel.windows/${{ matrix.arch }}/*Setup.exe
@@ -60,14 +60,14 @@ jobs:
         arch: [x64, arm64]
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v7
         with:
-          node-version: 22
+          node-version-file: '.nvmrc'
           cache: npm
       - run: npm ci
       - run: npm run make -- --platform=darwin --arch=${{ matrix.arch }}
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: ea-media-tools-macos-${{ matrix.arch }}
           path: out/make/zip/darwin/${{ matrix.arch }}/*.zip
@@ -81,15 +81,15 @@ jobs:
         arch: [x64, arm64]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v7
         with:
-          node-version: 22
+          node-version-file: '.nvmrc'
           cache: npm
       - run: sudo apt-get update && sudo apt-get install -y fakeroot dpkg
       - run: npm ci
       - run: npm run make -- --platform=linux --arch=${{ matrix.arch }}
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: ea-media-tools-debian-${{ matrix.arch }}
           path: out/make/deb/${{ matrix.arch }}/*.deb
@@ -102,10 +102,10 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           path: release-artifacts
-      - uses: softprops/action-gh-release@v2
+      - uses: softprops/action-gh-release@v3
         with:
           prerelease: false
           generate_release_notes: true

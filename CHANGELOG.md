@@ -2,6 +2,14 @@
 
 All notable changes to EA Media Tools are documented here.
 
+## [Unreleased]
+
+### Changed
+
+- Moved the development and release-build toolchain to Node.js 24.
+- Updated GitHub Actions to supported releases that run on the Node.js 24 Actions runtime.
+- Kept clean npm 12 installs compatible with Electron Forge's pinned Git-based `node-gyp` dependency.
+
 ## [0.3.0] - 2026-08-19
 
 ### Added
