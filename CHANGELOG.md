@@ -2,6 +2,13 @@
 
 All notable changes to EA Media Tools are documented here.
 
+## [Unreleased]
+
+### Fixed
+
+- Make manual update checks join an automatic check already in progress instead of starting a second Squirrel process.
+- Keep installed Windows x64 builds on the loading screen during the startup update check, with live checking, downloading, and restart-prompt status.
+
 ## [0.4.0] - 2026-08-19
 
 ### Added

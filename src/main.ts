@@ -5,7 +5,8 @@ import path from 'node:path';
 import { updateElectronApp, UpdateSourceType } from 'update-electron-app';
 import { APP_NAME, APP_UPDATE_REPOSITORY } from './config';
 import {
-  electronUpdateFeedUrl, friendlyUpdateError, manualUpdateUnavailableMessage, shouldInitializeAppUpdater,
+  electronUpdateFeedUrl, friendlyUpdateError, isUpdateCheckAlreadyRunningError,
+  manualUpdateUnavailableMessage, shouldInitializeAppUpdater, UpdateCheckState,
 } from './app-update';
 import { initializeLogger, logActivity, readLog, rotateLogForUpdate } from './app-logger';
 import { detectHardwareCapabilities } from './hardware-capabilities';
@@ -61,10 +62,143 @@ const VIDEO_EXTENSIONS = new Set([
 let runtimeState: RuntimeState | null = null;
 let hardwareCheck: Promise<HardwareCapabilities> | null = null;
 let manualUpdateCheck: Promise<string> | null = null;
+const updateCheckState = new UpdateCheckState();
+autoUpdater.on('checking-for-update', () => updateCheckState.markChecking());
+autoUpdater.on('update-available', () => updateCheckState.markDownloading());
+autoUpdater.on('update-not-available', () => updateCheckState.markIdle());
+autoUpdater.on('update-downloaded', () => updateCheckState.markDownloaded());
+autoUpdater.on('error', () => updateCheckState.markIdle());
 const developmentFfmpeg = () => process.env.EA_FFMPEG_PATH || (process.platform === 'win32' ? 'jellyffmpeg' : 'ffmpeg');
 const developmentFfprobe = () => process.env.EA_FFPROBE_PATH || 'ffprobe';
 const activeFfmpeg = () => runtimeState?.ffmpegPath || developmentFfmpeg();
 const activeFfprobe = () => runtimeState?.ffprobePath || developmentFfprobe();
+
+let startupUpdateCheck: Promise<void> | null = null;
+const initializeStartupAppUpdate = (webContents: Electron.WebContents) => {
+  if (startupUpdateCheck) return startupUpdateCheck;
+  if (!app.isPackaged || !shouldInitializeAppUpdater(process.platform, process.arch)) {
+    if (app.isPackaged) {
+      logActivity('INFO', 'update.disabled', {
+        reason: manualUpdateUnavailableMessage(process.platform, process.arch),
+      });
+    }
+    startupUpdateCheck = Promise.resolve();
+    return startupUpdateCheck;
+  }
+
+  const feedUrl = electronUpdateFeedUrl(
+    APP_UPDATE_REPOSITORY,
+    process.platform,
+    process.arch,
+    app.getVersion(),
+  );
+  logActivity('INFO', 'update.configured', { feedUrl });
+  const notify = (message: string, phase: RuntimeState['phase'] = 'checking-release') => {
+    logActivity('INFO', 'update.startup.progress', { phase, message });
+    if (webContents.isDestroyed()) return;
+    webContents.send('runtime:progress', {
+      phase,
+      message,
+      progress: null,
+      appVersion: app.getVersion(),
+      isPackaged: app.isPackaged,
+      updateEnabled: true,
+      ffmpegAvailable: false,
+      ffmpegPath: activeFfmpeg(),
+      ffprobePath: activeFfprobe(),
+      ffmpegVersion: null,
+      releaseTag: null,
+    } satisfies RuntimeState);
+  };
+
+  startupUpdateCheck = new Promise<void>((resolve) => {
+    let settled = false;
+    const cleanup = () => {
+      clearTimeout(timeout);
+      autoUpdater.removeListener('checking-for-update', onChecking);
+      autoUpdater.removeListener('update-available', onAvailable);
+      autoUpdater.removeListener('update-not-available', onNotAvailable);
+      autoUpdater.removeListener('update-downloaded', onDownloaded);
+      autoUpdater.removeListener('error', onError);
+    };
+    const finish = (message: string, delayMs: number, phase: RuntimeState['phase'] = 'checking-release') => {
+      if (settled) return;
+      settled = true;
+      notify(message, phase);
+      cleanup();
+      setTimeout(resolve, delayMs);
+    };
+    const onChecking = () => notify('Checking for EA Media Tools updates');
+    const onAvailable = () => {
+      clearTimeout(timeout);
+      notify('A new version is available · downloading the update', 'downloading');
+    };
+    const onNotAvailable = () => finish(
+      `EA Media Tools ${app.getVersion()} is up to date`,
+      500,
+    );
+    const onDownloaded = () => notify('Update downloaded · waiting for restart confirmation', 'verifying');
+    const onError = (error: Error) => {
+      if (isUpdateCheckAlreadyRunningError(error.message)) {
+        updateCheckState.markChecking();
+        notify('An update check is already running · waiting for its result');
+        return;
+      }
+      finish(`Update check failed · ${friendlyUpdateError(error.message)}`, 900, 'error');
+    };
+
+    autoUpdater.on('checking-for-update', onChecking);
+    autoUpdater.on('update-available', onAvailable);
+    autoUpdater.on('update-not-available', onNotAvailable);
+    autoUpdater.on('update-downloaded', onDownloaded);
+    autoUpdater.on('error', onError);
+    const timeout = setTimeout(() => finish(
+      'Update check timed out · continuing with the installed version',
+      900,
+      'error',
+    ), 30_000);
+    notify('Preparing the application update service');
+
+    updateElectronApp({
+      updateSource: {
+        type: UpdateSourceType.ElectronPublicUpdateService,
+        repo: APP_UPDATE_REPOSITORY,
+      },
+      updateInterval: '1 hour',
+      notifyUser: true,
+      onNotifyUser: (info) => {
+        void (async () => {
+          const owner = BrowserWindow.fromWebContents(webContents);
+          const options: Electron.MessageBoxOptions = {
+            type: 'info',
+            buttons: ['Restart and update', 'Later'],
+            defaultId: 0,
+            cancelId: 1,
+            title: 'EA Media Tools Update',
+            message: `${info.releaseName || 'A new version'} is ready to install`,
+            detail: 'Restart EA Media Tools now to finish installing the update.',
+          };
+          const result = owner
+            ? await dialog.showMessageBox(owner, options)
+            : await dialog.showMessageBox(options);
+          if (result.response === 0) {
+            logActivity('INFO', 'update.startup.restart-requested', { releaseName: info.releaseName });
+            finish('Restarting to install the update', 0, 'verifying');
+            autoUpdater.quitAndInstall();
+            return;
+          }
+          logActivity('INFO', 'update.startup.deferred', { releaseName: info.releaseName });
+          finish('Update ready · it will install when the app restarts', 500, 'ready');
+        })().catch((error: unknown) => finish(
+          `Unable to show the update prompt · ${error instanceof Error ? error.message : String(error)}`,
+          900,
+          'error',
+        ));
+      },
+    });
+  });
+  return startupUpdateCheck;
+};
 
 const toSourceFile = (filePath: string): SourceFile | null => {
   try {
@@ -139,6 +273,14 @@ const checkForAppUpdate = () => {
   const unavailableMessage = manualUpdateUnavailableMessage(process.platform, process.arch);
   if (unavailableMessage) return Promise.resolve(unavailableMessage);
   if (manualUpdateCheck) return manualUpdateCheck;
+  if (updateCheckState.phase === 'downloading') {
+    return Promise.resolve('An update is available and is downloading in the background.');
+  }
+  if (updateCheckState.phase === 'downloaded') {
+    return Promise.resolve('An update has downloaded and is ready to install when the app restarts.');
+  }
+
+  const shouldStartCheck = updateCheckState.reserveCheck();
 
   const check = new Promise<string>((resolve) => {
     const finish = (message: string, level: 'INFO' | 'ERROR', event: string) => {
@@ -154,16 +296,27 @@ const checkForAppUpdate = () => {
       'INFO',
       'update.manual-check.available',
     );
-    const onNotAvailable = () => finish(
-      `EA Media Tools ${app.getVersion()} is up to date.`,
-      'INFO',
-      'update.manual-check.current',
-    );
-    const onError = (error: Error) => finish(
-      `Update check failed: ${friendlyUpdateError(error.message)}`,
-      'ERROR',
-      'update.manual-check.failed',
-    );
+    const onNotAvailable = () => {
+      updateCheckState.markIdle();
+      finish(
+        `EA Media Tools ${app.getVersion()} is up to date.`,
+        'INFO',
+        'update.manual-check.current',
+      );
+    };
+    const onError = (error: Error) => {
+      if (isUpdateCheckAlreadyRunningError(error.message)) {
+        updateCheckState.markChecking();
+        logActivity('INFO', 'update.manual-check.joined', { version: app.getVersion() });
+        return;
+      }
+      updateCheckState.markIdle();
+      finish(
+        `Update check failed: ${friendlyUpdateError(error.message)}`,
+        'ERROR',
+        'update.manual-check.failed',
+      );
+    };
     const timeout = setTimeout(() => finish(
       'The update check timed out. Please try again.',
       'ERROR',
@@ -171,12 +324,22 @@ const checkForAppUpdate = () => {
     ), 30_000);
     autoUpdater.once('update-available', onAvailable);
     autoUpdater.once('update-not-available', onNotAvailable);
-    autoUpdater.once('error', onError);
+    autoUpdater.on('error', onError);
+    if (!shouldStartCheck) {
+      logActivity('INFO', 'update.manual-check.joined', { version: app.getVersion() });
+      return;
+    }
     try {
       autoUpdater.checkForUpdates();
       logActivity('INFO', 'update.manual-check.started');
     } catch (error) {
-      onError(error instanceof Error ? error : new Error(String(error)));
+      const updateError = error instanceof Error ? error : new Error(String(error));
+      if (isUpdateCheckAlreadyRunningError(updateError.message)) {
+        updateCheckState.markChecking();
+        logActivity('INFO', 'update.manual-check.joined', { version: app.getVersion() });
+      } else {
+        onError(updateError);
+      }
     }
   });
   manualUpdateCheck = check.finally(() => { manualUpdateCheck = null; });
@@ -185,6 +348,7 @@ const checkForAppUpdate = () => {
 
 const registerIpc = () => {
   ipcMain.handle('runtime:initialize', async (event) => {
+    await initializeStartupAppUpdate(event.sender);
     runtimeState = await initializeRuntime(event.sender);
     logActivity('INFO', 'runtime.initialized', runtimeState);
     return runtimeState;
@@ -323,26 +487,6 @@ if (!handlingSquirrelEvent) app.whenReady().then(async () => {
   await initializePreviewStorage();
   registerIpc();
   createWindow();
-
-  if (app.isPackaged) {
-    if (shouldInitializeAppUpdater(process.platform, process.arch)) {
-      logActivity('INFO', 'update.configured', {
-        feedUrl: electronUpdateFeedUrl(APP_UPDATE_REPOSITORY, process.platform, process.arch, app.getVersion()),
-      });
-      updateElectronApp({
-        updateSource: {
-          type: UpdateSourceType.ElectronPublicUpdateService,
-          repo: APP_UPDATE_REPOSITORY,
-        },
-        updateInterval: '1 hour',
-        notifyUser: true,
-      });
-    } else {
-      logActivity('INFO', 'update.disabled', {
-        reason: manualUpdateUnavailableMessage(process.platform, process.arch),
-      });
-    }
-  }
 });
 
 app.on('window-all-closed', () => {

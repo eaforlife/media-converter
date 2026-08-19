@@ -11,6 +11,26 @@ export const electronUpdateFeedUrl = (
 export const shouldInitializeAppUpdater = (platform: NodeJS.Platform, arch: string) =>
   platform === 'win32' && arch === 'x64';
 
+export type UpdateCheckPhase = 'idle' | 'checking' | 'downloading' | 'downloaded';
+
+export class UpdateCheckState {
+  phase: UpdateCheckPhase = 'idle';
+
+  reserveCheck() {
+    if (this.phase !== 'idle') return false;
+    this.phase = 'checking';
+    return true;
+  }
+
+  markChecking() { this.phase = 'checking'; }
+  markDownloading() { this.phase = 'downloading'; }
+  markDownloaded() { this.phase = 'downloaded'; }
+  markIdle() { this.phase = 'idle'; }
+}
+
+export const isUpdateCheckAlreadyRunningError = (message: string) =>
+  /AutoUpdater process .*--checkForUpdate.*already running/i.test(message);
+
 export const manualUpdateUnavailableMessage = (platform: NodeJS.Platform, arch: string) => {
   if (platform === 'linux') {
     return 'Updates on Linux are provided through the installed package manager.';
