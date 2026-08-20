@@ -6,6 +6,7 @@ import type { AppSettings, FilterSettings, SavedPreset, ScaleMode } from './shar
 
 const DEFAULT_SETTINGS: AppSettings = {
   hardwareAcceleration: true,
+  useStableFfmpeg: true,
   smartFileNaming: true,
   lastPreset: 'Streaming',
   lastSourceDirectory: '',
@@ -89,8 +90,9 @@ const serializeBuiltInPresets = () => Object.values(BUILT_IN_PRESETS).map((prese
     </preset>`).join('\n');
 
 const serialize = (settings: AppSettings) => `<?xml version="1.0" encoding="UTF-8"?>
-<eaMediaToolsSettings version="5">
+<eaMediaToolsSettings version="6">
   <hardwareAcceleration>${settings.hardwareAcceleration}</hardwareAcceleration>
+  <useStableFfmpeg>${settings.useStableFfmpeg}</useStableFfmpeg>
   <smartFileNaming>${settings.smartFileNaming}</smartFileNaming>
   <lastPreset>${xmlEscape(settings.lastPreset)}</lastPreset>
   <lastSourceDirectory>${xmlEscape(settings.lastSourceDirectory)}</lastSourceDirectory>
@@ -113,6 +115,7 @@ export const loadSettings = async (): Promise<AppSettings> => {
     const xml = await fs.promises.readFile(configPath(), 'utf8');
     return {
       hardwareAcceleration: bool(tag(xml, 'hardwareAcceleration'), true),
+      useStableFfmpeg: bool(tag(xml, 'useStableFfmpeg'), true),
       smartFileNaming: bool(tag(xml, 'smartFileNaming'), true),
       lastPreset: xmlUnescape(tag(xml, 'lastPreset') || 'Streaming'),
       lastSourceDirectory: xmlUnescape(tag(xml, 'lastSourceDirectory') || ''),

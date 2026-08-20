@@ -63,14 +63,13 @@ test('marks unfinished pages when the whole queue is cancelled or fails', () => 
   assert.deepEqual(failed.jobs.map((job) => job.status), ['failed', 'skipped', 'skipped']);
 });
 
-test('Done is available only after completion or a requested queue cancellation settles', () => {
+test('Done is available only after every job has completed or cancelled', () => {
   const running = createEncodeQueueProgress(jobs);
-  assert.equal(canFinishEncodeQueue(running, false), false);
+  assert.equal(canFinishEncodeQueue(running), false);
   const failed = applyEncodeProgress(running, progress('queue-failed', 1));
-  assert.equal(canFinishEncodeQueue(failed, false), false);
+  assert.equal(canFinishEncodeQueue(failed), false);
   const cancelled = applyEncodeProgress(running, progress('queue-cancelled', 1));
-  assert.equal(canFinishEncodeQueue(cancelled, false), false);
-  assert.equal(canFinishEncodeQueue(cancelled, true), true);
+  assert.equal(canFinishEncodeQueue(cancelled), true);
   const completed = applyEncodeProgress(running, progress('queue-completed', 2));
-  assert.equal(canFinishEncodeQueue(completed, false), true);
+  assert.equal(canFinishEncodeQueue(completed), true);
 });

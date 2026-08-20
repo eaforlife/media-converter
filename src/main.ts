@@ -10,10 +10,10 @@ import {
 } from './app-update';
 import { initializeLogger, logActivity, readLog, rotateLogForUpdate } from './app-logger';
 import { detectHardwareCapabilities } from './hardware-capabilities';
-import { cancelEncoding, cancelEncodingAndWait, startEncodeQueue } from './encode-runner';
+import { cancelEncoding, cancelEncodingAndWait, isEncodingActive, startEncodeQueue } from './encode-runner';
 import { analyzeVisual, cleanupPreviews, initializePreviewStorage, releasePreviews } from './media-analysis';
 import { probeMedia } from './media-probe';
-import { initializeRuntime } from './runtime-manager';
+import { initializeRuntime, selectRuntimeChannel } from './runtime-manager';
 import { loadSettings, readConfig, saveSettings } from './settings-store';
 import type { AppSettings, EncodeJob, HardwareCapabilities, RuntimeState, SourceFile } from './shared-types';
 
@@ -108,6 +108,10 @@ const initializeStartupAppUpdate = (webContents: Electron.WebContents) => {
       ffprobePath: activeFfprobe(),
       ffmpegVersion: null,
       releaseTag: null,
+      ffmpegChannel: 'stable',
+      rsgainAvailable: false,
+      rsgainPath: '',
+      rsgainVersion: null,
     } satisfies RuntimeState);
   };
 
@@ -164,7 +168,7 @@ const initializeStartupAppUpdate = (webContents: Electron.WebContents) => {
         type: UpdateSourceType.ElectronPublicUpdateService,
         repo: APP_UPDATE_REPOSITORY,
       },
-      updateInterval: '1 hour',
+      updateInterval: '15 minutes',
       notifyUser: true,
       onNotifyUser: (info) => {
         void (async () => {
@@ -184,6 +188,8 @@ const initializeStartupAppUpdate = (webContents: Electron.WebContents) => {
           if (result.response === 0) {
             logActivity('INFO', 'update.startup.restart-requested', { releaseName: info.releaseName });
             finish('Restarting to install the update', 0, 'verifying');
+            await cancelEncodingAndWait();
+            await cleanupPreviews().catch(() => undefined);
             autoUpdater.quitAndInstall();
             return;
           }
@@ -377,10 +383,23 @@ const readInstalledReleaseChangelog = async () => {
 };
 
 const registerIpc = () => {
-  ipcMain.handle('runtime:initialize', async (event) => {
-    await initializeStartupAppUpdate(event.sender);
-    runtimeState = await initializeRuntime(event.sender);
+  ipcMain.handle('app:initialize-update', (event) => initializeStartupAppUpdate(event.sender));
+  ipcMain.handle('runtime:initialize', async (event, useStableFfmpeg?: boolean) => {
+    runtimeState = await initializeRuntime(event.sender, useStableFfmpeg !== false);
     logActivity('INFO', 'runtime.initialized', runtimeState);
+    return runtimeState;
+  });
+  ipcMain.handle('runtime:select-channel', async (_event, useStableFfmpeg: boolean) => {
+    if (isEncodingActive()) throw new Error('FFmpeg cannot be changed while encoding is active');
+    const selected = await selectRuntimeChannel(useStableFfmpeg);
+    if (!selected.ffmpegAvailable) throw new Error(selected.message);
+    runtimeState = selected;
+    hardwareCheck = null;
+    logActivity('INFO', 'runtime.channel.selected', {
+      channel: runtimeState.ffmpegChannel,
+      releaseTag: runtimeState.releaseTag,
+      ffmpegVersion: runtimeState.ffmpegVersion,
+    });
     return runtimeState;
   });
 

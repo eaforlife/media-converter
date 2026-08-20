@@ -82,13 +82,12 @@ let hardwareCapabilities: HardwareCapabilities = {
 let pickerBusy = false;
 let sourceMode: 'file' | 'folder' | null = null;
 let folderSeriesLayout: FolderSeriesLayout | null = null;
-let appSettings: AppSettings = { hardwareAcceleration: true, smartFileNaming: true, lastPreset: 'Streaming', lastSourceDirectory: '', customPresets: [], workingPreset: null };
+let appSettings: AppSettings = { hardwareAcceleration: true, useStableFfmpeg: true, smartFileNaming: true, lastPreset: 'Streaming', lastSourceDirectory: '', customPresets: [], workingPreset: null };
 const settingsByPath = new Map<string, JobSettings>();
 let encodeQueueProgress: EncodeQueueProgressState | null = null;
 let encodePageIndex = 0;
 let encodePagePinned = false;
 let encodeCancelAllRequested = false;
-let encodeCancelAllWasRequested = false;
 const encodeCancellingJobs = new Set<number>();
 
 const escapeHtml = (value: string) => value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#039;');
@@ -126,6 +125,13 @@ const qualityFamily = (encoder: string): QualityFamily => encoder.endsWith('_nve
   ? 'nvenc' : encoder.endsWith('_amf') ? 'amf'
     : encoder.endsWith('_qsv') || encoder.endsWith('_vaapi') || encoder.endsWith('_videotoolbox') ? 'qsv' : 'software';
 const presetQuality = (preset: BuiltInPresetDefinition, encoder: string) => preset.quality[qualityFamily(encoder)];
+const deliveryQuality = (
+  preset: BuiltInPresetDefinition,
+  tier: ReturnType<typeof videoOutputProfile>['tier'],
+  encoder: string,
+) => preset.name === 'Streaming' && tier === '1080p'
+  ? '28'
+  : presetQuality(builtInPreset(deliveryPresetForOutput(preset.name, tier)) ?? preset, encoder);
 const audioBitrateFor = (
   presetName: string,
   codec: AudioCodec,
@@ -241,7 +247,7 @@ const initialSettings = (source: SourceFile): JobSettings => {
   const encoder = hardwareEncoderFor(preset.preferredVideoCodec);
   const selectedAudio = preferredAudioIndexes(source.media?.audio ?? []);
   const settings: JobSettings = {
-    preset: 'Streaming', format: preset.format, encoder, resolution: outputProfile.scale.join(':'), quality: presetQuality(profilePreset, encoder),
+    preset: 'Streaming', format: preset.format, encoder, resolution: outputProfile.scale.join(':'), quality: deliveryQuality(preset, outputProfile.tier, encoder),
     videoBitrate: '0', maxRate: String(maxRate), bufferMultiplier: preset.bufferMultiplier, bufferSize: String(bufferSizeFor(maxRate, preset.bufferMultiplier)),
     processing: { video: true, audio: true, subtitles: true },
     videoMetadata: copyMetadata(source.media?.video?.language ?? 'und', source.media?.video?.flags ?? { default: false, forced: false, hearingImpaired: false }),
@@ -295,7 +301,7 @@ const applyPreset = (source: SourceFile, preset: string, persist = true) => {
     preset,
     format: selectedPreset.format,
     encoder,
-    quality: defaults ? presetQuality(profileDefaults!, encoder) : normalizeQuality(saved!.quality),
+    quality: defaults ? deliveryQuality(defaults, outputProfile!.tier, encoder) : normalizeQuality(saved!.quality),
     videoBitrate: defaults ? '0' : saved!.videoBitrate,
     maxRate: defaults ? String(defaults.bitrateControl ? outputProfile!.maxRate : 0) : saved!.maxRate,
     bufferMultiplier: defaults ? defaults.bufferMultiplier : saved!.bufferMultiplier,
@@ -344,7 +350,7 @@ const applyBuiltInScaleProfile = (
   settings.filters.scale = scale;
   settings.filters.scaleLocked = defaults.scaleLocked;
   settings.resolution = scale === 'disabled' ? defaults.resolution : outputProfile.scale.join(':');
-  settings.quality = presetQuality(profileDefaults, settings.encoder);
+  settings.quality = deliveryQuality(defaults, outputProfile.tier, settings.encoder);
   settings.videoBitrate = '0';
   settings.maxRate = String(defaults.bitrateControl ? outputProfile.maxRate : 0);
   settings.bufferMultiplier = defaults.bufferMultiplier;
@@ -947,7 +953,7 @@ const renderEncodePage = () => {
   }
   const doneAction = modal.querySelector<HTMLButtonElement>('#encode-done-action');
   if (doneAction) {
-    doneAction.hidden = !canFinishEncodeQueue(encodeQueueProgress, encodeCancelAllWasRequested);
+    doneAction.hidden = !canFinishEncodeQueue(encodeQueueProgress);
     doneAction.disabled = false;
     doneAction.textContent = 'Done';
   }
@@ -971,7 +977,6 @@ const startNewEncode = async () => {
   encodePageIndex = 0;
   encodePagePinned = false;
   encodeCancelAllRequested = false;
-  encodeCancelAllWasRequested = false;
   encodeCancellingJobs.clear();
   appSettings.lastPreset = 'Streaming';
   appSettings.lastSourceDirectory = '';
@@ -989,7 +994,6 @@ const showEncodeDialog = (jobs: EncodeJob[]) => {
   encodePageIndex = 0;
   encodePagePinned = false;
   encodeCancelAllRequested = false;
-  encodeCancelAllWasRequested = false;
   encodeCancellingJobs.clear();
   const modal = document.createElement('div');
   modal.className = 'encode-modal';
@@ -1049,19 +1053,17 @@ const showEncodeDialog = (jobs: EncodeJob[]) => {
     }
     if (button.dataset.action === 'cancel-all') {
       encodeCancelAllRequested = true;
-      encodeCancelAllWasRequested = true;
       renderEncodePage();
       const cancelled = await window.mediaAPI.cancelEncode();
       if (!cancelled) {
         encodeCancelAllRequested = false;
-        encodeCancelAllWasRequested = false;
         renderEncodePage();
       }
     }
   });
   modal.querySelector<HTMLButtonElement>('#encode-done-action')?.addEventListener('click', async (event) => {
     const button = event.currentTarget as HTMLButtonElement;
-    if (!encodeQueueProgress || !canFinishEncodeQueue(encodeQueueProgress, encodeCancelAllWasRequested)) return;
+    if (!encodeQueueProgress || !canFinishEncodeQueue(encodeQueueProgress)) return;
     button.disabled = true;
     button.textContent = 'Closing…';
     await window.mediaAPI.finishAndClose().catch(() => {

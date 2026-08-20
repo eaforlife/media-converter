@@ -24,7 +24,11 @@ contextBridge.exposeInMainWorld('mediaAPI', {
   detectHardware: (): Promise<HardwareCapabilities> => ipcRenderer.invoke('hardware:detect'),
   readLog: (): Promise<string> => ipcRenderer.invoke('log:read'),
   readConfig: (settings: AppSettings): Promise<string> => ipcRenderer.invoke('config:read', settings),
-  initializeRuntime: (): Promise<RuntimeState> => ipcRenderer.invoke('runtime:initialize'),
+  initializeAppUpdate: (): Promise<void> => ipcRenderer.invoke('app:initialize-update'),
+  initializeRuntime: (useStableFfmpeg: boolean): Promise<RuntimeState> =>
+    ipcRenderer.invoke('runtime:initialize', useStableFfmpeg),
+  selectRuntimeChannel: (useStableFfmpeg: boolean): Promise<RuntimeState> =>
+    ipcRenderer.invoke('runtime:select-channel', useStableFfmpeg),
   startEncode: (jobs: EncodeJob[]): Promise<EncodeStartResult> => ipcRenderer.invoke('encode:start', jobs),
   cancelEncode: (jobIndex?: number): Promise<boolean> => ipcRenderer.invoke('encode:cancel', jobIndex),
   onEncodeProgress: (callback: (progress: EncodeProgress) => void) => {
@@ -58,7 +62,9 @@ declare global {
       detectHardware: () => Promise<HardwareCapabilities>;
       readLog: () => Promise<string>;
       readConfig: (settings: AppSettings) => Promise<string>;
-      initializeRuntime: () => Promise<RuntimeState>;
+      initializeAppUpdate: () => Promise<void>;
+      initializeRuntime: (useStableFfmpeg: boolean) => Promise<RuntimeState>;
+      selectRuntimeChannel: (useStableFfmpeg: boolean) => Promise<RuntimeState>;
       startEncode: (jobs: EncodeJob[]) => Promise<EncodeStartResult>;
       cancelEncode: (jobIndex?: number) => Promise<boolean>;
       onEncodeProgress: (callback: (progress: EncodeProgress) => void) => () => void;

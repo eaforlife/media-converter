@@ -3,49 +3,43 @@ import { execFile } from 'node:child_process';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import { FFMPEG_RELEASE_API } from './config';
+import { FFMPEG_RELEASE_API, FFMPEG_RELEASES_API, RSGAIN_RELEASE_API } from './config';
 import { logActivity } from './app-logger';
 import type { RuntimePhase, RuntimeState } from './shared-types';
 
-type ReleaseAsset = {
-  name: string;
-  browser_download_url: string;
-  size: number;
-  digest?: string | null;
-};
+type FfmpegChannel = RuntimeState['ffmpegChannel'];
+type ReleaseAsset = { name: string; browser_download_url: string; size: number; digest?: string | null };
+type GitHubRelease = { tag_name: string; prerelease?: boolean; draft?: boolean; assets: ReleaseAsset[] };
+type RuntimeManifest = { releaseTag: string; assetName: string; installedAt: string };
+type LocalRuntime = { available: boolean; version: string | null };
+type RuntimePaths = { directory: string; ffmpeg: string; ffprobe: string; manifest: string };
+type Notify = (phase: RuntimePhase, message: string, progress?: number | null) => void;
 
-type GitHubRelease = {
-  tag_name: string;
-  assets: ReleaseAsset[];
-};
-
-type RuntimeManifest = {
-  releaseTag: string;
-  assetName: string;
-  installedAt: string;
-};
-
-type LocalRuntime = {
-  available: boolean;
-  version: string | null;
-};
-
-const executableName = (name: 'ffmpeg' | 'ffprobe') =>
+const executableName = (name: 'ffmpeg' | 'ffprobe' | 'rsgain') =>
   process.platform === 'win32' ? `${name}.exe` : name;
 
-const getRuntimePaths = () => {
-  const root = app.isPackaged
-    ? process.platform === 'win32'
-      ? path.dirname(process.execPath)
-      : path.join(app.getPath('userData'), 'runtime')
-    : process.cwd();
-  const lib = path.join(root, 'lib');
+const getManagedRoot = () => app.isPackaged
+  ? process.platform === 'win32'
+    ? path.dirname(process.execPath)
+    : path.join(app.getPath('userData'), 'runtime')
+  : process.cwd();
+
+const ffmpegPaths = (channel: FfmpegChannel): RuntimePaths => {
+  const directory = path.join(getManagedRoot(), 'lib', `ffmpeg-${channel}`);
   return {
-    root,
-    lib,
-    ffmpeg: path.join(lib, executableName('ffmpeg')),
-    ffprobe: path.join(lib, executableName('ffprobe')),
-    manifest: path.join(lib, 'ffmpeg-runtime.json'),
+    directory,
+    ffmpeg: path.join(directory, executableName('ffmpeg')),
+    ffprobe: path.join(directory, executableName('ffprobe')),
+    manifest: path.join(directory, 'ffmpeg-runtime.json'),
+  };
+};
+
+const rsgainPaths = () => {
+  const directory = path.join(getManagedRoot(), 'lib', 'rsgain');
+  return {
+    directory,
+    executable: path.join(directory, executableName('rsgain')),
+    manifest: path.join(directory, 'rsgain-runtime.json'),
   };
 };
 
@@ -61,16 +55,26 @@ const execute = (file: string, args: string[], timeout = 20_000): Promise<string
       });
   });
 
-const getVersion = (output: string) =>
+const getFfmpegVersion = (output: string) =>
   output.match(/ffmpeg version\s+([^\s]+)/i)?.[1] ?? output.split(/\r?\n/, 1)[0] ?? null;
+const getRsgainVersion = (output: string) =>
+  output.match(/rsgain\s+v?([^\s]+)/i)?.[1] ?? output.split(/\r?\n/, 1)[0] ?? null;
 
-const inspectLocalRuntime = async (ffmpeg: string, ffprobe: string): Promise<LocalRuntime> => {
+const inspectFfmpeg = async (paths: RuntimePaths): Promise<LocalRuntime> => {
   try {
     const [ffmpegOutput] = await Promise.all([
-      execute(ffmpeg, ['-version']),
-      execute(ffprobe, ['-version']),
+      execute(paths.ffmpeg, ['-version']),
+      execute(paths.ffprobe, ['-version']),
     ]);
-    return { available: true, version: getVersion(ffmpegOutput) };
+    return { available: true, version: getFfmpegVersion(ffmpegOutput) };
+  } catch {
+    return { available: false, version: null };
+  }
+};
+
+const inspectRsgain = async (executable: string): Promise<LocalRuntime> => {
+  try {
+    return { available: true, version: getRsgainVersion(await execute(executable, ['--version'])) };
   } catch {
     return { available: false, version: null };
   }
@@ -78,52 +82,57 @@ const inspectLocalRuntime = async (ffmpeg: string, ffprobe: string): Promise<Loc
 
 const readManifest = async (manifestPath: string): Promise<RuntimeManifest | null> => {
   try {
-    const contents = await fs.promises.readFile(manifestPath, 'utf8');
-    return JSON.parse(contents) as RuntimeManifest;
+    return JSON.parse(await fs.promises.readFile(manifestPath, 'utf8')) as RuntimeManifest;
   } catch {
     return null;
   }
 };
 
-const fetchLatestRelease = async (): Promise<GitHubRelease> => {
-  const response = await net.fetch(FFMPEG_RELEASE_API, {
-    headers: {
-      Accept: 'application/vnd.github+json',
-      'User-Agent': `EA-Media-Tools/${app.getVersion()}`,
-      'X-GitHub-Api-Version': '2022-11-28',
-    },
-  });
+const githubHeaders = () => ({
+  Accept: 'application/vnd.github+json',
+  'User-Agent': `EA-Media-Tools/${app.getVersion()}`,
+  'X-GitHub-Api-Version': '2022-11-28',
+});
+
+const fetchJson = async <T>(url: string): Promise<T> => {
+  const response = await net.fetch(url, { headers: githubHeaders() });
   if (!response.ok) throw new Error(`GitHub returned HTTP ${response.status}`);
-  return response.json() as Promise<GitHubRelease>;
+  return response.json() as Promise<T>;
 };
 
-const selectAsset = (assets: ReleaseAsset[]): ReleaseAsset => {
+const fetchStableRelease = () => fetchJson<GitHubRelease>(FFMPEG_RELEASE_API);
+const fetchPrerelease = async () => {
+  const releases = await fetchJson<GitHubRelease[]>(FFMPEG_RELEASES_API);
+  const release = releases.find((candidate) => candidate.prerelease && !candidate.draft);
+  if (!release) throw new Error('GitHub did not return a Jellyfin FFmpeg prerelease');
+  return release;
+};
+const fetchRsgainRelease = () => fetchJson<GitHubRelease>(RSGAIN_RELEASE_API);
+
+const selectFfmpegAsset = (assets: ReleaseAsset[]): ReleaseAsset => {
   const patterns: Partial<Record<NodeJS.Platform, Partial<Record<NodeJS.Architecture, RegExp>>>> = {
-    win32: {
-      x64: /_portable_win64-clang-gpl\.zip$/i,
-      arm64: /_portable_winarm64-clang-gpl\.zip$/i,
-    },
-    darwin: {
-      x64: /_portable_mac64-gpl\.tar\.xz$/i,
-      arm64: /_portable_macarm64-gpl\.tar\.xz$/i,
-    },
-    linux: {
-      x64: /_portable_linux64-gpl\.tar\.xz$/i,
-      arm64: /_portable_linuxarm64-gpl\.tar\.xz$/i,
-    },
+    win32: { x64: /_portable_win64-clang-gpl\.zip$/i, arm64: /_portable_winarm64-clang-gpl\.zip$/i },
+    darwin: { x64: /_portable_mac64-gpl\.tar\.xz$/i, arm64: /_portable_macarm64-gpl\.tar\.xz$/i },
+    linux: { x64: /_portable_linux64-gpl\.tar\.xz$/i, arm64: /_portable_linuxarm64-gpl\.tar\.xz$/i },
   };
   const pattern = patterns[process.platform]?.[process.arch];
-  if (!pattern) {
-    throw new Error(`No supported Jellyfin FFmpeg package for ${process.platform}/${process.arch}`);
-  }
+  if (!pattern) throw new Error(`No Jellyfin FFmpeg package supports ${process.platform}/${process.arch}`);
   const asset = assets.find((candidate) => pattern.test(candidate.name));
-  if (!asset) {
-    throw new Error(`The latest release has no FFmpeg asset for ${process.platform}/${process.arch}`);
-  }
+  if (!asset) throw new Error(`The Jellyfin FFmpeg release has no asset for ${process.platform}/${process.arch}`);
   return asset;
 };
 
-const extractRuntimeArchive = async (archivePath: string, extractionPath: string) => {
+const selectRsgainAsset = (assets: ReleaseAsset[]): ReleaseAsset | null => {
+  const patterns: Partial<Record<NodeJS.Platform, Partial<Record<NodeJS.Architecture, RegExp>>>> = {
+    win32: { x64: /-win64\.zip$/i },
+    darwin: { x64: /-macOS-x86_64\.zip$/i, arm64: /-macOS-arm64\.zip$/i },
+    linux: { x64: /-Linux\.tar\.xz$/i },
+  };
+  const pattern = patterns[process.platform]?.[process.arch];
+  return pattern ? assets.find((candidate) => pattern.test(candidate.name)) ?? null : null;
+};
+
+const extractArchive = async (archivePath: string, extractionPath: string) => {
   if (/\.zip$/i.test(archivePath)) {
     await execute('tar', ['-xf', archivePath, '-C', extractionPath], 120_000);
     return;
@@ -132,35 +141,30 @@ const extractRuntimeArchive = async (archivePath: string, extractionPath: string
     await execute('tar', ['-xJf', archivePath, '-C', extractionPath], 120_000);
     return;
   }
-  throw new Error(`Unsupported FFmpeg archive format: ${path.basename(archivePath)}`);
+  throw new Error(`Unsupported runtime archive: ${path.basename(archivePath)}`);
 };
 
 const downloadAsset = async (
   asset: ReleaseAsset,
   destination: string,
+  component: string,
   onProgress: (progress: number) => void,
 ) => {
   const response = await net.fetch(asset.browser_download_url, {
     headers: { 'User-Agent': `EA-Media-Tools/${app.getVersion()}` },
   });
-  if (!response.ok || !response.body) {
-    throw new Error(`FFmpeg download failed with HTTP ${response.status}`);
-  }
-
+  if (!response.ok || !response.body) throw new Error(`${component} download failed with HTTP ${response.status}`);
   const total = Number(response.headers.get('content-length')) || asset.size;
   const reader = response.body.getReader();
   const file = fs.createWriteStream(destination);
   let downloaded = 0;
-
   try {
     for (;;) {
       const { done, value } = await reader.read();
       if (done) break;
       const chunk = Buffer.from(value);
       downloaded += chunk.length;
-      if (!file.write(chunk)) {
-        await new Promise<void>((resolve) => file.once('drain', resolve));
-      }
+      if (!file.write(chunk)) await new Promise<void>((resolve) => file.once('drain', resolve));
       if (total > 0) onProgress(Math.min(100, Math.round((downloaded / total) * 100)));
     }
     await new Promise<void>((resolve, reject) => {
@@ -177,70 +181,10 @@ const verifyDigest = async (archivePath: string, digest?: string | null) => {
   if (!digest?.startsWith('sha256:')) return;
   const expected = digest.slice('sha256:'.length).toLowerCase();
   const hash = crypto.createHash('sha256');
-  const stream = fs.createReadStream(archivePath);
-  for await (const chunk of stream) hash.update(chunk);
+  for await (const chunk of fs.createReadStream(archivePath)) hash.update(chunk);
   if (hash.digest('hex').toLowerCase() !== expected) {
-    throw new Error('The downloaded FFmpeg archive failed its SHA-256 check');
+    throw new Error('The downloaded runtime archive failed its SHA-256 check');
   }
-};
-
-const installRuntimeLicenses = async (
-  releaseTag: string,
-  assetName: string,
-  libDirectory: string,
-) => {
-  if (!/^[A-Za-z0-9._-]+$/.test(releaseTag)) {
-    throw new Error('The FFmpeg release tag is not safe to use for license retrieval');
-  }
-
-  const upstreamFiles = [
-    ['LICENSE.md', 'FFMPEG-LICENSE.md'],
-    ['COPYING.GPLv2', 'COPYING.GPLv2'],
-    ['COPYING.GPLv3', 'COPYING.GPLv3'],
-  ] as const;
-  const baseUrl = `https://raw.githubusercontent.com/jellyfin/jellyfin-ffmpeg/${releaseTag}`;
-
-  await Promise.all(upstreamFiles.map(async ([upstreamName, installedName]) => {
-    const response = await net.fetch(`${baseUrl}/${upstreamName}`, {
-      headers: { 'User-Agent': `EA-Media-Tools/${app.getVersion()}` },
-    });
-    if (!response.ok) {
-      throw new Error(`Unable to retrieve the upstream FFmpeg license file ${upstreamName}`);
-    }
-    await fs.promises.writeFile(
-      path.join(libDirectory, installedName),
-      await response.text(),
-      'utf8',
-    );
-  }));
-
-  const sourceUrl =
-    `https://github.com/jellyfin/jellyfin-ffmpeg/archive/refs/tags/${releaseTag}.tar.gz`;
-  const notice = [
-    'Jellyfin FFmpeg — Third-Party Runtime Notice',
-    '=============================================',
-    '',
-    `Installed release: ${releaseTag}`,
-    `Installed asset: ${assetName}`,
-    '',
-    'This runtime was downloaded unmodified from the Jellyfin FFmpeg project.',
-    'It is a separate command-line program and is not covered by the EA Media',
-    'Tools MIT License. The accompanying FFMPEG-LICENSE.md and COPYING.GPL*',
-    'files state the licenses that apply to this runtime.',
-    '',
-    `Corresponding tagged source and build scripts: ${sourceUrl}`,
-    `Release page: https://github.com/jellyfin/jellyfin-ffmpeg/releases/tag/${releaseTag}`,
-    '',
-    'You may inspect, replace, or remove ffmpeg and ffprobe in this directory.',
-    'EA Media Tools and its authors are not affiliated with or endorsed by the',
-    'Jellyfin or FFmpeg projects.',
-    '',
-  ].join('\n');
-  await fs.promises.writeFile(
-    path.join(libDirectory, 'FFMPEG-THIRD-PARTY-NOTICE.txt'),
-    notice,
-    'utf8',
-  );
 };
 
 const findFile = async (directory: string, filename: string): Promise<string | null> => {
@@ -256,138 +200,232 @@ const findFile = async (directory: string, filename: string): Promise<string | n
   return null;
 };
 
-const installRuntime = async (
-  release: GitHubRelease,
-  asset: ReleaseAsset,
-  libDirectory: string,
-  notify: (phase: RuntimePhase, message: string, progress?: number | null) => void,
-) => {
-  const temporaryDirectory = await fs.promises.mkdtemp(
-    path.join(app.getPath('temp'), 'ea-media-tools-ffmpeg-'),
-  );
-  const archivePath = path.join(temporaryDirectory, asset.name);
-  const extractionPath = path.join(temporaryDirectory, 'extracted');
+const replaceDirectory = async (source: string, destination: string) => {
+  const staged = `${destination}.next`;
+  await fs.promises.rm(staged, { recursive: true, force: true });
+  await fs.promises.mkdir(path.dirname(destination), { recursive: true });
+  await fs.promises.cp(source, staged, { recursive: true, force: true });
+  await fs.promises.rm(destination, { recursive: true, force: true });
+  await fs.promises.rename(staged, destination);
+};
 
-  try {
-    notify('downloading', `Downloading ${asset.name}`, 0);
-    await downloadAsset(asset, archivePath, (progress) =>
-      notify('downloading', `Downloading FFmpeg · ${progress}%`, progress));
-    await verifyDigest(archivePath, asset.digest);
-
-    notify('extracting', 'Extracting the FFmpeg runtime', null);
-    await fs.promises.mkdir(extractionPath, { recursive: true });
-    await extractRuntimeArchive(archivePath, extractionPath);
-
-    const stagedFfmpeg = await findFile(extractionPath, executableName('ffmpeg'));
-    const stagedFfprobe = await findFile(extractionPath, executableName('ffprobe'));
-    if (!stagedFfmpeg || !stagedFfprobe || path.dirname(stagedFfmpeg) !== path.dirname(stagedFfprobe)) {
-      throw new Error('The FFmpeg archive did not contain a matching ffmpeg/ffprobe pair');
-    }
-
-    notify('verifying', 'Verifying the downloaded FFmpeg runtime', null);
-    await Promise.all([execute(stagedFfmpeg, ['-h']), execute(stagedFfprobe, ['-version'])]);
-
-    await fs.promises.mkdir(libDirectory, { recursive: true });
-    await fs.promises.cp(path.dirname(stagedFfmpeg), libDirectory, {
-      recursive: true,
-      force: true,
+const installFfmpegLicenses = async (releaseTag: string, assetName: string, directory: string) => {
+  if (!/^[A-Za-z0-9._-]+$/.test(releaseTag)) throw new Error('The FFmpeg release tag is not safe');
+  const files = [
+    ['LICENSE.md', 'FFMPEG-LICENSE.md'],
+    ['COPYING.GPLv2', 'COPYING.GPLv2'],
+    ['COPYING.GPLv3', 'COPYING.GPLv3'],
+  ] as const;
+  const baseUrl = `https://raw.githubusercontent.com/jellyfin/jellyfin-ffmpeg/${releaseTag}`;
+  await Promise.all(files.map(async ([upstream, installed]) => {
+    const response = await net.fetch(`${baseUrl}/${upstream}`, {
+      headers: { 'User-Agent': `EA-Media-Tools/${app.getVersion()}` },
     });
-    if (process.platform !== 'win32') {
-      await Promise.all([
-        fs.promises.chmod(path.join(libDirectory, executableName('ffmpeg')), 0o755),
-        fs.promises.chmod(path.join(libDirectory, executableName('ffprobe')), 0o755),
-      ]);
+    if (!response.ok) throw new Error(`Unable to retrieve the FFmpeg license file ${upstream}`);
+    await fs.promises.writeFile(path.join(directory, installed), await response.text(), 'utf8');
+  }));
+  const sourceUrl = `https://github.com/jellyfin/jellyfin-ffmpeg/archive/refs/tags/${releaseTag}.tar.gz`;
+  await fs.promises.writeFile(path.join(directory, 'FFMPEG-THIRD-PARTY-NOTICE.txt'), [
+    'Jellyfin FFmpeg — Third-Party Runtime Notice',
+    '=============================================', '',
+    `Installed release: ${releaseTag}`, `Installed asset: ${assetName}`, '',
+    'This runtime was downloaded unmodified from the Jellyfin FFmpeg project.',
+    'It is a separate command-line program and is not covered by the EA Media Tools MIT License.',
+    `Corresponding source and build scripts: ${sourceUrl}`,
+    `Release page: https://github.com/jellyfin/jellyfin-ffmpeg/releases/tag/${releaseTag}`, '',
+  ].join('\n'), 'utf8');
+};
+
+const writeManifest = (destination: string, release: GitHubRelease, asset: ReleaseAsset) =>
+  fs.promises.writeFile(destination, `${JSON.stringify({
+    releaseTag: release.tag_name,
+    assetName: asset.name,
+    installedAt: new Date().toISOString(),
+  } satisfies RuntimeManifest, null, 2)}\n`, 'utf8');
+
+const installFfmpeg = async (
+  release: GitHubRelease, asset: ReleaseAsset, paths: RuntimePaths, label: string, notify: Notify,
+) => {
+  const temporary = await fs.promises.mkdtemp(path.join(app.getPath('temp'), 'ea-media-tools-ffmpeg-'));
+  const archive = path.join(temporary, asset.name);
+  const extracted = path.join(temporary, 'extracted');
+  try {
+    notify('downloading', `Downloading ${label} FFmpeg · 0%`, 0);
+    await downloadAsset(asset, archive, `${label} FFmpeg`, (progress) =>
+      notify('downloading', `Downloading ${label} FFmpeg · ${progress}%`, progress));
+    await verifyDigest(archive, asset.digest);
+    notify('extracting', `Extracting ${label} FFmpeg`, null);
+    await fs.promises.mkdir(extracted, { recursive: true });
+    await extractArchive(archive, extracted);
+    const ffmpeg = await findFile(extracted, executableName('ffmpeg'));
+    const ffprobe = await findFile(extracted, executableName('ffprobe'));
+    if (!ffmpeg || !ffprobe || path.dirname(ffmpeg) !== path.dirname(ffprobe)) {
+      throw new Error(`The ${label} FFmpeg archive did not contain an ffmpeg/ffprobe pair`);
     }
-    await installRuntimeLicenses(release.tag_name, asset.name, libDirectory);
-    const manifest: RuntimeManifest = {
-      releaseTag: release.tag_name,
-      assetName: asset.name,
-      installedAt: new Date().toISOString(),
-    };
-    await fs.promises.writeFile(
-      path.join(libDirectory, 'ffmpeg-runtime.json'),
-      `${JSON.stringify(manifest, null, 2)}\n`,
-      'utf8',
-    );
+    notify('verifying', `Verifying ${label} FFmpeg`, null);
+    await Promise.all([execute(ffmpeg, ['-h']), execute(ffprobe, ['-version'])]);
+    await replaceDirectory(path.dirname(ffmpeg), paths.directory);
+    if (process.platform !== 'win32') {
+      await Promise.all([fs.promises.chmod(paths.ffmpeg, 0o755), fs.promises.chmod(paths.ffprobe, 0o755)]);
+    }
+    await installFfmpegLicenses(release.tag_name, asset.name, paths.directory);
+    await writeManifest(paths.manifest, release, asset);
   } finally {
-    await fs.promises.rm(temporaryDirectory, { recursive: true, force: true });
+    await fs.promises.rm(temporary, { recursive: true, force: true });
   }
 };
 
-export const initializeRuntime = async (webContents: WebContents): Promise<RuntimeState> => {
-  const runtimePaths = getRuntimePaths();
-  const activeFfmpeg = app.isPackaged
-    ? runtimePaths.ffmpeg
-    : process.env.EA_FFMPEG_PATH || (process.platform === 'win32' ? 'jellyffmpeg' : 'ffmpeg');
-  const activeFfprobe = app.isPackaged
-    ? runtimePaths.ffprobe
-    : process.env.EA_FFPROBE_PATH || 'ffprobe';
-  const baseState: RuntimeState = {
-    phase: 'checking-local',
-    message: 'Checking the local FFmpeg runtime',
-    progress: null,
-    appVersion: app.getVersion(),
-    isPackaged: app.isPackaged,
-    updateEnabled: app.isPackaged && process.platform !== 'linux',
-    ffmpegAvailable: false,
-    ffmpegPath: activeFfmpeg,
-    ffprobePath: activeFfprobe,
-    ffmpegVersion: null,
-    releaseTag: null,
-  };
+const ensureFfmpeg = async (channel: FfmpegChannel, notify: Notify): Promise<LocalRuntime> => {
+  const paths = ffmpegPaths(channel);
+  const label = channel === 'stable' ? 'stable' : 'pre-release';
+  notify('checking-release', `Checking the latest ${label} Jellyfin FFmpeg release`);
+  const release = channel === 'stable' ? await fetchStableRelease() : await fetchPrerelease();
+  const [local, manifest] = await Promise.all([inspectFfmpeg(paths), readManifest(paths.manifest)]);
+  if (local.available && manifest?.releaseTag === release.tag_name) return local;
+  await installFfmpeg(release, selectFfmpegAsset(release.assets), paths, label, notify);
+  const installed = await inspectFfmpeg(paths);
+  if (!installed.available) throw new Error(`${label} FFmpeg verification failed after installation`);
+  return installed;
+};
 
-  const notify = (phase: RuntimePhase, message: string, progress: number | null = null) => {
-    Object.assign(baseState, { phase, message, progress });
-    logActivity(phase === 'error' ? 'ERROR' : 'INFO', 'runtime.progress', { phase, message, progress });
-    if (!webContents.isDestroyed()) webContents.send('runtime:progress', { ...baseState });
-  };
-
-  notify('checking-local', 'Checking the local FFmpeg runtime');
-  let local = await inspectLocalRuntime(activeFfmpeg, activeFfprobe);
-  Object.assign(baseState, {
-    ffmpegAvailable: local.available,
-    ffmpegVersion: local.version,
-  });
-
-  if (!app.isPackaged) {
-    notify('development', local.available
-      ? `Development mode · FFmpeg ${local.version ?? 'detected'} · downloads disabled`
-      : 'Development mode · FFmpeg downloads disabled');
-    return { ...baseState };
+const ensureRsgain = async (notify: Notify): Promise<LocalRuntime> => {
+  const paths = rsgainPaths();
+  notify('checking-release', 'Checking the rsgain 3.7 runtime');
+  const release = await fetchRsgainRelease();
+  const asset = selectRsgainAsset(release.assets);
+  if (!asset) {
+    logActivity('WARN', 'runtime.rsgain.unsupported', { platform: process.platform, arch: process.arch });
+    return { available: false, version: null };
   }
-
+  const [local, manifest] = await Promise.all([inspectRsgain(paths.executable), readManifest(paths.manifest)]);
+  if (local.available && manifest?.releaseTag === release.tag_name) return local;
+  const temporary = await fs.promises.mkdtemp(path.join(app.getPath('temp'), 'ea-media-tools-rsgain-'));
+  const archive = path.join(temporary, asset.name);
+  const extracted = path.join(temporary, 'extracted');
   try {
-    notify('checking-release', 'Checking the latest stable Jellyfin FFmpeg release');
-    const [release, manifest] = await Promise.all([
-      fetchLatestRelease(),
-      readManifest(runtimePaths.manifest),
-    ]);
-    baseState.releaseTag = release.tag_name;
+    notify('downloading', 'Downloading rsgain 3.7 · 0%', 0);
+    await downloadAsset(asset, archive, 'rsgain', (progress) =>
+      notify('downloading', `Downloading rsgain 3.7 · ${progress}%`, progress));
+    await verifyDigest(archive, asset.digest);
+    notify('extracting', 'Extracting rsgain 3.7', null);
+    await fs.promises.mkdir(extracted, { recursive: true });
+    await extractArchive(archive, extracted);
+    const rsgain = await findFile(extracted, executableName('rsgain'));
+    if (!rsgain) throw new Error('The rsgain archive did not contain its executable');
+    notify('verifying', 'Verifying rsgain 3.7', null);
+    await execute(rsgain, ['--version']);
+    await replaceDirectory(path.dirname(rsgain), paths.directory);
+    if (process.platform !== 'win32') await fs.promises.chmod(paths.executable, 0o755);
+    await fs.promises.writeFile(path.join(paths.directory, 'RSGAIN-THIRD-PARTY-NOTICE.txt'), [
+      'rsgain — Third-Party Runtime Notice',
+      '===================================', '',
+      `Installed release: ${release.tag_name}`, `Installed asset: ${asset.name}`,
+      'Project: https://github.com/complexlogic/rsgain',
+      'License: BSD-2-Clause (see the license material included in this runtime directory).', '',
+    ].join('\n'), 'utf8');
+    await writeManifest(paths.manifest, release, asset);
+  } finally {
+    await fs.promises.rm(temporary, { recursive: true, force: true });
+  }
+  const installed = await inspectRsgain(paths.executable);
+  if (!installed.available) throw new Error('rsgain verification failed after installation');
+  return installed;
+};
 
-    if (local.available && manifest?.releaseTag === release.tag_name) {
-      notify('ready', `FFmpeg ${local.version ?? release.tag_name} is ready`);
-      return { ...baseState };
-    }
+const stateForManagedChannel = async (
+  channel: FfmpegChannel, phase: RuntimePhase, message: string,
+): Promise<RuntimeState> => {
+  const paths = ffmpegPaths(channel);
+  const gainPaths = rsgainPaths();
+  const [ffmpeg, ffmpegManifest, rsgain, rsgainManifest] = await Promise.all([
+    inspectFfmpeg(paths), readManifest(paths.manifest),
+    inspectRsgain(gainPaths.executable), readManifest(gainPaths.manifest),
+  ]);
+  return {
+    phase, message, progress: null, appVersion: app.getVersion(), isPackaged: app.isPackaged,
+    updateEnabled: app.isPackaged && process.platform !== 'linux',
+    ffmpegAvailable: ffmpeg.available, ffmpegPath: paths.ffmpeg, ffprobePath: paths.ffprobe,
+    ffmpegVersion: ffmpeg.version, releaseTag: ffmpegManifest?.releaseTag ?? null,
+    ffmpegChannel: channel,
+    rsgainAvailable: rsgain.available, rsgainPath: gainPaths.executable,
+    rsgainVersion: rsgain.version ?? rsgainManifest?.releaseTag ?? null,
+  };
+};
 
-    const asset = selectAsset(release.assets);
-    await installRuntime(release, asset, runtimePaths.lib, notify);
-    local = await inspectLocalRuntime(runtimePaths.ffmpeg, runtimePaths.ffprobe);
-    if (!local.available) throw new Error('FFmpeg verification failed after installation');
+const developmentState = async (channel: FfmpegChannel): Promise<RuntimeState> => {
+  const unstable = channel === 'unstable';
+  const ffmpegPath = unstable
+    ? process.env.EA_FFMPEG_UNSTABLE_PATH || process.env.EA_FFMPEG_PATH
+    : process.env.EA_FFMPEG_PATH;
+  const ffprobePath = unstable
+    ? process.env.EA_FFPROBE_UNSTABLE_PATH || process.env.EA_FFPROBE_PATH
+    : process.env.EA_FFPROBE_PATH;
+  const paths: RuntimePaths = {
+    directory: '', ffmpeg: ffmpegPath || (process.platform === 'win32' ? 'jellyffmpeg' : 'ffmpeg'),
+    ffprobe: ffprobePath || 'ffprobe', manifest: '',
+  };
+  const local = await inspectFfmpeg(paths);
+  return {
+    phase: 'development',
+    message: local.available
+      ? `Development mode · FFmpeg ${local.version ?? 'detected'} · downloads disabled`
+      : 'Development mode · FFmpeg downloads disabled',
+    progress: null, appVersion: app.getVersion(), isPackaged: false, updateEnabled: false,
+    ffmpegAvailable: local.available, ffmpegPath: paths.ffmpeg, ffprobePath: paths.ffprobe,
+    ffmpegVersion: local.version, releaseTag: null, ffmpegChannel: channel,
+    rsgainAvailable: false, rsgainPath: '', rsgainVersion: null,
+  };
+};
 
-    Object.assign(baseState, {
-      ffmpegAvailable: true,
-      ffmpegVersion: local.version,
-      releaseTag: release.tag_name,
-    });
-    notify('ready', `FFmpeg ${local.version ?? release.tag_name} is ready`);
-  } catch (error) {
-    const detail = error instanceof Error ? error.message : 'Unknown FFmpeg runtime error';
-    if (local.available) {
-      notify('ready', `Using FFmpeg ${local.version ?? 'local'} · update check failed: ${detail}`);
-    } else {
-      notify('error', detail);
+export const selectRuntimeChannel = async (useStable: boolean): Promise<RuntimeState> => {
+  const channel: FfmpegChannel = useStable ? 'stable' : 'unstable';
+  if (!app.isPackaged) return developmentState(channel);
+  const state = await stateForManagedChannel(channel, 'ready', '');
+  state.message = state.ffmpegAvailable
+    ? `${channel === 'stable' ? 'Stable' : 'Pre-release'} FFmpeg ${state.releaseTag ?? state.ffmpegVersion ?? 'ready'} is active`
+    : `${channel === 'stable' ? 'Stable' : 'Pre-release'} FFmpeg is unavailable`;
+  if (!state.ffmpegAvailable) state.phase = 'error';
+  return state;
+};
+
+export const initializeRuntime = async (webContents: WebContents, useStable = true): Promise<RuntimeState> => {
+  const activeChannel: FfmpegChannel = useStable ? 'stable' : 'unstable';
+  if (!app.isPackaged) return developmentState(activeChannel);
+  let state = await stateForManagedChannel(activeChannel, 'checking-local', 'Checking managed runtimes');
+  const notify: Notify = (phase, message, progress = null) => {
+    state = { ...state, phase, message, progress };
+    logActivity(phase === 'error' ? 'ERROR' : 'INFO', 'runtime.progress', { phase, message, progress });
+    if (!webContents.isDestroyed()) webContents.send('runtime:progress', { ...state });
+  };
+  notify('checking-local', 'Checking managed runtimes');
+  const errors: string[] = [];
+  const channels: FfmpegChannel[] = activeChannel === 'stable' ? ['stable', 'unstable'] : ['unstable', 'stable'];
+  for (const channel of channels) {
+    try {
+      await ensureFfmpeg(channel, notify);
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      errors.push(`${channel}: ${detail}`);
+      logActivity('ERROR', 'runtime.ffmpeg.failed', { channel, detail });
     }
   }
-
-  return { ...baseState };
+  try {
+    await ensureRsgain(notify);
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    errors.push(`rsgain: ${detail}`);
+    logActivity('ERROR', 'runtime.rsgain.failed', { detail });
+  }
+  state = await stateForManagedChannel(activeChannel, 'ready', '');
+  if (state.ffmpegAvailable) {
+    const label = activeChannel === 'stable' ? 'Stable' : 'Pre-release';
+    state.message = `${label} FFmpeg ${state.releaseTag ?? state.ffmpegVersion ?? 'ready'} is ready`
+      + (errors.length ? ` · ${errors.length} optional runtime update${errors.length === 1 ? '' : 's'} failed` : '');
+    notify('ready', state.message);
+  } else {
+    state.message = errors.find((message) => message.startsWith(`${activeChannel}:`))
+      ?? `${activeChannel} FFmpeg is unavailable`;
+    notify('error', state.message);
+  }
+  return { ...state };
 };

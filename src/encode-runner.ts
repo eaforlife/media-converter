@@ -386,3 +386,5 @@ export const cancelEncodingAndWait = async () => {
   }
   await Promise.all([...activePartialOutputs].map(removePartialOutput));
 };
+
+export const isEncodingActive = () => queueRunning;

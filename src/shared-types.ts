@@ -126,6 +126,7 @@ export type SavedPreset = {
 
 export type AppSettings = {
   hardwareAcceleration: boolean;
+  useStableFfmpeg: boolean;
   smartFileNaming: boolean;
   lastPreset: string;
   lastSourceDirectory: string;
@@ -155,6 +156,10 @@ export type RuntimeState = {
   ffprobePath: string;
   ffmpegVersion: string | null;
   releaseTag: string | null;
+  ffmpegChannel: 'stable' | 'unstable';
+  rsgainAvailable: boolean;
+  rsgainPath: string;
+  rsgainVersion: string | null;
 };
 
 export type EncodeJob = {

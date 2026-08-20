@@ -105,9 +105,6 @@ export const applyEncodeProgress = (
 
 export const isQueueTerminal = (state: EncodeQueueProgressState) => state.status !== 'running';
 
-export const canFinishEncodeQueue = (
-  state: EncodeQueueProgressState,
-  cancelAllRequested: boolean,
-) => isQueueTerminal(state)
-  && state.jobs.every((job) => !['pending', 'starting', 'encoding'].includes(job.status))
-  && (state.status === 'completed' || cancelAllRequested);
+export const canFinishEncodeQueue = (state: EncodeQueueProgressState) =>
+  isQueueTerminal(state)
+  && state.jobs.every((job) => job.status === 'completed' || job.status === 'cancelled');
