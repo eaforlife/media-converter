@@ -4,6 +4,14 @@ All notable changes to EA Media Tools are documented here.
 
 ## [Unreleased]
 
+## [1.2.1] - 2026-08-25
+
+### Changed
+
+- Use CQ 27 for Streaming jobs whose source or explicitly scaled output resolves to the 1080p profile.
+- Force the Music Video workflow to use NVENC preset `p4` regardless of source resolution.
+- Preserve the original filename stem for audio and music-video conversions without adding a converted prefix or suffix.
+
 ## [1.2.0] - 2026-08-25
 
 ### Added
@@ -152,6 +160,7 @@ All notable changes to EA Media Tools are documented here.
 - Convert crop offsets to CUVID edge values with division by two and floor rounding.
 - Cancel all active parallel encodes and interrupt pending cooldowns when the queue is stopped or a job fails.
 
+[1.2.1]: https://github.com/eaforlife/media-converter/compare/v1.2.0...v1.2.1
 [1.2.0]: https://github.com/eaforlife/media-converter/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/eaforlife/media-converter/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/eaforlife/media-converter/compare/v0.4.0...v1.0.0

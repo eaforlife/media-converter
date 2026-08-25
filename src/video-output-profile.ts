@@ -44,7 +44,10 @@ export const deliveryPresetForOutput = (preset: string, tier: OutputTier) =>
   preset === 'Streaming' && tier === '360p' ? 'Cellular' : preset;
 
 export const deliveryQualityForOutput = (preset: string, tier: OutputTier, fallback: string) =>
-  preset === 'Streaming' && tier === '1080p' ? '28' : fallback;
+  preset === 'Streaming' && tier === '1080p' ? '27' : fallback;
+
+export const nvencPresetForName = (preset: string) =>
+  preset === 'Archive' ? 'p6' : preset === 'Regular' || preset === 'Music Video' ? 'p4' : 'p2';
 
 export const bufferSizeFor = (maxRate: number, multiplier: number) =>
   Math.max(0, maxRate) * Math.max(0, multiplier);

@@ -2,7 +2,7 @@
 
 EA Media Tools is a desktop video and audio converter powered by Jellyfin FFmpeg. It inspects video, audio, subtitle, chapter, HDR, and Dolby Vision metadata; selects hardware or CPU processing; and runs queued conversions with live progress information.
 
-Version 1.2.0, codename **ea-video**, is the current stable release. It supports video files, short music videos with attached artwork, and recursive audio libraries. Hardware acceleration is enabled by default but can be disabled for CPU video encoding and decoding.
+Version 1.2.1, codename **ea-video**, is the current stable release. It supports video files, short music videos with attached artwork, and recursive audio libraries. Hardware acceleration is enabled by default but can be disabled for CPU video encoding and decoding.
 
 ## Download
 
@@ -41,7 +41,7 @@ The macOS app is not signed or notarized. To uninstall it, quit the app and move
 Install the downloaded package from a terminal. Replace the filename with the asset you downloaded:
 
 ```bash
-sudo apt install ./ea-media-tools_1.2.0_amd64.deb
+sudo apt install ./ea-media-tools_1.2.1_amd64.deb
 ```
 
 ARM64 systems use the package ending in `arm64.deb`. Launch **EA Media Tools** from the desktop application menu. Remove it with:
@@ -58,7 +58,7 @@ The managed runtime setup also installs [rsgain 3.7](https://github.com/complexl
 
 Audio folders are scanned recursively. Streaming outputs 96 kbps Opus, or 128 kbps when surround audio is downmixed; Archive outputs 224 kbps libfdk_aac, or 256 kbps for a surround downmix. Converted files retain their source basename and relative artist/album layout beneath `converted`, and matching `.lrc` lyric files are copied beside them. Passthrough leaves the source files in place and can still run library normalization.
 
-Videos shorter than eight minutes with attached cover artwork use the Music Video workflow. It preserves metadata, copies the cover artwork into the finished conversion, checks embedded CEA-608/708 captions automatically, disables smart naming, and scales only 4K sources to `2960:-2`.
+Videos shorter than eight minutes with attached cover artwork use the Music Video workflow. It preserves metadata and the original filename stem, copies the cover artwork into the finished conversion, checks embedded CEA-608/708 captions automatically, uses NVENC preset `p4`, and scales only 4K sources to `2960:-2`.
 
 The app then checks the GPU driving the primary physical display. Virtual and secondary display adapters are ignored and recorded in **View Logs**. An encoder appears only after the corresponding Jellyfin FFmpeg flag completes an actual test encode on the installed hardware.
 
@@ -79,7 +79,7 @@ Auto Scale chooses an output profile from the source resolution. Selecting a sca
 | Output profile | FFmpeg scale | Maximum video rate | Streaming quality |
 | --- | --- | --- | --- |
 | 4K | `2720:-2` | 9500 kbps | CQ 29 |
-| 1080p | `1760:-2` | 7000 kbps | CQ 28 |
+| 1080p | `1760:-2` | 7000 kbps | CQ 27 |
 | 720p | `1320:-2` | 2500 kbps | CQ 29 |
 | 360p / Cellular | `720:-2` | 2500 kbps | CQ 32 |
 

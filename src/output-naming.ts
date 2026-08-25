@@ -1,4 +1,6 @@
-const stripExtension = (name: string) => name.replace(/\.[^.]+$/, '');
+export const stripExtension = (name: string) => name.replace(/\.[^.]+$/, '');
+
+export const preservedOutputBaseName = (name: string) => stripExtension(name);
 
 const normalizeTitle = (value: string) => value
   .replace(/[._]+/g, ' ')

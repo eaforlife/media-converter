@@ -4,6 +4,7 @@ import {
   bufferSizeFor,
   deliveryQualityForOutput,
   deliveryPresetForOutput,
+  nvencPresetForName,
   scaleDimensionsFor,
   videoOutputProfile,
 } from './video-output-profile.ts';
@@ -35,11 +36,17 @@ test('explicit scaling uses the selected output profile instead of the source ti
   equal(videoOutputProfile(sourceHeight, '1080p').nvencMultipass, true);
 });
 
-test('streaming uses CQ 28 for 1080p source and scaled output profiles', () => {
-  equal(deliveryQualityForOutput('Streaming', videoOutputProfile(1080, 'auto').tier, '29'), '28');
-  equal(deliveryQualityForOutput('Streaming', videoOutputProfile(2160, '1080p').tier, '29'), '28');
+test('streaming uses CQ 27 for 1080p source and scaled output profiles', () => {
+  equal(deliveryQualityForOutput('Streaming', videoOutputProfile(1080, 'auto').tier, '29'), '27');
+  equal(deliveryQualityForOutput('Streaming', videoOutputProfile(2160, '1080p').tier, '29'), '27');
   equal(deliveryQualityForOutput('Streaming', videoOutputProfile(2160, 'auto').tier, '29'), '29');
   equal(deliveryQualityForOutput('Archive', videoOutputProfile(1080, 'auto').tier, '18'), '18');
+});
+
+test('music video always uses the NVENC p4 preset', () => {
+  equal(nvencPresetForName('Music Video'), 'p4');
+  equal(nvencPresetForName('Streaming'), 'p2');
+  equal(nvencPresetForName('Archive'), 'p6');
 });
 
 test('cellular and 360p resolve to the same output and delivery profiles', () => {

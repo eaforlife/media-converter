@@ -2,11 +2,11 @@ import './index.css';
 import { APP_CODENAME } from './config';
 import { AUDIO_PRESETS, AUDIO_PRESET_NAMES, audioBitrate, shouldResampleLossless } from './audio-workflow';
 import type { AudioPresetName } from './audio-workflow';
-import { parseEpisodeIdentity, sanitizePathSegment, smartSeriesBaseName } from './output-naming';
+import { parseEpisodeIdentity, preservedOutputBaseName, sanitizePathSegment, smartSeriesBaseName } from './output-naming';
 import { BUILT_IN_PRESETS, BUILT_IN_PRESET_NAMES } from './presets';
 import type { BuiltInPresetDefinition, BuiltInPresetName, PreferredVideoCodec, PresetAudioCodec, QualityFamily } from './presets';
 import { cuvidCrop, detectedCrop } from './video-crop';
-import { bufferSizeFor, deliveryPresetForOutput, deliveryQualityForOutput, scaleDimensionsFor, videoOutputProfile } from './video-output-profile';
+import { bufferSizeFor, deliveryPresetForOutput, deliveryQualityForOutput, nvencPresetForName, scaleDimensionsFor, videoOutputProfile } from './video-output-profile';
 import { applyEncodeProgress, canFinishEncodeQueue, createEncodeQueueProgress, isQueueTerminal } from './encode-progress-state';
 import type { EncodeJobProgressState, EncodeQueueProgressState } from './encode-progress-state';
 import { formatSessionFfmpegCommand } from './ffmpeg-command-display';
@@ -325,7 +325,8 @@ const applyMusicVideoPreset = (source: SourceFile) => {
   settingsByPath.set(source.path, settings);
   const encoder = hardwareEncoderFor(preset.preferredVideoCodec);
   Object.assign(settings, {
-    preset: 'Music Video', format: 'mp4' as const, encoder, quality: '28',
+    preset: 'Music Video', format: 'mp4' as const, encoder,
+    quality: deliveryQualityForOutput('Streaming', videoOutputProfile(source.media?.video?.height ?? 0, 'auto').tier, '28'),
     videoBitrate: '0', maxRate: '7000', bufferMultiplier: 2, bufferSize: '14000',
     deliveryMode: true, processing: { video: true, audio: true, subtitles: true },
   });
@@ -600,9 +601,11 @@ const makeOutputFileName = (source: SourceFile) => {
   const format = getSettings(source).format;
   if (isAudioWorkflow(source)) {
     const extension = format === 'source' ? source.extension.toLowerCase() : format;
-    return `${baseName(source.name)}.${extension}`;
+    return `${preservedOutputBaseName(source.name)}.${extension}`;
   }
-  const name = appSettings.smartFileNaming
+  const name = isMusicVideoWorkflow(source)
+    ? preservedOutputBaseName(source.name)
+    : appSettings.smartFileNaming
     ? smartSeriesBaseName(source.name)
     : sanitizePathSegment(`${baseName(source.name)}_converted`);
   return `${name}.${format}`;
@@ -727,7 +730,6 @@ const softwareToneMapFilters = (dolbyVision: boolean, format: 'nv12' | 'p010le')
   'zscale=t=linear:npl=100', 'format=gbrpf32le', 'zscale=p=bt709',
   'tonemap=tonemap=hable:desat=0', 'zscale=t=bt709:m=bt709:r=tv', `format=${format}`,
 ];
-const nvencPreset = (preset: string) => preset === 'Archive' ? 'p6' : preset === 'Regular' ? 'p4' : 'p2';
 const nvencDeliveryArguments = (settings: JobSettings) => settings.deliveryMode ? [
   '-bf', '4', '-b_ref_mode', 'middle', '-b_adapt', '1', '-no-scenecut', '0',
   '-rc-lookahead', '27', '-nonref_p', '1', '-spatial-aq', '1', '-temporal-aq', '1',
@@ -824,7 +826,7 @@ const getCommandArguments = (source: SourceFile, requestedOutputPath?: string) =
     args.push('-map', `0:${source.media?.video?.index ?? 0}`, '-c:v', settings.encoder);
   if (settings.encoder.endsWith('_nvenc')) {
     args.push(
-      '-preset', nvencPreset(settings.preset), '-tune', 'hq', '-rc:v', 'vbr', '-cq:v', settings.quality,
+      '-preset', nvencPresetForName(settings.preset), '-tune', 'hq', '-rc:v', 'vbr', '-cq:v', settings.quality,
       '-multipass', outputProfileFor(source, settings.filters.scale, settings.preset).nvencMultipass ? '1' : '0',
     );
     args.push(...nvencDeliveryArguments(settings));
@@ -1351,7 +1353,7 @@ const showAppMenu = () => {
   const runtimeSelector = sources.length === 0 && Boolean(document.querySelector('.welcome-shell'))
     ? `<label class="menu-check runtime-channel-toggle"><input id="stable-ffmpeg" type="checkbox"${checked(appSettings.useStableFfmpeg)}/><span><strong>Stable</strong><small>Use the stable Jellyfin FFmpeg runtime</small></span></label>`
     : '';
-  menu.innerHTML = `<div class="menu-identity"><strong>EA Media Tools</strong><span>Version ${escapeHtml(runtimeState?.appVersion ?? '1.2.0')} · ${APP_CODENAME}</span></div>${runtimeSelector}<label class="menu-check"><input id="hardware-acceleration" type="checkbox"${checked(appSettings.hardwareAcceleration)}/><span>Hardware Acceleration</span></label><button id="view-logs">View Logs</button><button id="view-config">View Running Config</button><button id="view-changelog">View Change Log</button><button id="check-update">Check for update</button><button class="danger" id="exit-app">Exit</button>`;
+  menu.innerHTML = `<div class="menu-identity"><strong>EA Media Tools</strong><span>Version ${escapeHtml(runtimeState?.appVersion ?? '1.2.1')} · ${APP_CODENAME}</span></div>${runtimeSelector}<label class="menu-check"><input id="hardware-acceleration" type="checkbox"${checked(appSettings.hardwareAcceleration)}/><span>Hardware Acceleration</span></label><button id="view-logs">View Logs</button><button id="view-config">View Running Config</button><button id="view-changelog">View Change Log</button><button id="check-update">Check for update</button><button class="danger" id="exit-app">Exit</button>`;
   document.body.appendChild(menu);
   menu.addEventListener('click', (event) => event.stopPropagation());
   menu.querySelector<HTMLInputElement>('#stable-ffmpeg')?.addEventListener('change', async (event) => {
@@ -1413,7 +1415,7 @@ const showAppMenu = () => {
     'EA Media Tools running config', 'config · fixed and user presets', () => window.mediaAPI.readConfig(appSettings),
   ));
   menu.querySelector('#view-changelog')?.addEventListener('click', () => void showTextReader(
-    `EA Media Tools ${runtimeState?.appVersion ?? '1.2.0'} change log`,
+    `EA Media Tools ${runtimeState?.appVersion ?? '1.2.1'} change log`,
     `${APP_CODENAME} · installed release notes from GitHub`,
     () => window.mediaAPI.readChangelog(),
   ));
@@ -1998,7 +2000,7 @@ const startApplication = async () => {
     }
     await new Promise((resolve) => window.setTimeout(resolve, runtimeState?.phase === 'error' ? 900 : 350));
   } catch (error) {
-    runtimeState = { phase: 'error', message: error instanceof Error ? error.message : 'Unable to initialize FFmpeg', progress: null, appVersion: '1.2.0', isPackaged: false, updateEnabled: false, ffmpegAvailable: false, ffmpegPath: '', ffprobePath: '', ffmpegVersion: null, releaseTag: null, ffmpegChannel: appSettings.useStableFfmpeg ? 'stable' : 'unstable', rsgainAvailable: false, rsgainPath: '', rsgainVersion: null, ccextractorAvailable: false, ccextractorPath: '', ccextractorVersion: null };
+    runtimeState = { phase: 'error', message: error instanceof Error ? error.message : 'Unable to initialize FFmpeg', progress: null, appVersion: '1.2.1', isPackaged: false, updateEnabled: false, ffmpegAvailable: false, ffmpegPath: '', ffprobePath: '', ffmpegVersion: null, releaseTag: null, ffmpegChannel: appSettings.useStableFfmpeg ? 'stable' : 'unstable', rsgainAvailable: false, rsgainPath: '', rsgainVersion: null, ccextractorAvailable: false, ccextractorPath: '', ccextractorVersion: null };
     renderBootstrap(runtimeState); await new Promise((resolve) => window.setTimeout(resolve, 900));
   } finally { removeProgressListener(); }
   renderWelcome();
