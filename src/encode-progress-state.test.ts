@@ -70,6 +70,10 @@ test('Done is available only after every job has completed or cancelled', () => 
   assert.equal(canFinishEncodeQueue(failed), false);
   const cancelled = applyEncodeProgress(running, progress('queue-cancelled', 1));
   assert.equal(canFinishEncodeQueue(cancelled), true);
-  const completed = applyEncodeProgress(running, progress('queue-completed', 2));
+  let completed = running;
+  for (let index = 1; index <= jobs.length; index += 1) {
+    completed = applyEncodeProgress(completed, progress('completed', index));
+  }
+  completed = applyEncodeProgress(completed, progress('queue-completed', jobs.length));
   assert.equal(canFinishEncodeQueue(completed), true);
 });

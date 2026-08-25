@@ -4,6 +4,28 @@ All notable changes to EA Media Tools are documented here.
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-08-25
+
+### Added
+
+- Install and maintain separate stable and prerelease Jellyfin FFmpeg runtimes under `lib/ffmpeg-stable` and `lib/ffmpeg-unstable`.
+- Add a welcome-page-only **Stable** runtime switch that persists between launches, reruns hardware detection when changed, and reports the selected release in the status bar.
+- Download and verify rsgain 3.7 under `lib/rsgain` for future ReplayGain processing.
+- Download compatible official CCExtractor builds under `lib/ccextractor` and add opt-in CEA-608/708 extraction to SRT before remuxing the caption track with FFmpeg.
+- Add regression coverage for closed-caption command composition and the 1080p quality profile.
+
+### Changed
+
+- Complete the application update check on the splash screen before settings, managed runtimes, or hardware capabilities are initialized.
+- Check for application updates every 15 minutes after startup and cleanly cancel encodes before restarting into an update.
+- Use CQ 28 for Streaming jobs whose source or explicitly scaled output resolves to the 1080p profile.
+- Show a green stable or yellow prerelease FFmpeg status indicator with the installed Jellyfin release number.
+
+### Fixed
+
+- Keep **Done** hidden for every pending, starting, or active encode and reveal it only after every queue item has completed or cancelled.
+- Remove temporary CCExtractor SRT files on success, failure, cancellation, and application shutdown.
+
 ## [1.0.0] - 2026-08-19
 
 ### Added
@@ -108,6 +130,7 @@ All notable changes to EA Media Tools are documented here.
 - Convert crop offsets to CUVID edge values with division by two and floor rounding.
 - Cancel all active parallel encodes and interrupt pending cooldowns when the queue is stopped or a job fails.
 
+[1.1.0]: https://github.com/eaforlife/media-converter/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/eaforlife/media-converter/compare/v0.4.0...v1.0.0
 [0.4.0]: https://github.com/eaforlife/media-converter/compare/v0.3.0...v0.4.0
 [0.3.2]: https://github.com/eaforlife/media-converter/compare/v0.3.1...v0.3.2

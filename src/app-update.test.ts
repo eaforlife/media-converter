@@ -2,6 +2,7 @@ import { equal, match } from 'node:assert/strict';
 import { test } from 'node:test';
 import { APP_UPDATE_REPOSITORY } from './config.ts';
 import {
+  APP_UPDATE_INTERVAL,
   electronUpdateFeedUrl,
   friendlyUpdateError,
   isUpdateCheckAlreadyRunningError,
@@ -10,6 +11,10 @@ import {
   shouldInitializeAppUpdater,
   UpdateCheckState,
 } from './app-update.ts';
+
+test('background application update checks run every 15 minutes', () => {
+  equal(APP_UPDATE_INTERVAL, '15 minutes');
+});
 
 test('the updater uses the canonical repository slug', () => {
   equal(APP_UPDATE_REPOSITORY, 'eaforlife/media-converter');

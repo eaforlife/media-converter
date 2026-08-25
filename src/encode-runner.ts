@@ -5,6 +5,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { BrowserWindow, type WebContents } from 'electron';
 import { logActivity } from './app-logger';
+import { ccextractorArguments, injectClosedCaptionInput } from './closed-caption';
 import { replaceSourceWithMetadataOutput } from './metadata-replacement';
 import type { EncodeJob, EncodeProgress, EncodeStartResult } from './shared-types';
 
@@ -12,6 +13,7 @@ const activeProcesses = new Map<number, ChildProcessWithoutNullStreams>();
 const cancelCooldowns = new Set<() => void>();
 const cancelledJobs = new Set<number>();
 const activePartialOutputs = new Set<string>();
+const activeCaptionOutputs = new Set<string>();
 let queueRunning = false;
 let cancellationRequested = false;
 let queueFailureRequested = false;
@@ -91,6 +93,55 @@ class EncodeCancelledError extends Error {
     super(wholeQueue ? 'Encoding queue was cancelled.' : 'Encode was cancelled.');
   }
 }
+
+const extractClosedCaptions = (
+  ccextractorPath: string,
+  job: EncodeJob,
+  jobIndex: number,
+  totalJobs: number,
+  outputPath: string,
+  webContents: WebContents,
+) => new Promise<void>((resolve, reject) => {
+  const args = ccextractorArguments(job.sourcePath, outputPath);
+  let stderr = '';
+  let settled = false;
+  emit(webContents, {
+    phase: 'starting', jobIndex, totalJobs, sourceName: job.sourceName,
+    outputPath: job.outputPath, percent: null, bitrate: '—', fps: '—',
+    runTimeSeconds: 0, etaSeconds: null, speed: '—',
+    message: 'Extracting embedded closed captions to SRT.',
+  });
+  logActivity('INFO', 'ccextractor.started', {
+    job: jobIndex, source: job.sourcePath, output: outputPath, executable: ccextractorPath, args,
+  });
+  const child = spawn(ccextractorPath, args, { windowsHide: true, shell: false });
+  activeProcesses.set(jobIndex, child);
+  child.stderr.setEncoding('utf8');
+  child.stderr.on('data', (chunk: string) => { stderr = `${stderr}${chunk}`.slice(-1024 * 1024); });
+  child.on('error', (error) => {
+    if (settled) return;
+    settled = true;
+    activeProcesses.delete(jobIndex);
+    reject(new Error(`CCExtractor could not start: ${error.message}`));
+  });
+  child.on('close', (code) => {
+    if (settled) return;
+    settled = true;
+    activeProcesses.delete(jobIndex);
+    const jobCancellationRequested = cancelledJobs.delete(jobIndex);
+    if (cancellationRequested || jobCancellationRequested) {
+      reject(new EncodeCancelledError(cancellationRequested));
+      return;
+    }
+    if (code !== 0 || !fs.existsSync(outputPath) || fs.statSync(outputPath).size === 0) {
+      const detail = stderr.trim().split(/\r?\n/).slice(-6).join('\n');
+      reject(new Error(detail || 'CCExtractor did not find embedded CEA-608/708 captions.'));
+      return;
+    }
+    logActivity('INFO', 'ccextractor.completed', { job: jobIndex, output: outputPath });
+    resolve();
+  });
+});
 
 const runJob = (
   ffmpegPath: string,
@@ -242,11 +293,15 @@ const runJob = (
 
 export const startEncodeQueue = async (
   ffmpegPath: string,
+  ccextractorPath: string,
   jobs: EncodeJob[],
   webContents: WebContents,
 ): Promise<EncodeStartResult> => {
   if (queueRunning) return { started: false, message: 'An encoding queue is already running.' };
   if (!ffmpegPath) return { started: false, message: 'FFmpeg is unavailable.' };
+  if (jobs.some((job) => job.closedCaptionFormat) && !ccextractorPath) {
+    return { started: false, message: 'CCExtractor is unavailable.' };
+  }
   if (!jobs.length) return { started: false, message: 'There are no jobs to encode.' };
   if (jobs.some((job) => !path.isAbsolute(job.sourcePath) || !path.isAbsolute(job.outputPath) || !job.args.length)) {
     return { started: false, message: 'The encoding queue contains an invalid path or command.' };
@@ -297,8 +352,30 @@ export const startEncodeQueue = async (
           if (nextIndex >= jobs.length) return;
           const index = nextIndex;
           nextIndex += 1;
+          let captionOutput: string | null = null;
           try {
-            await runJob(ffmpegPath, jobs[index], index + 1, jobs.length, webContents);
+            let preparedJob = jobs[index];
+            if (preparedJob.closedCaptionFormat) {
+              const outputParts = path.parse(preparedJob.outputPath);
+              captionOutput = path.join(
+                outputParts.dir,
+                `.${outputParts.name}.ea-captions-${crypto.randomUUID()}.srt`,
+              );
+              activeCaptionOutputs.add(captionOutput);
+              await extractClosedCaptions(
+                ccextractorPath, preparedJob, index + 1, jobs.length, captionOutput, webContents,
+              );
+              preparedJob = {
+                ...preparedJob,
+                args: injectClosedCaptionInput(
+                  preparedJob.args,
+                  preparedJob.sourcePath,
+                  captionOutput,
+                  preparedJob.closedCaptionFormat,
+                ),
+              };
+            }
+            await runJob(ffmpegPath, preparedJob, index + 1, jobs.length, webContents);
             completedAJob = true;
           } catch (error) {
             if (error instanceof EncodeCancelledError && !error.wholeQueue) {
@@ -312,6 +389,11 @@ export const startEncodeQueue = async (
               stopActiveProcesses();
             }
             return;
+          } finally {
+            if (captionOutput) {
+              await fs.promises.rm(captionOutput, { force: true }).catch(() => undefined);
+              activeCaptionOutputs.delete(captionOutput);
+            }
           }
         }
       };
@@ -385,6 +467,10 @@ export const cancelEncodingAndWait = async () => {
     await waitForQueue(queue, SHUTDOWN_FORCE_MS);
   }
   await Promise.all([...activePartialOutputs].map(removePartialOutput));
+  await Promise.all([...activeCaptionOutputs].map(async (captionPath) => {
+    await fs.promises.rm(captionPath, { force: true }).catch(() => undefined);
+    activeCaptionOutputs.delete(captionPath);
+  }));
 };
 
 export const isEncodingActive = () => queueRunning;

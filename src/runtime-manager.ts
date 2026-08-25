@@ -3,7 +3,9 @@ import { execFile } from 'node:child_process';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import { FFMPEG_RELEASE_API, FFMPEG_RELEASES_API, RSGAIN_RELEASE_API } from './config';
+import {
+  CCEXTRACTOR_RELEASE_API, FFMPEG_RELEASE_API, FFMPEG_RELEASES_API, RSGAIN_RELEASE_API,
+} from './config';
 import { logActivity } from './app-logger';
 import type { RuntimePhase, RuntimeState } from './shared-types';
 
@@ -43,6 +45,15 @@ const rsgainPaths = () => {
   };
 };
 
+const ccextractorPaths = () => {
+  const directory = path.join(getManagedRoot(), 'lib', 'ccextractor');
+  return {
+    directory,
+    executable: path.join(directory, process.platform === 'win32' ? 'ccextractor.exe' : 'ccextractor'),
+    manifest: path.join(directory, 'ccextractor-runtime.json'),
+  };
+};
+
 const execute = (file: string, args: string[], timeout = 20_000): Promise<string> =>
   new Promise((resolve, reject) => {
     execFile(file, args, { timeout, windowsHide: true, maxBuffer: 4 * 1024 * 1024 },
@@ -59,6 +70,8 @@ const getFfmpegVersion = (output: string) =>
   output.match(/ffmpeg version\s+([^\s]+)/i)?.[1] ?? output.split(/\r?\n/, 1)[0] ?? null;
 const getRsgainVersion = (output: string) =>
   output.match(/rsgain\s+v?([^\s]+)/i)?.[1] ?? output.split(/\r?\n/, 1)[0] ?? null;
+const getCcExtractorVersion = (output: string) =>
+  output.match(/ccextractor[^0-9]*v?([0-9][^\s]*)/i)?.[1] ?? output.split(/\r?\n/, 1)[0] ?? null;
 
 const inspectFfmpeg = async (paths: RuntimePaths): Promise<LocalRuntime> => {
   try {
@@ -75,6 +88,14 @@ const inspectFfmpeg = async (paths: RuntimePaths): Promise<LocalRuntime> => {
 const inspectRsgain = async (executable: string): Promise<LocalRuntime> => {
   try {
     return { available: true, version: getRsgainVersion(await execute(executable, ['--version'])) };
+  } catch {
+    return { available: false, version: null };
+  }
+};
+
+const inspectCcExtractor = async (executable: string): Promise<LocalRuntime> => {
+  try {
+    return { available: true, version: getCcExtractorVersion(await execute(executable, ['--version'])) };
   } catch {
     return { available: false, version: null };
   }
@@ -108,6 +129,7 @@ const fetchPrerelease = async () => {
   return release;
 };
 const fetchRsgainRelease = () => fetchJson<GitHubRelease>(RSGAIN_RELEASE_API);
+const fetchCcExtractorRelease = () => fetchJson<GitHubRelease>(CCEXTRACTOR_RELEASE_API);
 
 const selectFfmpegAsset = (assets: ReleaseAsset[]): ReleaseAsset => {
   const patterns: Partial<Record<NodeJS.Platform, Partial<Record<NodeJS.Architecture, RegExp>>>> = {
@@ -132,6 +154,16 @@ const selectRsgainAsset = (assets: ReleaseAsset[]): ReleaseAsset | null => {
   return pattern ? assets.find((candidate) => pattern.test(candidate.name)) ?? null : null;
 };
 
+const selectCcExtractorAsset = (assets: ReleaseAsset[]): ReleaseAsset | null => {
+  if (process.platform === 'win32') {
+    return assets.find((candidate) => /_win_portable\.zip$/i.test(candidate.name)) ?? null;
+  }
+  if (process.platform === 'linux' && process.arch === 'x64') {
+    return assets.find((candidate) => /ccextractor-linux-systemlibs-x86_64\.tar\.gz$/i.test(candidate.name)) ?? null;
+  }
+  return null;
+};
+
 const extractArchive = async (archivePath: string, extractionPath: string) => {
   if (/\.zip$/i.test(archivePath)) {
     await execute('tar', ['-xf', archivePath, '-C', extractionPath], 120_000);
@@ -139,6 +171,10 @@ const extractArchive = async (archivePath: string, extractionPath: string) => {
   }
   if (/\.tar\.xz$/i.test(archivePath)) {
     await execute('tar', ['-xJf', archivePath, '-C', extractionPath], 120_000);
+    return;
+  }
+  if (/\.tar\.gz$/i.test(archivePath)) {
+    await execute('tar', ['-xzf', archivePath, '-C', extractionPath], 120_000);
     return;
   }
   throw new Error(`Unsupported runtime archive: ${path.basename(archivePath)}`);
@@ -194,6 +230,19 @@ const findFile = async (directory: string, filename: string): Promise<string | n
     if (entry.isFile() && entry.name.toLowerCase() === filename.toLowerCase()) return fullPath;
     if (entry.isDirectory()) {
       const nested = await findFile(fullPath, filename);
+      if (nested) return nested;
+    }
+  }
+  return null;
+};
+
+const findFileMatching = async (directory: string, pattern: RegExp): Promise<string | null> => {
+  const entries = await fs.promises.readdir(directory, { withFileTypes: true });
+  for (const entry of entries) {
+    const fullPath = path.join(directory, entry.name);
+    if (entry.isFile() && pattern.test(entry.name)) return fullPath;
+    if (entry.isDirectory()) {
+      const nested = await findFileMatching(fullPath, pattern);
       if (nested) return nested;
     }
   }
@@ -332,14 +381,70 @@ const ensureRsgain = async (notify: Notify): Promise<LocalRuntime> => {
   return installed;
 };
 
+const ensureCcExtractor = async (notify: Notify): Promise<LocalRuntime> => {
+  const paths = ccextractorPaths();
+  notify('checking-release', 'Checking the latest CCExtractor runtime');
+  const release = await fetchCcExtractorRelease();
+  const asset = selectCcExtractorAsset(release.assets);
+  if (!asset) {
+    logActivity('WARN', 'runtime.ccextractor.unsupported', { platform: process.platform, arch: process.arch });
+    return { available: false, version: null };
+  }
+  const [local, manifest] = await Promise.all([
+    inspectCcExtractor(paths.executable), readManifest(paths.manifest),
+  ]);
+  if (local.available && manifest?.releaseTag === release.tag_name) return local;
+
+  const temporary = await fs.promises.mkdtemp(path.join(app.getPath('temp'), 'ea-media-tools-ccextractor-'));
+  const archive = path.join(temporary, asset.name);
+  const extracted = path.join(temporary, 'extracted');
+  try {
+    notify('downloading', `Downloading CCExtractor ${release.tag_name} · 0%`, 0);
+    await downloadAsset(asset, archive, 'CCExtractor', (progress) =>
+      notify('downloading', `Downloading CCExtractor ${release.tag_name} · ${progress}%`, progress));
+    await verifyDigest(archive, asset.digest);
+    notify('extracting', `Extracting CCExtractor ${release.tag_name}`, null);
+    await fs.promises.mkdir(extracted, { recursive: true });
+    await extractArchive(archive, extracted);
+    const executable = process.platform === 'win32'
+      ? await findFileMatching(extracted, /^ccextractor(?:winfull|win)?\.exe$/i)
+        ?? await findFileMatching(extracted, /^ccextractor.*\.exe$/i)
+      : await findFile(extracted, 'ccextractor');
+    if (!executable) throw new Error('The CCExtractor archive did not contain its command-line executable');
+    notify('verifying', `Verifying CCExtractor ${release.tag_name}`, null);
+    await execute(executable, ['--version']);
+    await replaceDirectory(path.dirname(executable), paths.directory);
+    const installedName = path.join(paths.directory, path.basename(executable));
+    if (installedName.toLowerCase() !== paths.executable.toLowerCase()) {
+      await fs.promises.rename(installedName, paths.executable);
+    }
+    if (process.platform !== 'win32') await fs.promises.chmod(paths.executable, 0o755);
+    await fs.promises.writeFile(path.join(paths.directory, 'CCEXTRACTOR-THIRD-PARTY-NOTICE.txt'), [
+      'CCExtractor — Third-Party Runtime Notice',
+      '=========================================', '',
+      `Installed release: ${release.tag_name}`, `Installed asset: ${asset.name}`,
+      'Project: https://github.com/CCExtractor/ccextractor',
+      'License: GNU General Public License v2.0 (see the license material included with this runtime).', '',
+    ].join('\n'), 'utf8');
+    await writeManifest(paths.manifest, release, asset);
+  } finally {
+    await fs.promises.rm(temporary, { recursive: true, force: true });
+  }
+  const installed = await inspectCcExtractor(paths.executable);
+  if (!installed.available) throw new Error('CCExtractor verification failed after installation');
+  return installed;
+};
+
 const stateForManagedChannel = async (
   channel: FfmpegChannel, phase: RuntimePhase, message: string,
 ): Promise<RuntimeState> => {
   const paths = ffmpegPaths(channel);
   const gainPaths = rsgainPaths();
-  const [ffmpeg, ffmpegManifest, rsgain, rsgainManifest] = await Promise.all([
+  const captionPaths = ccextractorPaths();
+  const [ffmpeg, ffmpegManifest, rsgain, rsgainManifest, ccextractor, ccextractorManifest] = await Promise.all([
     inspectFfmpeg(paths), readManifest(paths.manifest),
     inspectRsgain(gainPaths.executable), readManifest(gainPaths.manifest),
+    inspectCcExtractor(captionPaths.executable), readManifest(captionPaths.manifest),
   ]);
   return {
     phase, message, progress: null, appVersion: app.getVersion(), isPackaged: app.isPackaged,
@@ -349,6 +454,10 @@ const stateForManagedChannel = async (
     ffmpegChannel: channel,
     rsgainAvailable: rsgain.available, rsgainPath: gainPaths.executable,
     rsgainVersion: rsgain.version ?? rsgainManifest?.releaseTag ?? null,
+    ccextractorAvailable: ccextractor.available, ccextractorPath: captionPaths.executable,
+    // CCExtractor 0.96.6's official Windows binary reports 0.96.5 internally;
+    // the verified release manifest is authoritative for the installed package.
+    ccextractorVersion: ccextractorManifest?.releaseTag ?? ccextractor.version,
   };
 };
 
@@ -374,6 +483,7 @@ const developmentState = async (channel: FfmpegChannel): Promise<RuntimeState> =
     ffmpegAvailable: local.available, ffmpegPath: paths.ffmpeg, ffprobePath: paths.ffprobe,
     ffmpegVersion: local.version, releaseTag: null, ffmpegChannel: channel,
     rsgainAvailable: false, rsgainPath: '', rsgainVersion: null,
+    ccextractorAvailable: false, ccextractorPath: '', ccextractorVersion: null,
   };
 };
 
@@ -415,6 +525,13 @@ export const initializeRuntime = async (webContents: WebContents, useStable = tr
     const detail = error instanceof Error ? error.message : String(error);
     errors.push(`rsgain: ${detail}`);
     logActivity('ERROR', 'runtime.rsgain.failed', { detail });
+  }
+  try {
+    await ensureCcExtractor(notify);
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    errors.push(`ccextractor: ${detail}`);
+    logActivity('ERROR', 'runtime.ccextractor.failed', { detail });
   }
   state = await stateForManagedChannel(activeChannel, 'ready', '');
   if (state.ffmpegAvailable) {

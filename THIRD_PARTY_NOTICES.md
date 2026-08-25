@@ -34,6 +34,34 @@ person publishing those artifacts independently confirms and fulfills all
 applicable source-code, license, notice, and other obligations. The default
 packaging configuration excludes the project-root `lib` directory.
 
+## rsgain
+
+EA Media Tools downloads and verifies the separately maintained rsgain 3.7
+command-line runtime for planned ReplayGain support. rsgain is licensed under
+the BSD 2-Clause License and is not covered by the EA Media Tools MIT License.
+
+- Project, source, and releases: https://github.com/complexlogic/rsgain
+- Release used by this application: https://github.com/complexlogic/rsgain/releases/tag/v3.7
+- License: https://github.com/complexlogic/rsgain/blob/v3.7/LICENSE
+
+The selected upstream archive is extracted under `lib/rsgain`; its published
+SHA-256 digest is verified when supplied by GitHub.
+
+## CCExtractor
+
+EA Media Tools can download and invoke CCExtractor to convert embedded
+CEA-608/708 closed captions into SubRip text before FFmpeg remuxes that text
+into a converted video. CCExtractor is licensed under GNU GPL version 2.0 and
+is not covered by the EA Media Tools MIT License.
+
+- Project and source: https://github.com/CCExtractor/ccextractor
+- Releases: https://github.com/CCExtractor/ccextractor/releases
+- License: https://github.com/CCExtractor/ccextractor/blob/master/LICENSE.txt
+
+Compatible official release archives are extracted under `lib/ccextractor`;
+their published SHA-256 digest is verified when supplied by GitHub. Platforms
+without a compatible portable release keep caption extraction disabled.
+
 ## Other dependencies
 
 The application also uses third-party npm packages. Their license information

@@ -1,5 +1,6 @@
 export const APP_RELEASES_URL = 'https://github.com/eaforlife/media-converter/releases';
 export const ELECTRON_UPDATE_HOST = 'https://update.electronjs.org';
+export const APP_UPDATE_INTERVAL = '15 minutes';
 
 export const releaseChangelogUrl = (repository: string, version: string) =>
   `https://api.github.com/repos/${repository}/releases/tags/v${encodeURIComponent(version)}`;

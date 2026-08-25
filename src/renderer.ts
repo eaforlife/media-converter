@@ -4,7 +4,7 @@ import { parseEpisodeIdentity, sanitizePathSegment, smartSeriesBaseName } from '
 import { BUILT_IN_PRESETS, BUILT_IN_PRESET_NAMES } from './presets';
 import type { BuiltInPresetDefinition, BuiltInPresetName, PreferredVideoCodec, PresetAudioCodec, QualityFamily } from './presets';
 import { cuvidCrop, detectedCrop } from './video-crop';
-import { bufferSizeFor, deliveryPresetForOutput, scaleDimensionsFor, videoOutputProfile } from './video-output-profile';
+import { bufferSizeFor, deliveryPresetForOutput, deliveryQualityForOutput, scaleDimensionsFor, videoOutputProfile } from './video-output-profile';
 import { applyEncodeProgress, canFinishEncodeQueue, createEncodeQueueProgress, isQueueTerminal } from './encode-progress-state';
 import type { EncodeJobProgressState, EncodeQueueProgressState } from './encode-progress-state';
 import { formatSessionFfmpegCommand } from './ffmpeg-command-display';
@@ -129,9 +129,11 @@ const deliveryQuality = (
   preset: BuiltInPresetDefinition,
   tier: ReturnType<typeof videoOutputProfile>['tier'],
   encoder: string,
-) => preset.name === 'Streaming' && tier === '1080p'
-  ? '28'
-  : presetQuality(builtInPreset(deliveryPresetForOutput(preset.name, tier)) ?? preset, encoder);
+) => deliveryQualityForOutput(
+  preset.name,
+  tier,
+  presetQuality(builtInPreset(deliveryPresetForOutput(preset.name, tier)) ?? preset, encoder),
+);
 const audioBitrateFor = (
   presetName: string,
   codec: AudioCodec,
@@ -210,6 +212,7 @@ const defaultFilters = (source: SourceFile): FilterSettings => ({
   remuxSubtitles: true,
   stripMetadata: true,
   doNotReplaceAudio: false,
+  extractClosedCaptions: false,
 });
 const normalizeUniqueFlags = <T extends { flags: StreamFlags }>(record: Record<number, T>) => {
   for (const flag of ['default', 'forced'] as const) {
@@ -820,6 +823,13 @@ const createEncodeJob = (source: SourceFile, queueIndex: number): EncodeJob | nu
     outputPath,
     duration: source.media?.duration ?? null,
     args,
+    ...(getSettings(source).filters.extractClosedCaptions && runtimeState?.ccextractorAvailable
+      ? {
+        closedCaptionFormat: getSettings(source).format === 'mp4'
+          ? 'mov_text' as const
+          : getSettings(source).format === 'webm' ? 'webvtt' as const : 'subrip' as const,
+      }
+      : {}),
     ...(metadataOnly ? { replaceSourcePath: source.path } : {}),
   };
 };
@@ -1124,11 +1134,11 @@ const startEncoding = async () => {
 
 const renderBootstrap = (state?: RuntimeState) => {
   const progress = state?.progress;
-  app.innerHTML = `<main class="bootstrap-shell"><div class="bootstrap-titlebar"><button class="icon-button" data-app-settings aria-label="Settings">${icon('settings', 19)}</button>${windowControls()}</div><div class="ambient ambient-one"></div><div class="ambient ambient-two"></div>
+  app.innerHTML = `<main class="bootstrap-shell"><div class="bootstrap-titlebar">${windowControls()}</div><div class="ambient ambient-one"></div><div class="ambient ambient-two"></div>
     <section class="bootstrap-card"><div class="brand bootstrap-brand"><span class="brand-mark">${icon('app', 24)}</span><span>EA Media Tools</span></div>
       <div class="runtime-orbit ${state?.phase === 'error' ? 'error' : ''}"><div class="runtime-orbit-inner">${state?.phase === 'error' ? icon('x', 25) : icon('film', 25)}</div></div>
       <div class="eyebrow">${state?.phase === 'error' ? 'RUNTIME CHECK FAILED' : 'PREPARING YOUR WORKSPACE'}</div><h1>${state?.phase === 'error' ? 'FFmpeg needs attention' : 'Getting things ready'}</h1>
-      <p>${escapeHtml(state?.message ?? 'Checking the local FFmpeg runtime')}</p><div class="runtime-progress ${progress === null || progress === undefined ? 'indeterminate' : ''}"><span style="width:${progress ?? 36}%"></span></div>
+      <p>${escapeHtml(state?.message ?? 'Checking for EA Media Tools updates')}</p><div class="runtime-progress ${progress === null || progress === undefined ? 'indeterminate' : ''}"><span style="width:${progress ?? 36}%"></span></div>
       <small>${state?.isPackaged === false ? 'Development mode · remote downloads are disabled' : `EA Media Tools ${escapeHtml(state?.appVersion ?? '')}`}</small></section></main>`;
   bindWindowControls();
 };
@@ -1146,8 +1156,46 @@ const showAppMenu = () => {
   document.querySelector('.app-menu')?.remove();
   const menu = document.createElement('div');
   menu.className = 'app-menu';
-  menu.innerHTML = `<div class="menu-identity"><strong>EA Media Tools</strong><span>Version ${escapeHtml(runtimeState?.appVersion ?? '1.0.0')} · ${APP_CODENAME}</span></div><label class="menu-check"><input id="hardware-acceleration" type="checkbox"${checked(appSettings.hardwareAcceleration)}/><span>Use hardware encoding/decoding acceleration</span></label><button id="view-logs">View Logs</button><button id="view-config">View Running Config</button><button id="view-changelog">View Change Log</button><button id="check-update">Check for update</button><button class="danger" id="exit-app">Exit</button>`;
+  const runtimeSelector = sources.length === 0 && Boolean(document.querySelector('.welcome-shell'))
+    ? `<label class="menu-check runtime-channel-toggle"><input id="stable-ffmpeg" type="checkbox"${checked(appSettings.useStableFfmpeg)}/><span><strong>Stable</strong><small>Use the stable Jellyfin FFmpeg runtime</small></span></label>`
+    : '';
+  menu.innerHTML = `<div class="menu-identity"><strong>EA Media Tools</strong><span>Version ${escapeHtml(runtimeState?.appVersion ?? '1.1.0')} · ${APP_CODENAME}</span></div>${runtimeSelector}<label class="menu-check"><input id="hardware-acceleration" type="checkbox"${checked(appSettings.hardwareAcceleration)}/><span>Use hardware encoding/decoding acceleration</span></label><button id="view-logs">View Logs</button><button id="view-config">View Running Config</button><button id="view-changelog">View Change Log</button><button id="check-update">Check for update</button><button class="danger" id="exit-app">Exit</button>`;
   document.body.appendChild(menu);
+  menu.querySelector<HTMLInputElement>('#stable-ffmpeg')?.addEventListener('change', async (event) => {
+    const control = event.currentTarget as HTMLInputElement;
+    const useStable = control.checked;
+    const previousUseStable = appSettings.useStableFfmpeg;
+    control.disabled = true;
+    try {
+      const selectedRuntime = await window.mediaAPI.selectRuntimeChannel(useStable);
+      runtimeState = selectedRuntime;
+      appSettings.useStableFfmpeg = useStable;
+      hardwareCapabilities = {
+        checkedAt: '', adapters: [], ignoredAdapters: [], cudaAvailable: false, nvdecAvailable: false,
+        cuvidDecoders: [], amfDecodeAvailable: false, qsvDecodeAvailable: false,
+        qsvDecoders: [], vaapiAvailable: false, vaapiDevice: null, encoders: [],
+      };
+      if (selectedRuntime.ffmpegAvailable) {
+        try { hardwareCapabilities = await window.mediaAPI.detectHardware(); } catch { /* Keep an empty capability set. */ }
+      }
+      await window.mediaAPI.saveSettings(appSettings);
+      menu.remove();
+      renderWelcome();
+      showToast(`${useStable ? 'Stable' : 'Pre-release'} FFmpeg selected`);
+    } catch (error) {
+      appSettings.useStableFfmpeg = previousUseStable;
+      try {
+        runtimeState = await window.mediaAPI.selectRuntimeChannel(previousUseStable);
+        if (runtimeState.ffmpegAvailable) hardwareCapabilities = await window.mediaAPI.detectHardware();
+        await window.mediaAPI.saveSettings(appSettings);
+      } catch {
+        // Preserve the original channel-change failure for the user.
+      }
+      control.checked = previousUseStable;
+      control.disabled = false;
+      showToast(error instanceof Error ? error.message : 'Unable to change FFmpeg runtime');
+    }
+  });
   menu.querySelector<HTMLInputElement>('#hardware-acceleration')?.addEventListener('change', (event) => {
     appSettings.hardwareAcceleration = (event.currentTarget as HTMLInputElement).checked;
     const source = sources[selectedIndex];
@@ -1162,7 +1210,7 @@ const showAppMenu = () => {
     'EA Media Tools running config', 'config · fixed and user presets', () => window.mediaAPI.readConfig(appSettings),
   ));
   menu.querySelector('#view-changelog')?.addEventListener('click', () => void showTextReader(
-    `EA Media Tools ${runtimeState?.appVersion ?? '1.0.0'} change log`,
+    `EA Media Tools ${runtimeState?.appVersion ?? '1.1.0'} change log`,
     `${APP_CODENAME} · installed release notes from GitHub`,
     () => window.mediaAPI.readChangelog(),
   ));
@@ -1188,6 +1236,12 @@ const showTextReader = async (title: string, subtitle: string, load: () => Promi
 };
 
 const renderWelcome = () => {
+  const ffmpegLabel = runtimeState?.ffmpegAvailable
+    ? `${runtimeState.ffmpegChannel === 'stable' ? 'Stable' : 'Pre-release'} · Jellyfin FFmpeg ${escapeHtml((runtimeState.releaseTag ?? runtimeState.ffmpegVersion ?? 'ready').replace(/^v/i, ''))}`
+    : 'FFmpeg unavailable';
+  const statusClass = !runtimeState?.ffmpegAvailable
+    ? 'danger'
+    : runtimeState.ffmpegChannel === 'unstable' ? 'warning' : '';
   app.innerHTML = `<main class="welcome-shell"><div class="ambient ambient-one"></div><div class="ambient ambient-two"></div>
     <header class="welcome-nav"><div class="brand"><span class="brand-mark">${icon('app', 22)}</span><span>EA Media Tools</span></div><div class="title-actions"><button class="icon-button" data-app-settings aria-label="Settings">${icon('settings', 19)}</button>${windowControls()}</div></header>
     <section class="welcome-content"><div class="eyebrow">${icon('sparkles', 15)} VIDEO CONVERSION, MADE SIMPLE</div><h1>What would you like<br>to <span>convert?</span></h1>
@@ -1195,7 +1249,7 @@ const renderWelcome = () => {
       <div class="source-actions"><button class="source-card primary" id="open-file"><span class="source-icon">${icon('file', 30)}</span><span class="source-text"><strong>Open video files</strong><small>Select one or multiple videos</small></span><span class="source-arrow">${icon('chevron', 19)}</span></button>
       <button class="source-card" id="open-folder"><span class="source-icon">${icon('folder', 30)}</span><span class="source-text"><strong>Open a video folder</strong><small>Batch process supported videos</small></span><span class="source-arrow">${icon('chevron', 19)}</span></button></div>
       <div class="format-strip"><span>VIDEO INPUT</span><b>MP4</b><b>MKV</b><b>MOV</b><b>WEBM</b><b>M2TS</b><b>+ MORE</b></div></section>
-    <footer class="welcome-footer"><span>EA Media Tools ${escapeHtml(runtimeState?.appVersion ?? '')} · ${APP_CODENAME}</span><span class="status-dot ${runtimeState?.ffmpegAvailable ? '' : 'warning'}"></span><span>${runtimeState?.ffmpegAvailable ? `FFmpeg ${escapeHtml(runtimeState.ffmpegVersion ?? 'ready')}` : 'FFmpeg unavailable'}</span></footer></main>`;
+    <footer class="welcome-footer"><span>EA Media Tools ${escapeHtml(runtimeState?.appVersion ?? '')} · ${APP_CODENAME}</span><span class="status-dot ${statusClass}"></span><span>${ffmpegLabel}</span></footer></main>`;
   document.querySelector('#open-file')?.addEventListener('click', () => void pickSource('file'));
   document.querySelector('#open-folder')?.addEventListener('click', () => void pickSource('folder'));
   bindWindowControls();
@@ -1401,11 +1455,13 @@ const renderFilterSettings = (source: SourceFile, settings: JobSettings) => {
 
 const renderSubtitleSettings = (source: SourceFile, settings: JobSettings) => {
   const tracks = orderByFlags(source.media?.subtitles ?? [], (track) => settings.subtitles[track.index]?.flags ?? track.flags);
-  if (!tracks.length) return `<div class="track-stack">${renderProcessingToggle('subtitles', settings.processing.subtitles, 'Encode selected subtitle streams')}<section class="empty-panel"><div class="empty-panel-icon">CC</div><span>SUBTITLES</span><h3>No subtitle tracks detected</h3><p>The source contains no subtitle streams.</p></section></div>`;
   const metadataOnly = isMetadataOnly(settings);
   const processing = settings.processing.subtitles;
+  const extractorReady = Boolean(runtimeState?.ccextractorAvailable);
+  const captionExtraction = `<section class="settings-card closed-caption-card"><div class="card-title"><div><span>EMBEDDED CLOSED CAPTIONS</span><h3>CEA-608 / CEA-708 extraction</h3></div><span class="track-badge text">CCExtractor ${escapeHtml(runtimeState?.ccextractorVersion?.replace(/^v/i, '') ?? '')}</span></div><label class="toggle-row ${extractorReady && processing && !metadataOnly ? '' : 'disabled'}"><span><strong>Extract captions to SRT and remux</strong><small>${extractorReady ? 'Runs CCExtractor before FFmpeg and adds the resulting text subtitle to the output.' : 'A compatible portable CCExtractor runtime is not available on this platform.'}</small></span><input type="checkbox" data-extract-closed-captions${checked(settings.filters.extractClosedCaptions)}${extractorReady && processing && !metadataOnly ? '' : ' disabled'}/><i></i></label></section>`;
+  if (!tracks.length) return `<div class="track-stack">${renderProcessingToggle('subtitles', processing, 'Encode selected subtitle streams')}${captionExtraction}<section class="empty-panel"><div class="empty-panel-icon">CC</div><span>SUBTITLES</span><h3>No separate subtitle tracks detected</h3><p>Embedded CEA-608/708 captions can still be extracted above.</p></section></div>`;
   const warning = dispositionWarning(settings.subtitles, 'subtitle');
-  return `<div class="track-stack">${renderProcessingToggle('subtitles', processing, 'Encode selected subtitle streams')}<div class="track-intro"><div><span>SUBTITLE OUTPUT</span><h3>${tracks.length} detected track${tracks.length === 1 ? '' : 's'}</h3></div><div class="track-guidance"><p>${metadataOnly ? 'All tracks will be copied; only language and disposition metadata can be changed.' : processing ? settings.format === 'mp4' ? 'MP4 requires mov_text. Other subtitle formats are disabled.' : 'Text subtitles can be converted to SRT or WebVTT.' : 'All source subtitle streams will be copied unchanged.'}</p>${processing && warning ? `<span class="flag-warning inline">${escapeHtml(warning)}</span>` : ''}</div></div>${tracks.map((track, position) => renderSubtitleTrack(track, position, settings, processing, metadataOnly)).join('')}</div>`;
+  return `<div class="track-stack">${renderProcessingToggle('subtitles', processing, 'Encode selected subtitle streams')}${captionExtraction}<div class="track-intro"><div><span>SUBTITLE OUTPUT</span><h3>${tracks.length} detected track${tracks.length === 1 ? '' : 's'}</h3></div><div class="track-guidance"><p>${metadataOnly ? 'All tracks will be copied; only language and disposition metadata can be changed.' : processing ? settings.format === 'mp4' ? 'MP4 requires mov_text. Other subtitle formats are disabled.' : 'Text subtitles can be converted to SRT or WebVTT.' : 'All source subtitle streams will be copied unchanged.'}</p>${processing && warning ? `<span class="flag-warning inline">${escapeHtml(warning)}</span>` : ''}</div></div>${tracks.map((track, position) => renderSubtitleTrack(track, position, settings, processing, metadataOnly)).join('')}</div>`;
 };
 const renderSubtitleTrack = (track: SubtitleStreamInfo, position: number, settings: JobSettings, processing: boolean, metadataOnly: boolean) => {
   const setting = settings.subtitles[track.index], mp4 = settings.format === 'mp4', imageBlocked = track.kind === 'image' && mp4;
@@ -1499,6 +1555,11 @@ const bindContentEvents = () => {
   }));
   document.querySelectorAll<HTMLSelectElement>('[data-audio-bitrate]').forEach((control) => control.addEventListener('change', () => { settings.audio[Number(control.dataset.audioBitrate)].bitrate = control.value; markCustom(settings); updateCommand(); }));
   document.querySelectorAll<HTMLInputElement>('[data-subtitle-enabled]').forEach((control) => control.addEventListener('change', () => { settings.subtitles[Number(control.dataset.subtitleEnabled)].enabled = control.checked; markCustom(settings); renderWorkspace(); }));
+  document.querySelector<HTMLInputElement>('[data-extract-closed-captions]')?.addEventListener('change', (event) => {
+    settings.filters.extractClosedCaptions = (event.currentTarget as HTMLInputElement).checked;
+    markCustom(settings);
+    renderWorkspace();
+  });
   document.querySelectorAll<HTMLSelectElement>('[data-subtitle-codec]').forEach((control) => control.addEventListener('change', () => { settings.subtitles[Number(control.dataset.subtitleCodec)].codec = control.value as SubtitleCodec; markCustom(settings); updateCommand(); }));
   document.querySelectorAll<HTMLInputElement>('[data-stream-flag]').forEach((control) => control.addEventListener('change', () => {
     const kind = control.dataset.streamKind as 'audio' | 'subtitle';
@@ -1642,18 +1703,19 @@ const addSources = async () => {
 };
 const startApplication = async () => {
   window.mediaAPI.onEncodeProgress(updateEncodeDialog);
-  try { appSettings = await window.mediaAPI.loadSettings(); } catch { /* defaults remain active */ }
   renderBootstrap();
   const removeProgressListener = window.mediaAPI.onRuntimeProgress((state) => { runtimeState = state; renderBootstrap(state); });
   try {
-    runtimeState = await window.mediaAPI.initializeRuntime(); renderBootstrap(runtimeState);
+    await window.mediaAPI.initializeAppUpdate();
+    try { appSettings = await window.mediaAPI.loadSettings(); } catch { /* defaults remain active */ }
+    runtimeState = await window.mediaAPI.initializeRuntime(appSettings.useStableFfmpeg); renderBootstrap(runtimeState);
     if (runtimeState.ffmpegAvailable) {
       renderBootstrap({ ...runtimeState, message: 'Testing GPU encoding capabilities', progress: null });
       try { hardwareCapabilities = await window.mediaAPI.detectHardware(); } catch { /* The UI will report that no hardware encoder passed. */ }
     }
     await new Promise((resolve) => window.setTimeout(resolve, runtimeState?.phase === 'error' ? 900 : 350));
   } catch (error) {
-    runtimeState = { phase: 'error', message: error instanceof Error ? error.message : 'Unable to initialize FFmpeg', progress: null, appVersion: '1.0.0', isPackaged: false, updateEnabled: false, ffmpegAvailable: false, ffmpegPath: '', ffprobePath: '', ffmpegVersion: null, releaseTag: null };
+    runtimeState = { phase: 'error', message: error instanceof Error ? error.message : 'Unable to initialize FFmpeg', progress: null, appVersion: '1.1.0', isPackaged: false, updateEnabled: false, ffmpegAvailable: false, ffmpegPath: '', ffprobePath: '', ffmpegVersion: null, releaseTag: null, ffmpegChannel: appSettings.useStableFfmpeg ? 'stable' : 'unstable', rsgainAvailable: false, rsgainPath: '', rsgainVersion: null, ccextractorAvailable: false, ccextractorPath: '', ccextractorVersion: null };
     renderBootstrap(runtimeState); await new Promise((resolve) => window.setTimeout(resolve, 900));
   } finally { removeProgressListener(); }
   renderWelcome();

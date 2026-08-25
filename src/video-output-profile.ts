@@ -43,5 +43,8 @@ export const scaleDimensionsFor = (
 export const deliveryPresetForOutput = (preset: string, tier: OutputTier) =>
   preset === 'Streaming' && tier === '360p' ? 'Cellular' : preset;
 
+export const deliveryQualityForOutput = (preset: string, tier: OutputTier, fallback: string) =>
+  preset === 'Streaming' && tier === '1080p' ? '28' : fallback;
+
 export const bufferSizeFor = (maxRate: number, multiplier: number) =>
   Math.max(0, maxRate) * Math.max(0, multiplier);

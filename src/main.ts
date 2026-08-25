@@ -5,7 +5,7 @@ import path from 'node:path';
 import { updateElectronApp, UpdateSourceType } from 'update-electron-app';
 import { APP_NAME, APP_UPDATE_REPOSITORY } from './config';
 import {
-  electronUpdateFeedUrl, friendlyUpdateError, isUpdateCheckAlreadyRunningError,
+  APP_UPDATE_INTERVAL, electronUpdateFeedUrl, friendlyUpdateError, isUpdateCheckAlreadyRunningError,
   manualUpdateUnavailableMessage, releaseChangelogUrl, shouldInitializeAppUpdater, UpdateCheckState,
 } from './app-update';
 import { initializeLogger, logActivity, readLog, rotateLogForUpdate } from './app-logger';
@@ -112,6 +112,9 @@ const initializeStartupAppUpdate = (webContents: Electron.WebContents) => {
       rsgainAvailable: false,
       rsgainPath: '',
       rsgainVersion: null,
+      ccextractorAvailable: false,
+      ccextractorPath: '',
+      ccextractorVersion: null,
     } satisfies RuntimeState);
   };
 
@@ -133,10 +136,11 @@ const initializeStartupAppUpdate = (webContents: Electron.WebContents) => {
       setTimeout(resolve, delayMs);
     };
     const onChecking = () => notify('Checking for EA Media Tools updates');
-    const onAvailable = () => {
-      clearTimeout(timeout);
-      notify('A new version is available · downloading the update', 'downloading');
-    };
+    const onAvailable = () => finish(
+      'A new version is available · downloading in the background',
+      500,
+      'downloading',
+    );
     const onNotAvailable = () => finish(
       `EA Media Tools ${app.getVersion()} is up to date`,
       500,
@@ -168,7 +172,7 @@ const initializeStartupAppUpdate = (webContents: Electron.WebContents) => {
         type: UpdateSourceType.ElectronPublicUpdateService,
         repo: APP_UPDATE_REPOSITORY,
       },
-      updateInterval: '15 minutes',
+      updateInterval: APP_UPDATE_INTERVAL,
       notifyUser: true,
       onNotifyUser: (info) => {
         void (async () => {
@@ -481,7 +485,10 @@ const registerIpc = () => {
   });
   ipcMain.handle('encode:start', (event, jobs: EncodeJob[]) => {
     const ffmpegPath = activeFfmpeg();
-    return startEncodeQueue(ffmpegPath, jobs, event.sender);
+    const ccextractorPath = runtimeState?.ccextractorAvailable
+      ? runtimeState.ccextractorPath
+      : '';
+    return startEncodeQueue(ffmpegPath, ccextractorPath, jobs, event.sender);
   });
   ipcMain.handle('encode:cancel', (_event, jobIndex?: number) => cancelEncoding(jobIndex));
 

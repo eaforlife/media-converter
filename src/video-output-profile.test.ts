@@ -2,6 +2,7 @@ import { deepStrictEqual, equal } from 'node:assert/strict';
 import { test } from 'node:test';
 import {
   bufferSizeFor,
+  deliveryQualityForOutput,
   deliveryPresetForOutput,
   scaleDimensionsFor,
   videoOutputProfile,
@@ -32,6 +33,13 @@ test('explicit scaling uses the selected output profile instead of the source ti
   equal(videoOutputProfile(sourceHeight, '1080p').maxRate, 7000);
   equal(videoOutputProfile(sourceHeight, '720p').maxRate, 2500);
   equal(videoOutputProfile(sourceHeight, '1080p').nvencMultipass, true);
+});
+
+test('streaming uses CQ 28 for 1080p source and scaled output profiles', () => {
+  equal(deliveryQualityForOutput('Streaming', videoOutputProfile(1080, 'auto').tier, '29'), '28');
+  equal(deliveryQualityForOutput('Streaming', videoOutputProfile(2160, '1080p').tier, '29'), '28');
+  equal(deliveryQualityForOutput('Streaming', videoOutputProfile(2160, 'auto').tier, '29'), '29');
+  equal(deliveryQualityForOutput('Archive', videoOutputProfile(1080, 'auto').tier, '18'), '18');
 });
 
 test('cellular and 360p resolve to the same output and delivery profiles', () => {

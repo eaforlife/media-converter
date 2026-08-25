@@ -28,6 +28,7 @@ const defaultFilters = (): FilterSettings => ({
   scale: 'disabled', scaleLocked: false,
   remuxAudio: true, remuxSubtitles: true, stripMetadata: true,
   doNotReplaceAudio: false,
+  extractClosedCaptions: false,
 });
 
 const parsePresets = (xml: string): SavedPreset[] => {
@@ -58,6 +59,7 @@ const parsePresets = (xml: string): SavedPreset[] => {
         scale: ['auto', '1080p', '720p', '360p', 'disabled'].includes(scale) ? scale : 'disabled',
         scaleLocked: bool(attributes.scaleLocked, false),
         doNotReplaceAudio: bool(attributes.doNotReplaceAudio, false),
+        extractClosedCaptions: bool(attributes.extractClosedCaptions, false),
       },
     });
   }
@@ -75,7 +77,7 @@ ${indent}  <bufferSize>${xmlEscape(preset.bufferSize)}</bufferSize>
 ${indent}  <deliveryMode>${preset.deliveryMode}</deliveryMode>
 ${indent}  <audioCodec>${preset.audioCodec}</audioCodec>
 ${indent}  <audioBitrate>${xmlEscape(preset.audioBitrate)}</audioBitrate>
-${indent}  <filters autoCrop="${preset.filters.autoCrop}" toneMapHdrToSdr="${preset.filters.toneMapHdrToSdr}" pixelFormat10Bit="${preset.filters.pixelFormat10Bit}" scale="${preset.filters.scale}" scaleLocked="${preset.filters.scaleLocked}" doNotReplaceAudio="${preset.filters.doNotReplaceAudio}" />
+${indent}  <filters autoCrop="${preset.filters.autoCrop}" toneMapHdrToSdr="${preset.filters.toneMapHdrToSdr}" pixelFormat10Bit="${preset.filters.pixelFormat10Bit}" scale="${preset.filters.scale}" scaleLocked="${preset.filters.scaleLocked}" doNotReplaceAudio="${preset.filters.doNotReplaceAudio}" extractClosedCaptions="${preset.filters.extractClosedCaptions}" />
 ${indent}</preset>`;
 
 const serializeBuiltInPresets = () => Object.values(BUILT_IN_PRESETS).map((preset) => `    <preset name="${preset.name}" fixed="true">

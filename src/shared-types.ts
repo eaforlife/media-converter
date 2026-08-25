@@ -84,6 +84,7 @@ export type FilterSettings = {
   remuxSubtitles: true;
   stripMetadata: true;
   doNotReplaceAudio: boolean;
+  extractClosedCaptions: boolean;
 };
 
 export type VideoEncoderCapability = {
@@ -160,6 +161,9 @@ export type RuntimeState = {
   rsgainAvailable: boolean;
   rsgainPath: string;
   rsgainVersion: string | null;
+  ccextractorAvailable: boolean;
+  ccextractorPath: string;
+  ccextractorVersion: string | null;
 };
 
 export type EncodeJob = {
@@ -169,6 +173,7 @@ export type EncodeJob = {
   duration: number | null;
   args: string[];
   replaceSourcePath?: string;
+  closedCaptionFormat?: 'mov_text' | 'subrip' | 'webvtt';
 };
 
 export type EncodeProgressPhase =
