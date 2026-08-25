@@ -20,6 +20,7 @@ type ProbeStream = {
   width?: number;
   height?: number;
   channels?: number;
+  sample_rate?: string;
   bit_rate?: string;
   channel_layout?: string;
   avg_frame_rate?: string;
@@ -106,6 +107,8 @@ const audioInfo = (stream: ProbeStream): AudioStreamInfo => {
   const text = searchableText(stream);
   const channels = stream.channels ?? 0;
   const layout = stream.channel_layout ?? '';
+  const sampleRate = Number(stream.sample_rate);
+  const losslessCodecs = new Set(['alac', 'flac', 'wavpack', 'ape', 'tta', 'tak', 'truehd', 'mlp']);
   const isAtmos = /atmos|joint object coding|\bjoc\b/.test(text);
   const isTrueHd = codec === 'truehd' || /truehd/.test(text);
   const isDts = codec.startsWith('dts') || /\bdts(?:-hd)?\b/.test(text);
@@ -135,6 +138,8 @@ const audioInfo = (stream: ProbeStream): AudioStreamInfo => {
     isDts,
     isDolbyDigitalPlus,
     bitRate: Number.isFinite(Number(stream.bit_rate)) ? Number(stream.bit_rate) : null,
+    sampleRate: Number.isFinite(sampleRate) ? sampleRate : null,
+    isLossless: losslessCodecs.has(codec) || codec.startsWith('pcm_') || /lossless/.test(text),
     flags: flagsOf(stream),
   };
 };
@@ -167,23 +172,27 @@ export const probeMedia = (ffprobePath: string, sourcePath: string): Promise<Med
       '-show_chapters', sourcePath,
     ], { timeout: 30_000, windowsHide: true, maxBuffer: 16 * 1024 * 1024 }, (error, stdout) => {
       if (error) {
-        reject(new Error(`Unable to inspect this video: ${error.message}`));
+        reject(new Error(`Unable to inspect this media file: ${error.message}`));
         return;
       }
       try {
         const output = JSON.parse(stdout) as ProbeOutput;
         const streams = output.streams ?? [];
         const duration = Number(output.format?.duration);
+        const videoStreams = streams.filter((stream) => stream.codec_type === 'video');
+        const primaryVideo = videoStreams.find((stream) => !stream.disposition?.attached_pic) ?? null;
         resolve({
           format: output.format?.format_name ?? 'unknown',
           duration: Number.isFinite(duration) ? duration : null,
-          video: streams.find((stream) => stream.codec_type === 'video')
-            ? videoInfo(streams.find((stream) => stream.codec_type === 'video') as ProbeStream)
-            : null,
+          video: primaryVideo ? videoInfo(primaryVideo) : null,
           audio: streams.filter((stream) => stream.codec_type === 'audio').map(audioInfo),
           subtitles: streams.filter((stream) => stream.codec_type === 'subtitle').map(subtitleInfo),
           chapterCount: output.chapters?.length ?? 0,
           suggestedCrop: null,
+          hasCoverArt: videoStreams.some((stream) => Boolean(stream.disposition?.attached_pic)),
+          coverArtStreamIndexes: videoStreams
+            .filter((stream) => Boolean(stream.disposition?.attached_pic))
+            .map((stream) => stream.index ?? 0),
         });
       } catch (parseError) {
         reject(new Error(parseError instanceof Error ? parseError.message : 'ffprobe returned invalid data'));

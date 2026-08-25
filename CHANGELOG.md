@@ -4,6 +4,28 @@ All notable changes to EA Media Tools are documented here.
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-08-25
+
+### Added
+
+- Add recursive audio-library processing with Streaming (Opus), Archive (libfdk_aac), and Passthrough presets.
+- Preserve audio-library folder layouts under `converted`, retain original basenames, and copy matching `.lrc` lyric sidecars.
+- Add surround downmix, high-frequency lossless resampling to 48 kHz, metadata retention controls, and batch ReplayGain normalization.
+- Add automatic short music-video detection, a locked Music Video preset, automatic CEA-608/708 extraction, and 4K-only `2960:-2` scaling.
+
+### Changed
+
+- Run rsgain once, recursively, only after every audio encode in the queue succeeds; skip it after failure or cancellation.
+- Preserve music-video metadata and copy attached cover artwork into the completed conversion while encoding only the primary video stream.
+- Replace the encoder-specific checkbox label with persisted **Hardware Acceleration**; disabling it selects CPU video encode and decode.
+- Reduce managed-runtime splash detail to **Verifying pre-requisites** and **Loading pre-requisites**.
+- Remove obsolete installed application versions and legacy runtime libraries during Windows updates without touching user configuration.
+
+### Fixed
+
+- Make the persisted **Stable** Jellyfin FFmpeg selector and **Hardware Acceleration** checkbox independently toggleable from the gear menu.
+- Keep audio-only workspaces focused on Summary, Audio, and Filters, and prevent passthrough settings from exposing invalid conversion controls.
+
 ## [1.1.0] - 2026-08-25
 
 ### Added
@@ -130,6 +152,7 @@ All notable changes to EA Media Tools are documented here.
 - Convert crop offsets to CUVID edge values with division by two and floor rounding.
 - Cancel all active parallel encodes and interrupt pending cooldowns when the queue is stopped or a job fails.
 
+[1.2.0]: https://github.com/eaforlife/media-converter/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/eaforlife/media-converter/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/eaforlife/media-converter/compare/v0.4.0...v1.0.0
 [0.4.0]: https://github.com/eaforlife/media-converter/compare/v0.3.0...v0.4.0

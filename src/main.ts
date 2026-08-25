@@ -9,10 +9,12 @@ import {
   manualUpdateUnavailableMessage, releaseChangelogUrl, shouldInitializeAppUpdater, UpdateCheckState,
 } from './app-update';
 import { initializeLogger, logActivity, readLog, rotateLogForUpdate } from './app-logger';
+import { cleanupPreviousInstall } from './install-cleanup';
 import { detectHardwareCapabilities } from './hardware-capabilities';
 import { cancelEncoding, cancelEncodingAndWait, isEncodingActive, startEncodeQueue } from './encode-runner';
 import { analyzeVisual, cleanupPreviews, initializePreviewStorage, releasePreviews } from './media-analysis';
 import { probeMedia } from './media-probe';
+import { classifyMediaWorkflow } from './media-workflow';
 import { initializeRuntime, selectRuntimeChannel } from './runtime-manager';
 import { loadSettings, readConfig, saveSettings } from './settings-store';
 import type { AppSettings, EncodeJob, HardwareCapabilities, RuntimeState, SourceFile } from './shared-types';
@@ -32,7 +34,10 @@ const handleSquirrelEvent = () => {
     return true;
   }
   if (event === '--squirrel-updated') {
-    void rotateLogForUpdate(app.getVersion()).finally(() => runSquirrel([`--createShortcut=${target}`]));
+    void Promise.all([
+      rotateLogForUpdate(app.getVersion()),
+      cleanupPreviousInstall(path.dirname(process.execPath)),
+    ]).catch(() => undefined).finally(() => runSquirrel([`--createShortcut=${target}`]));
     return true;
   }
   if (event === '--squirrel-uninstall') {
@@ -58,6 +63,11 @@ const VIDEO_EXTENSIONS = new Set([
   '.mp4', '.mkv', '.mov', '.avi', '.webm', '.m4v', '.mpg', '.mpeg', '.wmv',
   '.flv', '.ts', '.mts', '.m2ts', '.vob', '.ogv', '.3gp', '.3g2',
 ]);
+const AUDIO_EXTENSIONS = new Set([
+  '.aac', '.ac3', '.aif', '.aiff', '.alac', '.ape', '.dts', '.eac3', '.flac', '.m4a',
+  '.mka', '.mp3', '.oga', '.ogg', '.opus', '.tta', '.wav', '.wma', '.wv',
+]);
+const MEDIA_EXTENSIONS = new Set([...VIDEO_EXTENSIONS, ...AUDIO_EXTENSIONS]);
 
 let runtimeState: RuntimeState | null = null;
 let hardwareCheck: Promise<HardwareCapabilities> | null = null;
@@ -210,16 +220,26 @@ const initializeStartupAppUpdate = (webContents: Electron.WebContents) => {
   return startupUpdateCheck;
 };
 
-const toSourceFile = (filePath: string): SourceFile | null => {
+const lyricFilesFor = (filePath: string) => {
+  const parsed = path.parse(filePath);
+  const candidate = path.join(parsed.dir, `${parsed.name}.lrc`);
+  return fs.existsSync(candidate) ? [candidate] : [];
+};
+
+const toSourceFile = (filePath: string, sourceRoot?: string): SourceFile | null => {
   try {
     const stat = fs.statSync(filePath);
-    if (!stat.isFile() || !VIDEO_EXTENSIONS.has(path.extname(filePath).toLowerCase())) return null;
+    if (!stat.isFile() || !MEDIA_EXTENSIONS.has(path.extname(filePath).toLowerCase())) return null;
+    const resolvedRoot = sourceRoot ? path.resolve(sourceRoot) : path.dirname(path.resolve(filePath));
     return {
       name: path.basename(filePath),
       path: filePath,
       size: stat.size,
       extension: path.extname(filePath).slice(1).toUpperCase() || 'MEDIA',
       media: null,
+      sourceRoot: resolvedRoot,
+      relativePath: path.relative(resolvedRoot, filePath),
+      lyricPaths: lyricFilesFor(filePath),
     };
   } catch {
     return null;
@@ -234,8 +254,10 @@ const inspectSource = async (file: SourceFile): Promise<SourceFile | null> => {
   }
   try {
     const media = await probeMedia(ffprobePath, file.path);
-    if (!media.video) return null;
-    const preview = ffmpegPath ? await analyzeVisual(ffmpegPath, file.path, media) : {};
+    if (!media.video && !media.audio.length) return null;
+    const workflow = classifyMediaWorkflow(media);
+    if (!workflow) return null;
+    const preview = media.video && ffmpegPath ? await analyzeVisual(ffmpegPath, file.path, media) : {};
     logActivity('INFO', 'ffprobe.output', {
       path: file.path,
       format: media.format,
@@ -250,7 +272,7 @@ const inspectSource = async (file: SourceFile): Promise<SourceFile | null> => {
       suggestedCrop: media.suggestedCrop,
       previewCreated: 'previewId' in preview && Boolean(preview.previewId),
     });
-    return { ...file, media, ...preview };
+    return { ...file, media, workflow, ...preview };
   } catch (error) {
     logActivity('ERROR', 'ffprobe.error', {
       path: file.path,
@@ -258,7 +280,7 @@ const inspectSource = async (file: SourceFile): Promise<SourceFile | null> => {
     });
     return {
       ...file,
-      probeError: error instanceof Error ? error.message : 'Unable to inspect this video',
+      probeError: error instanceof Error ? error.message : 'Unable to inspect this media file',
     };
   }
 };
@@ -276,6 +298,24 @@ const inspectSources = async (files: SourceFile[]) => {
   const workerCount = Math.min(2, files.length);
   await Promise.all(Array.from({ length: workerCount }, worker));
   return inspected.filter((file): file is SourceFile => file !== null);
+};
+
+const keepOneWorkflow = (files: SourceFile[]) => {
+  const workflow = files[0]?.workflow;
+  return workflow ? files.filter((file) => file.workflow === workflow) : files;
+};
+
+const recursivelyFindAudio = (root: string) => {
+  const found: string[] = [];
+  const visit = (directory: string) => {
+    for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+      const fullPath = path.join(directory, entry.name);
+      if (entry.isDirectory() && !(directory === root && entry.name.toLowerCase() === 'converted')) visit(fullPath);
+      else if (entry.isFile() && AUDIO_EXTENSIONS.has(path.extname(entry.name).toLowerCase())) found.push(fullPath);
+    }
+  };
+  visit(root);
+  return found;
 };
 
 const checkForAppUpdate = () => {
@@ -431,11 +471,11 @@ const registerIpc = () => {
   ipcMain.handle('source:open-file', async (event, initialDirectory?: string) => {
     const parent = BrowserWindow.fromWebContents(event.sender);
     const options: Electron.OpenDialogOptions = {
-      title: 'Open one or more video files',
+      title: 'Open one or more media files',
       defaultPath: initialDirectory || undefined,
       properties: ['openFile', 'multiSelections'],
       filters: [
-        { name: 'Video files', extensions: Array.from(VIDEO_EXTENSIONS, (ext) => ext.slice(1)) },
+        { name: 'Media files', extensions: Array.from(MEDIA_EXTENSIONS, (ext) => ext.slice(1)) },
       ],
     };
     const result = parent
@@ -443,14 +483,14 @@ const registerIpc = () => {
       : await dialog.showOpenDialog(options);
     if (result.canceled) return [];
     logActivity('INFO', 'source.file-selection', { count: result.filePaths.length });
-    const files = result.filePaths.map(toSourceFile).filter((file): file is SourceFile => file !== null);
-    return inspectSources(files);
+    const files = result.filePaths.map((filePath) => toSourceFile(filePath)).filter((file): file is SourceFile => file !== null);
+    return keepOneWorkflow(await inspectSources(files));
   });
 
   ipcMain.handle('source:open-folder', async (event, initialDirectory?: string) => {
     const parent = BrowserWindow.fromWebContents(event.sender);
     const options: Electron.OpenDialogOptions = {
-      title: 'Open a video folder',
+      title: 'Open a media folder',
       defaultPath: initialDirectory || undefined,
       properties: ['openDirectory'],
     };
@@ -461,11 +501,16 @@ const registerIpc = () => {
     logActivity('INFO', 'source.folder-selection', { path: result.filePaths[0] });
 
     try {
-      const files = fs.readdirSync(result.filePaths[0], { withFileTypes: true })
+      const sourceRoot = result.filePaths[0];
+      const entries = fs.readdirSync(sourceRoot, { withFileTypes: true });
+      const topLevelVideos = entries
         .filter((entry) => entry.isFile() && VIDEO_EXTENSIONS.has(path.extname(entry.name).toLowerCase()))
-        .map((entry) => toSourceFile(path.join(result.filePaths[0], entry.name)))
+        .map((entry) => path.join(sourceRoot, entry.name));
+      const selectedPaths = topLevelVideos.length ? topLevelVideos : recursivelyFindAudio(sourceRoot);
+      const files = selectedPaths
+        .map((filePath) => toSourceFile(filePath, sourceRoot))
         .filter((file): file is SourceFile => file !== null);
-      return inspectSources(files);
+      return keepOneWorkflow(await inspectSources(files));
     } catch {
       return [];
     }
@@ -488,7 +533,8 @@ const registerIpc = () => {
     const ccextractorPath = runtimeState?.ccextractorAvailable
       ? runtimeState.ccextractorPath
       : '';
-    return startEncodeQueue(ffmpegPath, ccextractorPath, jobs, event.sender);
+    const rsgainPath = runtimeState?.rsgainAvailable ? runtimeState.rsgainPath : '';
+    return startEncodeQueue(ffmpegPath, ccextractorPath, rsgainPath, jobs, event.sender);
   });
   ipcMain.handle('encode:cancel', (_event, jobIndex?: number) => cancelEncoding(jobIndex));
 

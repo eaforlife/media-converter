@@ -1,8 +1,8 @@
 # EA Media Tools
 
-EA Media Tools is a desktop video converter powered by Jellyfin FFmpeg. It inspects video, audio, subtitle, chapter, HDR, and Dolby Vision metadata; selects a supported hardware encoder; and runs queued conversions with live progress information.
+EA Media Tools is a desktop video and audio converter powered by Jellyfin FFmpeg. It inspects video, audio, subtitle, chapter, HDR, and Dolby Vision metadata; selects hardware or CPU processing; and runs queued conversions with live progress information.
 
-Version 1.1.0, codename **ea-video**, is the current stable release. Only video input is supported. A compatible hardware video encoder is required when processing video; metadata-only stream-copy updates do not re-encode the source.
+Version 1.2.0, codename **ea-video**, is the current stable release. It supports video files, short music videos with attached artwork, and recursive audio libraries. Hardware acceleration is enabled by default but can be disabled for CPU video encoding and decoding.
 
 ## Download
 
@@ -41,7 +41,7 @@ The macOS app is not signed or notarized. To uninstall it, quit the app and move
 Install the downloaded package from a terminal. Replace the filename with the asset you downloaded:
 
 ```bash
-sudo apt install ./ea-media-tools_1.1.0_amd64.deb
+sudo apt install ./ea-media-tools_1.2.0_amd64.deb
 ```
 
 ARM64 systems use the package ending in `arm64.deb`. Launch **EA Media Tools** from the desktop application menu. Remove it with:
@@ -54,7 +54,11 @@ sudo apt remove ea-media-tools
 
 An internet connection is required the first time the packaged app runs. Before other initialization, the splash screen waits for the application update check to finish. EA Media Tools then downloads and verifies both the latest stable and latest prerelease portable builds from the official [Jellyfin FFmpeg releases](https://github.com/jellyfin/jellyfin-ffmpeg/releases). They are installed separately under `lib/ffmpeg-stable` and `lib/ffmpeg-unstable`; the welcome-page gear menu has a persisted **Stable** switch that selects the active runtime. The status bar shows the selected channel and Jellyfin release version with a green stable or yellow prerelease indicator.
 
-The managed runtime setup also installs [rsgain 3.7](https://github.com/complexlogic/rsgain/releases/tag/v3.7) under `lib/rsgain` for future audio-gain support. On platforms with a compatible official portable build, [CCExtractor](https://github.com/CCExtractor/ccextractor/releases) is installed under `lib/ccextractor`. The Subtitles tab can opt into extracting embedded CEA-608/708 closed captions to a temporary SRT before FFmpeg remuxes it into the output. Temporary caption files are removed after success, failure, cancellation, and update restart.
+The managed runtime setup also installs [rsgain 3.7](https://github.com/complexlogic/rsgain/releases/tag/v3.7) under `lib/rsgain`. After every audio encode in a library succeeds, enabled normalization runs once against the selected output root and includes its subfolders. On platforms with a compatible official portable build, [CCExtractor](https://github.com/CCExtractor/ccextractor/releases) is installed under `lib/ccextractor` and is used automatically for detected music videos. Temporary caption files are removed after success, failure, cancellation, and update restart.
+
+Audio folders are scanned recursively. Streaming outputs 96 kbps Opus, or 128 kbps when surround audio is downmixed; Archive outputs 224 kbps libfdk_aac, or 256 kbps for a surround downmix. Converted files retain their source basename and relative artist/album layout beneath `converted`, and matching `.lrc` lyric files are copied beside them. Passthrough leaves the source files in place and can still run library normalization.
+
+Videos shorter than eight minutes with attached cover artwork use the Music Video workflow. It preserves metadata, copies the cover artwork into the finished conversion, checks embedded CEA-608/708 captions automatically, disables smart naming, and scales only 4K sources to `2960:-2`.
 
 The app then checks the GPU driving the primary physical display. Virtual and secondary display adapters are ignored and recorded in **View Logs**. An encoder appears only after the corresponding Jellyfin FFmpeg flag completes an actual test encode on the installed hardware.
 
@@ -92,7 +96,7 @@ The operating-system floor was reviewed on August 18, 2026. Use a release that s
 
 Windows 11 24H2 Home and Pro receive updates through October 13, 2026, so upgrade to a newer serviced Windows release before that date. Microsoft publishes current dates on the [Windows 11 lifecycle page](https://learn.microsoft.com/en-us/lifecycle/products/windows-11-home-and-pro). Apple was still publishing Sonoma 14 security updates when this requirement was reviewed; see [Apple security releases](https://support.apple.com/100100). Debian 12 LTS is supported through June 30, 2028 according to the [Debian LTS announcement](https://www.debian.org/News/2026/20260712), and Ubuntu 24.04 LTS receives standard security maintenance through May 2029 according to the [Ubuntu release cycle](https://ubuntu.com/about/release-cycle).
 
-ARM64 describes the application and Jellyfin FFmpeg runtime architecture, not guaranteed GPU support. Qualcomm/Adreno on Windows and Mali/Rockchip on Linux are not supported for video encoding in 1.1.0; those systems can encode video only if one of the NVIDIA, Intel, or AMD backends below passes detection. Apple silicon uses VideoToolbox and is supported on macOS.
+ARM64 describes the application and Jellyfin FFmpeg runtime architecture, not guaranteed GPU support. If no supported accelerator is available, disable **Hardware Acceleration** to use CPU video encoding and decoding. Apple silicon can use VideoToolbox when detected.
 
 Also required:
 

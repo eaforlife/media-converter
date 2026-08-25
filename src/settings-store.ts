@@ -12,6 +12,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   lastSourceDirectory: '',
   customPresets: [],
   workingPreset: null,
+  separateAudioDirectory: true,
 };
 
 const xmlEscape = (value: string) => value
@@ -29,6 +30,9 @@ const defaultFilters = (): FilterSettings => ({
   remuxAudio: true, remuxSubtitles: true, stripMetadata: true,
   doNotReplaceAudio: false,
   extractClosedCaptions: false,
+  downmixToStereo: true,
+  resampleLosslessTo48k: true,
+  normalizeAudio: true,
 });
 
 const parsePresets = (xml: string): SavedPreset[] => {
@@ -41,6 +45,7 @@ const parsePresets = (xml: string): SavedPreset[] => {
     const scale = attributes.scale as ScaleMode;
     presets.push({
       name: xmlUnescape(match[1]),
+      workflow: (tag(body, 'workflow') || 'video') as SavedPreset['workflow'],
       format: (tag(body, 'format') || 'mp4') as SavedPreset['format'],
       encoder: xmlUnescape(tag(body, 'encoder') || 'libx264'),
       quality: tag(body, 'quality') || '20',
@@ -60,6 +65,9 @@ const parsePresets = (xml: string): SavedPreset[] => {
         scaleLocked: bool(attributes.scaleLocked, false),
         doNotReplaceAudio: bool(attributes.doNotReplaceAudio, false),
         extractClosedCaptions: bool(attributes.extractClosedCaptions, false),
+        downmixToStereo: bool(attributes.downmixToStereo, true),
+        resampleLosslessTo48k: bool(attributes.resampleLosslessTo48k, true),
+        normalizeAudio: bool(attributes.normalizeAudio, true),
       },
     });
   }
@@ -67,6 +75,7 @@ const parsePresets = (xml: string): SavedPreset[] => {
 };
 
 const serializePreset = (preset: SavedPreset, indent: string) => `${indent}<preset name="${xmlEscape(preset.name)}">
+${indent}  <workflow>${preset.workflow ?? 'video'}</workflow>
 ${indent}  <format>${preset.format}</format>
 ${indent}  <encoder>${xmlEscape(preset.encoder)}</encoder>
 ${indent}  <quality>${xmlEscape(preset.quality)}</quality>
@@ -77,7 +86,7 @@ ${indent}  <bufferSize>${xmlEscape(preset.bufferSize)}</bufferSize>
 ${indent}  <deliveryMode>${preset.deliveryMode}</deliveryMode>
 ${indent}  <audioCodec>${preset.audioCodec}</audioCodec>
 ${indent}  <audioBitrate>${xmlEscape(preset.audioBitrate)}</audioBitrate>
-${indent}  <filters autoCrop="${preset.filters.autoCrop}" toneMapHdrToSdr="${preset.filters.toneMapHdrToSdr}" pixelFormat10Bit="${preset.filters.pixelFormat10Bit}" scale="${preset.filters.scale}" scaleLocked="${preset.filters.scaleLocked}" doNotReplaceAudio="${preset.filters.doNotReplaceAudio}" extractClosedCaptions="${preset.filters.extractClosedCaptions}" />
+${indent}  <filters autoCrop="${preset.filters.autoCrop}" toneMapHdrToSdr="${preset.filters.toneMapHdrToSdr}" pixelFormat10Bit="${preset.filters.pixelFormat10Bit}" scale="${preset.filters.scale}" scaleLocked="${preset.filters.scaleLocked}" doNotReplaceAudio="${preset.filters.doNotReplaceAudio}" extractClosedCaptions="${preset.filters.extractClosedCaptions}" downmixToStereo="${preset.filters.downmixToStereo}" resampleLosslessTo48k="${preset.filters.resampleLosslessTo48k}" normalizeAudio="${preset.filters.normalizeAudio}" />
 ${indent}</preset>`;
 
 const serializeBuiltInPresets = () => Object.values(BUILT_IN_PRESETS).map((preset) => `    <preset name="${preset.name}" fixed="true">
@@ -92,12 +101,13 @@ const serializeBuiltInPresets = () => Object.values(BUILT_IN_PRESETS).map((prese
     </preset>`).join('\n');
 
 const serialize = (settings: AppSettings) => `<?xml version="1.0" encoding="UTF-8"?>
-<eaMediaToolsSettings version="6">
+<eaMediaToolsSettings version="7">
   <hardwareAcceleration>${settings.hardwareAcceleration}</hardwareAcceleration>
   <useStableFfmpeg>${settings.useStableFfmpeg}</useStableFfmpeg>
   <smartFileNaming>${settings.smartFileNaming}</smartFileNaming>
   <lastPreset>${xmlEscape(settings.lastPreset)}</lastPreset>
   <lastSourceDirectory>${xmlEscape(settings.lastSourceDirectory)}</lastSourceDirectory>
+  <separateAudioDirectory>${settings.separateAudioDirectory}</separateAudioDirectory>
   <predefinedPresets>
 ${serializeBuiltInPresets()}
   </predefinedPresets>
@@ -123,6 +133,7 @@ export const loadSettings = async (): Promise<AppSettings> => {
       lastSourceDirectory: xmlUnescape(tag(xml, 'lastSourceDirectory') || ''),
       customPresets: parsePresets(tag(xml, 'customPresets') || ''),
       workingPreset: parsePresets(tag(xml, 'workingPreset') || '')[0] ?? null,
+      separateAudioDirectory: bool(tag(xml, 'separateAudioDirectory'), true),
     };
   } catch {
     return structuredClone(DEFAULT_SETTINGS);

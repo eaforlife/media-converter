@@ -6,6 +6,7 @@ import path from 'node:path';
 import { BrowserWindow, type WebContents } from 'electron';
 import { logActivity } from './app-logger';
 import { ccextractorArguments, injectClosedCaptionInput } from './closed-caption';
+import { rsgainArguments, successfulNormalizationRoots } from './audio-workflow';
 import { replaceSourceWithMetadataOutput } from './metadata-replacement';
 import type { EncodeJob, EncodeProgress, EncodeStartResult } from './shared-types';
 
@@ -101,7 +102,7 @@ const extractClosedCaptions = (
   totalJobs: number,
   outputPath: string,
   webContents: WebContents,
-) => new Promise<void>((resolve, reject) => {
+) => new Promise<boolean>((resolve, reject) => {
   const args = ccextractorArguments(job.sourcePath, outputPath);
   let stderr = '';
   let settled = false;
@@ -134,11 +135,76 @@ const extractClosedCaptions = (
       return;
     }
     if (code !== 0 || !fs.existsSync(outputPath) || fs.statSync(outputPath).size === 0) {
+      if (job.optionalClosedCaptions) {
+        logActivity('INFO', 'ccextractor.not-found', { job: jobIndex, source: job.sourcePath });
+        resolve(false);
+        return;
+      }
       const detail = stderr.trim().split(/\r?\n/).slice(-6).join('\n');
       reject(new Error(detail || 'CCExtractor did not find embedded CEA-608/708 captions.'));
       return;
     }
     logActivity('INFO', 'ccextractor.completed', { job: jobIndex, output: outputPath });
+    resolve(true);
+  });
+});
+
+const copySidecars = async (job: EncodeJob) => {
+  for (const sidecar of job.sidecarCopies ?? []) {
+    await fs.promises.mkdir(path.dirname(sidecar.outputPath), { recursive: true });
+    await fs.promises.copyFile(sidecar.sourcePath, sidecar.outputPath);
+    logActivity('INFO', 'audio.sidecar.copied', sidecar);
+  }
+};
+
+const runRsgain = (
+  rsgainPath: string,
+  root: string,
+  job: EncodeJob,
+  jobIndex: number,
+  totalJobs: number,
+  webContents: WebContents,
+) => new Promise<void>((resolve, reject) => {
+  const args = rsgainArguments(root);
+  emit(webContents, {
+    phase: 'starting', jobIndex, totalJobs, sourceName: job.sourceName, outputPath: root,
+    percent: null, bitrate: '—', fps: '—', runTimeSeconds: 0, etaSeconds: null, speed: '—',
+    message: 'Normalizing the completed audio library with rsgain.',
+  });
+  logActivity('INFO', 'rsgain.started', { executable: rsgainPath, args, root });
+  const child = spawn(rsgainPath, args, { windowsHide: true, shell: false });
+  let output = '';
+  let settled = false;
+  activeProcesses.set(jobIndex, child);
+  child.stdout.setEncoding('utf8');
+  child.stderr.setEncoding('utf8');
+  child.stdout.on('data', (chunk: string) => { output = `${output}${chunk}`.slice(-2 * 1024 * 1024); });
+  child.stderr.on('data', (chunk: string) => { output = `${output}${chunk}`.slice(-2 * 1024 * 1024); });
+  child.on('error', (error) => {
+    if (settled) return;
+    settled = true;
+    activeProcesses.delete(jobIndex);
+    reject(new Error(`rsgain could not start: ${error.message}`));
+  });
+  child.on('close', (code) => {
+    if (settled) return;
+    settled = true;
+    activeProcesses.delete(jobIndex);
+    const jobCancellationRequested = cancelledJobs.delete(jobIndex);
+    if (cancellationRequested || jobCancellationRequested) {
+      reject(new EncodeCancelledError(true));
+      return;
+    }
+    if (code !== 0) {
+      reject(new Error(output.trim().split(/\r?\n/).slice(-8).join('\n') || `rsgain exited with code ${code ?? 'unknown'}.`));
+      return;
+    }
+    logActivity('INFO', 'rsgain.completed', { root, output: output.trim() });
+    emit(webContents, {
+      phase: 'completed', jobIndex, totalJobs, sourceName: job.sourceName, outputPath: root,
+      percent: 100, bitrate: '—', fps: '—', runTimeSeconds: 0, etaSeconds: 0, speed: '—',
+      message: 'Audio encoding and library normalization completed.',
+    });
     resolve();
   });
 });
@@ -294,6 +360,7 @@ const runJob = (
 export const startEncodeQueue = async (
   ffmpegPath: string,
   ccextractorPath: string,
+  rsgainPath: string,
   jobs: EncodeJob[],
   webContents: WebContents,
 ): Promise<EncodeStartResult> => {
@@ -302,8 +369,11 @@ export const startEncodeQueue = async (
   if (jobs.some((job) => job.closedCaptionFormat) && !ccextractorPath) {
     return { started: false, message: 'CCExtractor is unavailable.' };
   }
+  if (jobs.some((job) => job.normalizeRoot) && !rsgainPath) {
+    return { started: false, message: 'rsgain is unavailable.' };
+  }
   if (!jobs.length) return { started: false, message: 'There are no jobs to encode.' };
-  if (jobs.some((job) => !path.isAbsolute(job.sourcePath) || !path.isAbsolute(job.outputPath) || !job.args.length)) {
+  if (jobs.some((job) => !path.isAbsolute(job.sourcePath) || !path.isAbsolute(job.outputPath) || (!job.args.length && !job.passthrough))) {
     return { started: false, message: 'The encoding queue contains an invalid path or command.' };
   }
   const invalidReplacement = jobs.find((job) => job.replaceSourcePath && (
@@ -318,18 +388,19 @@ export const startEncodeQueue = async (
   if (missingSource) {
     return { started: false, message: `Source does not exist: ${missingSource.sourcePath}` };
   }
-  const normalizedOutputs = jobs.map((job) => process.platform === 'win32'
+  const outputJobs = jobs.filter((job) => !job.passthrough);
+  const normalizedOutputs = outputJobs.map((job) => process.platform === 'win32'
     ? path.resolve(job.outputPath).toLowerCase()
     : path.resolve(job.outputPath));
   if (new Set(normalizedOutputs).size !== normalizedOutputs.length) {
     return { started: false, message: 'Two queued jobs use the same output file.' };
   }
-  const existing = jobs.find((job) => fs.existsSync(job.outputPath));
+  const existing = outputJobs.find((job) => fs.existsSync(job.outputPath));
   if (existing) {
     return { started: false, message: `Output already exists: ${existing.outputPath}` };
   }
 
-  await Promise.all(jobs.map((job) => fs.promises.mkdir(path.dirname(job.outputPath), { recursive: true })));
+  await Promise.all(outputJobs.map((job) => fs.promises.mkdir(path.dirname(job.outputPath), { recursive: true })));
   queueRunning = true;
   cancellationRequested = false;
   queueFailureRequested = false;
@@ -337,15 +408,17 @@ export const startEncodeQueue = async (
   cancelledJobs.clear();
   const queueStartedAt = Date.now();
   const concurrency = jobs.length > 1 && jobs.every(isNvencJob) ? 2 : 1;
-  logActivity('INFO', 'ffmpeg.queue.started', { jobs: jobs.length, concurrency, cooldownSeconds: 10 });
+  const useCooldown = jobs.some((job) => job.args.includes('-c:v'));
+  logActivity('INFO', 'ffmpeg.queue.started', { jobs: jobs.length, concurrency, cooldownSeconds: useCooldown ? 10 : 0 });
 
   const queuePromise = (async () => {
     try {
       let nextIndex = 0;
+      let queueHadCancelledJob = false;
       const runWorker = async () => {
         let completedAJob = false;
         while (!cancellationRequested && !queueFailureRequested) {
-          if (completedAJob && nextIndex < jobs.length) {
+          if (useCooldown && completedAJob && nextIndex < jobs.length) {
             const elapsed = await waitForEncodeCooldown();
             if (!elapsed || cancellationRequested || queueFailureRequested) return;
           }
@@ -355,6 +428,16 @@ export const startEncodeQueue = async (
           let captionOutput: string | null = null;
           try {
             let preparedJob = jobs[index];
+            if (preparedJob.passthrough) {
+              emit(webContents, {
+                phase: 'completed', jobIndex: index + 1, totalJobs: jobs.length,
+                sourceName: preparedJob.sourceName, outputPath: preparedJob.outputPath, percent: 100,
+                bitrate: '—', fps: '—', runTimeSeconds: 0, etaSeconds: 0, speed: '—',
+                message: 'Audio retained without conversion.',
+              });
+              completedAJob = true;
+              continue;
+            }
             if (preparedJob.closedCaptionFormat) {
               const outputParts = path.parse(preparedJob.outputPath);
               captionOutput = path.join(
@@ -362,23 +445,27 @@ export const startEncodeQueue = async (
                 `.${outputParts.name}.ea-captions-${crypto.randomUUID()}.srt`,
               );
               activeCaptionOutputs.add(captionOutput);
-              await extractClosedCaptions(
+              const captionsFound = await extractClosedCaptions(
                 ccextractorPath, preparedJob, index + 1, jobs.length, captionOutput, webContents,
               );
-              preparedJob = {
-                ...preparedJob,
-                args: injectClosedCaptionInput(
-                  preparedJob.args,
-                  preparedJob.sourcePath,
-                  captionOutput,
-                  preparedJob.closedCaptionFormat,
-                ),
-              };
+              if (captionsFound) {
+                preparedJob = {
+                  ...preparedJob,
+                  args: injectClosedCaptionInput(
+                    preparedJob.args,
+                    preparedJob.sourcePath,
+                    captionOutput,
+                    preparedJob.closedCaptionFormat,
+                  ),
+                };
+              }
             }
             await runJob(ffmpegPath, preparedJob, index + 1, jobs.length, webContents);
+            await copySidecars(preparedJob);
             completedAJob = true;
           } catch (error) {
             if (error instanceof EncodeCancelledError && !error.wholeQueue) {
+              queueHadCancelledJob = true;
               completedAJob = true;
               continue;
             }
@@ -398,6 +485,20 @@ export const startEncodeQueue = async (
         }
       };
       await Promise.allSettled(Array.from({ length: concurrency }, runWorker));
+      if (!cancellationRequested && !queueFailureRequested) {
+        try {
+          const normalizeRoots = successfulNormalizationRoots(jobs, !queueHadCancelledJob);
+          for (const root of normalizeRoots) {
+            await runRsgain(rsgainPath, root, jobs[jobs.length - 1], jobs.length, jobs.length, webContents);
+          }
+        } catch (error) {
+          if (error instanceof EncodeCancelledError) cancellationRequested = true;
+          else {
+            queueFailureRequested = true;
+            queueFailureMessage = error instanceof Error ? error.message : 'Audio normalization failed.';
+          }
+        }
+      }
       const index = Math.max(0, Math.min(nextIndex - 1, jobs.length - 1));
       const job = jobs[index];
       if (cancellationRequested) {

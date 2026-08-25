@@ -501,13 +501,18 @@ export const selectRuntimeChannel = async (useStable: boolean): Promise<RuntimeS
 export const initializeRuntime = async (webContents: WebContents, useStable = true): Promise<RuntimeState> => {
   const activeChannel: FfmpegChannel = useStable ? 'stable' : 'unstable';
   if (!app.isPackaged) return developmentState(activeChannel);
-  let state = await stateForManagedChannel(activeChannel, 'checking-local', 'Checking managed runtimes');
+  let state = await stateForManagedChannel(activeChannel, 'checking-local', 'Verifying pre-requisites');
   const notify: Notify = (phase, message, progress = null) => {
-    state = { ...state, phase, message, progress };
+    const displayMessage = phase === 'ready' || phase === 'error'
+      ? message
+      : phase === 'downloading' || phase === 'extracting'
+        ? 'Loading pre-requisites'
+        : 'Verifying pre-requisites';
+    state = { ...state, phase, message: displayMessage, progress };
     logActivity(phase === 'error' ? 'ERROR' : 'INFO', 'runtime.progress', { phase, message, progress });
     if (!webContents.isDestroyed()) webContents.send('runtime:progress', { ...state });
   };
-  notify('checking-local', 'Checking managed runtimes');
+  notify('checking-local', 'Verifying pre-requisites');
   const errors: string[] = [];
   const channels: FfmpegChannel[] = activeChannel === 'stable' ? ['stable', 'unstable'] : ['unstable', 'stable'];
   for (const channel of channels) {

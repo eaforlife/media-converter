@@ -1,3 +1,6 @@
+export type MediaWorkflow = 'video' | 'music-video' | 'audio';
+export type OutputFormat = 'mp4' | 'mkv' | 'webm' | 'm4a' | 'opus' | 'source';
+
 export type SourceFile = {
   name: string;
   path: string;
@@ -7,6 +10,10 @@ export type SourceFile = {
   probeError?: string;
   previewDataUrl?: string;
   previewId?: string;
+  workflow?: MediaWorkflow;
+  sourceRoot?: string;
+  relativePath?: string;
+  lyricPaths?: string[];
 };
 
 export type VideoStreamInfo = {
@@ -40,6 +47,8 @@ export type AudioStreamInfo = {
   isDts: boolean;
   isDolbyDigitalPlus: boolean;
   bitRate: number | null;
+  sampleRate: number | null;
+  isLossless: boolean;
   flags: StreamFlags;
 };
 
@@ -70,6 +79,8 @@ export type MediaInfo = {
   subtitles: SubtitleStreamInfo[];
   chapterCount: number;
   suggestedCrop: string | null;
+  hasCoverArt: boolean;
+  coverArtStreamIndexes: number[];
 };
 
 export type ScaleMode = 'auto' | '1080p' | '720p' | '360p' | 'disabled';
@@ -82,9 +93,12 @@ export type FilterSettings = {
   scaleLocked: boolean;
   remuxAudio: true;
   remuxSubtitles: true;
-  stripMetadata: true;
+  stripMetadata: boolean;
   doNotReplaceAudio: boolean;
   extractClosedCaptions: boolean;
+  downmixToStereo: boolean;
+  resampleLosslessTo48k: boolean;
+  normalizeAudio: boolean;
 };
 
 export type VideoEncoderCapability = {
@@ -112,7 +126,8 @@ export type HardwareCapabilities = {
 
 export type SavedPreset = {
   name: string;
-  format: 'mp4' | 'mkv' | 'webm';
+  workflow?: MediaWorkflow;
+  format: OutputFormat;
   encoder: string;
   quality: string;
   videoBitrate: string;
@@ -133,6 +148,7 @@ export type AppSettings = {
   lastSourceDirectory: string;
   customPresets: SavedPreset[];
   workingPreset: SavedPreset | null;
+  separateAudioDirectory: boolean;
 };
 
 export type RuntimePhase =
@@ -174,6 +190,10 @@ export type EncodeJob = {
   args: string[];
   replaceSourcePath?: string;
   closedCaptionFormat?: 'mov_text' | 'subrip' | 'webvtt';
+  optionalClosedCaptions?: boolean;
+  passthrough?: boolean;
+  normalizeRoot?: string;
+  sidecarCopies?: Array<{ sourcePath: string; outputPath: string }>;
 };
 
 export type EncodeProgressPhase =
