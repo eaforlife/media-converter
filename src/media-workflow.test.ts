@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { attachedCoverArtArguments, classifyMediaWorkflow } from './media-workflow.ts';
+import {
+  attachedCoverArtArguments, classifyMediaWorkflow, isH264HighSource, musicVideoEncoderProfile,
+} from './media-workflow.ts';
 import type { MediaInfo } from './shared-types.ts';
 
 const media = (overrides: Partial<MediaInfo>): MediaInfo => ({
@@ -30,4 +32,13 @@ test('music-video cover art is copied after the encoded primary video stream', (
     '-map', '0:4', '-c:v:1', 'copy', '-disposition:v:1', 'attached_pic',
     '-map', '0:7', '-c:v:2', 'copy', '-disposition:v:2', 'attached_pic',
   ]);
+});
+
+test('music-video output profiles map HEVC to Main10, H.264 to High, and leave AV1 unset', () => {
+  assert.equal(isH264HighSource({ ...video, codec: 'H264', profile: 'High' }), true);
+  assert.equal(isH264HighSource({ ...video, codec: 'HEVC', profile: 'Main 10' }), false);
+  assert.equal(musicVideoEncoderProfile('HEVC', true), 'main10');
+  assert.equal(musicVideoEncoderProfile('HEVC', false), null);
+  assert.equal(musicVideoEncoderProfile('H.264', false), 'high');
+  assert.equal(musicVideoEncoderProfile('AV1', true), null);
 });

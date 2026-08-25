@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
-  audioBitrate, rsgainArguments, shouldResampleLossless, successfulNormalizationRoots,
+  audioBitrate, MUSIC_VIDEO_AAC_BITRATE, rsgainArguments, shouldResampleLossless, successfulNormalizationRoots,
 } from './audio-workflow.ts';
 import type { AudioStreamInfo } from './shared-types.ts';
 
@@ -17,6 +17,10 @@ test('audio presets use the requested stereo and surround-downmix rates', () => 
   assert.equal(audioBitrate('Streaming', track({ channels: 6, isStereo: false }), true), '128k');
   assert.equal(audioBitrate('Archive', track(), true), '224k');
   assert.equal(audioBitrate('Archive', track({ channels: 6, isStereo: false }), true), '256k');
+});
+
+test('music video audio uses libfdk AAC at 224 kbit/s', () => {
+  assert.equal(MUSIC_VIDEO_AAC_BITRATE, '224k');
 });
 
 test('only high-frequency lossless audio is resampled to 48 kHz', () => {

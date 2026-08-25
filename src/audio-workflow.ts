@@ -2,6 +2,8 @@ import type { AudioStreamInfo } from './shared-types';
 
 export type AudioPresetName = 'Streaming' | 'Archive' | 'Passthrough';
 
+export const MUSIC_VIDEO_AAC_BITRATE = '224k';
+
 export const AUDIO_PRESET_NAMES: readonly AudioPresetName[] = ['Streaming', 'Archive', 'Passthrough'];
 
 export const AUDIO_PRESETS = Object.freeze({

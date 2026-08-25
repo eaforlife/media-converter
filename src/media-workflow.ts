@@ -1,4 +1,5 @@
-import type { MediaInfo, MediaWorkflow } from './shared-types';
+import type { MediaInfo, MediaWorkflow, VideoStreamInfo } from './shared-types';
+import type { PreferredVideoCodec } from './presets';
 
 export const classifyMediaWorkflow = (media: MediaInfo): MediaWorkflow | null => {
   if (!media.video) return media.audio.length ? 'audio' : null;
@@ -16,3 +17,11 @@ export const attachedCoverArtArguments = (streamIndexes: readonly number[]) =>
       `-disposition:v:${outputIndex}`, 'attached_pic',
     ];
   });
+
+export const isH264HighSource = (video: VideoStreamInfo | null | undefined) =>
+  Boolean(video && /^(?:h\.?264|avc)$/i.test(video.codec.trim()) && /\bhigh\b/i.test(video.profile));
+
+export const musicVideoEncoderProfile = (
+  outputCodec: PreferredVideoCodec,
+  main10Output: boolean,
+) => outputCodec === 'H.264' ? 'high' : outputCodec === 'HEVC' && main10Output ? 'main10' : null;

@@ -1,6 +1,6 @@
 import './index.css';
 import { APP_CODENAME } from './config';
-import { AUDIO_PRESETS, AUDIO_PRESET_NAMES, audioBitrate, shouldResampleLossless } from './audio-workflow';
+import { AUDIO_PRESETS, AUDIO_PRESET_NAMES, MUSIC_VIDEO_AAC_BITRATE, audioBitrate, shouldResampleLossless } from './audio-workflow';
 import type { AudioPresetName } from './audio-workflow';
 import { parseEpisodeIdentity, preservedOutputBaseName, sanitizePathSegment, smartSeriesBaseName } from './output-naming';
 import { BUILT_IN_PRESETS, BUILT_IN_PRESET_NAMES } from './presets';
@@ -13,7 +13,7 @@ import { formatSessionFfmpegCommand } from './ffmpeg-command-display';
 import { mediaLanguageOptions } from './media-language';
 import { metadataTemporaryPath, streamMetadataChanged } from './metadata-edit';
 import type { EditableStreamMetadata } from './metadata-edit';
-import { attachedCoverArtArguments } from './media-workflow';
+import { attachedCoverArtArguments, isH264HighSource, musicVideoEncoderProfile } from './media-workflow';
 import type {
   AppSettings, AudioStreamInfo, EncodeJob, EncodeProgress, FilterSettings, HardwareCapabilities, RuntimeState, SavedPreset,
   OutputFormat, ScaleMode, SourceFile, StreamFlags, SubtitleStreamInfo,
@@ -332,11 +332,11 @@ const applyMusicVideoPreset = (source: SourceFile) => {
   });
   settings.filters = {
     ...defaultFilters(source), scale: 'auto', scaleLocked: true, stripMetadata: false,
-    extractClosedCaptions: true,
+    extractClosedCaptions: true, pixelFormat10Bit: isH264HighSource(source.media?.video),
   };
   for (const track of source.media?.audio ?? []) {
     settings.audio[track.index] = {
-      enabled: true, codec: 'libfdk_aac', bitrate: track.isStereo ? '144k' : '160k',
+      enabled: true, codec: 'libfdk_aac', bitrate: MUSIC_VIDEO_AAC_BITRATE,
       flags: { ...track.flags },
       metadata: settings.audio[track.index]?.metadata ?? copyMetadata(track.language, track.flags),
     };
@@ -845,10 +845,17 @@ const getCommandArguments = (source: SourceFile, requestedOutputPath?: string) =
   const filters: string[] = [];
   const video = source.media?.video;
   const toneMap = Boolean(settings.filters.toneMapHdrToSdr && (video?.hasHdr || video?.hasDolbyVision));
-  const canUse10Bit = encoderCanOutput10Bit(settings.encoder) && Boolean(
-    video?.hasHdr || video?.hasDolbyVision || video?.isHevcMain10,
+  const outputCodec = preferredCodecForEncoder(settings.encoder);
+  const hevcOutput = outputCodec === 'HEVC';
+  const musicVideoMain10 = isMusicVideoWorkflow(source) && hevcOutput && isH264HighSource(video);
+  const canUse10Bit = hevcOutput && encoderCanOutput10Bit(settings.encoder) && Boolean(
+    video?.hasHdr || video?.hasDolbyVision || video?.isHevcMain10 || musicVideoMain10,
   );
-  const main10Output = Boolean(settings.filters.pixelFormat10Bit && canUse10Bit);
+  const main10Output = Boolean((settings.filters.pixelFormat10Bit || musicVideoMain10) && canUse10Bit);
+  if (isMusicVideoWorkflow(source)) {
+    const profile = musicVideoEncoderProfile(outputCodec, main10Output);
+    if (profile) args.push('-profile:v:0', profile);
+  }
   const toneMapFormat: 'nv12' | 'p010le' = main10Output ? 'p010le' : 'nv12';
   const dimensions = hardwareScaleDimensions(source, settings);
   const crop = detectedCropForSource(source);
@@ -1694,7 +1701,10 @@ const renderFilterSettings = (source: SourceFile, settings: JobSettings) => {
   const video = source.media?.video;
   const isHdr = Boolean(video?.hasHdr || video?.hasDolbyVision);
   const hevcOutput = settings.encoder === 'libx265' || hardwareCapabilities.encoders.some((encoder) => encoder.id === settings.encoder && encoder.codec === 'HEVC');
-  const allow10Bit = hevcOutput && (isHdr || Boolean(video?.isHevcMain10));
+  const forcedMusicMain10 = hevcOutput && isMusicVideoWorkflow(source) && isH264HighSource(video);
+  const allow10Bit = hevcOutput && (
+    isHdr || Boolean(video?.isHevcMain10) || forcedMusicMain10
+  );
   const supports10Bit = encoderCanOutput10Bit(settings.encoder);
   const hasSurround = Boolean(source.media?.audio.some((track) => settings.audio[track.index]?.enabled && !track.isStereo));
   const crop = detectedCropForSource(source);
@@ -1702,7 +1712,7 @@ const renderFilterSettings = (source: SourceFile, settings: JobSettings) => {
   return `<fieldset class="filter-layout processing-fieldset ${settings.processing.video ? '' : 'processing-disabled'}"${settings.processing.video ? '' : ' disabled'}><section class="settings-card"><div class="card-title"><div><span>PICTURE FILTERS</span><h3>Automatic processing</h3></div>${icon('sliders', 22)}</div>
     <div class="filter-options"><label class="toggle-row"><span><strong>Auto Crop</strong><small>${escapeHtml(cropDetail)}</small></span><input type="checkbox" data-filter="autoCrop"${checked(settings.filters.autoCrop)}/><i></i></label>
     <label class="toggle-row ${isHdr ? '' : 'disabled'}"><span><strong>HDR to SDR</strong><small>${isHdr ? `Tone-map ${escapeHtml(hdrLabel(source))} to SDR` : 'Unavailable because the source is SDR'}</small></span><input type="checkbox" data-filter="toneMapHdrToSdr"${checked(settings.filters.toneMapHdrToSdr)}${isHdr ? '' : ' disabled'}/><i></i></label>
-    <label class="toggle-row sub-option ${allow10Bit && supports10Bit ? '' : 'disabled'}"><span><strong>Pixel Format: 10-bit</strong><small>${allow10Bit && supports10Bit ? 'Output as yuv420p10le' : hevcOutput && !supports10Bit ? 'The detected HEVC hardware path did not pass the Main10 test' : hevcOutput ? 'Requires an HDR/DV or HEVC Main10 source' : 'Requires an HEVC output encoder'}</small></span><input type="checkbox" data-filter="pixelFormat10Bit"${checked(settings.filters.pixelFormat10Bit)}${allow10Bit && supports10Bit ? '' : ' disabled'}/><i></i></label>
+    <label class="toggle-row sub-option ${allow10Bit && supports10Bit ? '' : 'disabled'}"><span><strong>Pixel Format: 10-bit</strong><small>${forcedMusicMain10 && supports10Bit ? 'Required Main10 output for this H.264 High music-video source' : allow10Bit && supports10Bit ? 'Output as yuv420p10le' : hevcOutput && !supports10Bit ? 'The detected HEVC hardware path did not pass the Main10 test' : hevcOutput ? 'Requires HDR/DV, HEVC Main10, or an H.264 High music-video source' : 'Requires an HEVC output encoder'}</small></span><input type="checkbox" data-filter="pixelFormat10Bit"${checked(forcedMusicMain10 && supports10Bit || settings.filters.pixelFormat10Bit && hevcOutput)}${allow10Bit && supports10Bit && !forcedMusicMain10 ? '' : ' disabled'}/><i></i></label>
     <label class="scale-row"><span><strong>Auto scale</strong><small>${isMusicVideoWorkflow(source) ? 'Music Video locks Auto Scale and only scales 4K sources to 2960:-2.' : settings.filters.scaleLocked ? 'Cellular locks scaling to 360p.' : 'Choose an automatic output height or leave scaling disabled.'}</small></span><select id="filter-scale"${settings.filters.scaleLocked ? ' disabled' : ''}><option value="auto"${selected(settings.filters.scale === 'auto')}>Auto Scale</option><option value="1080p"${selected(settings.filters.scale === '1080p')}>1080p</option><option value="720p"${selected(settings.filters.scale === '720p')}>720p</option><option value="360p"${selected(settings.filters.scale === '360p')}>360p</option><option value="disabled"${selected(settings.filters.scale === 'disabled')}>Disabled</option></select></label></div></section>
     <section class="settings-card locked-options"><div class="card-title"><div><span>OUTPUT CONTENT</span><h3>Required job behavior</h3></div>${icon('check', 22)}</div><div class="job-options">
       <label class="locked-check"><input type="checkbox" checked disabled/> Remux audio into video output</label><label class="locked-check"><input type="checkbox" checked disabled/> Remux subtitles into video output</label><label class="locked-check"><input type="checkbox"${checked(settings.filters.stripMetadata)} disabled/> ${settings.filters.stripMetadata ? 'Strip title, group, and description metadata' : 'Preserve source metadata'}</label>
