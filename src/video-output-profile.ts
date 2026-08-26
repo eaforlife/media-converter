@@ -9,8 +9,8 @@ export type VideoOutputProfile = {
 };
 
 export const VIDEO_OUTPUT_PROFILES: Readonly<Record<OutputTier, VideoOutputProfile>> = Object.freeze({
-  '4k': Object.freeze({ tier: '4k', scale: ['2720', '-2'] as const, maxRate: 9500 }),
-  '1080p': Object.freeze({ tier: '1080p', scale: ['1760', '-2'] as const, maxRate: 7000 }),
+  '4k': Object.freeze({ tier: '4k', scale: ['2720', '-2'] as const, maxRate: 8000 }),
+  '1080p': Object.freeze({ tier: '1080p', scale: ['1760', '-2'] as const, maxRate: 5000 }),
   '720p': Object.freeze({ tier: '720p', scale: ['1320', '-2'] as const, maxRate: 2500 }),
   '360p': Object.freeze({ tier: '360p', scale: ['720', '-2'] as const, maxRate: 2500 }),
 });

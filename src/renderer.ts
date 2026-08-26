@@ -2,7 +2,7 @@ import './index.css';
 import { APP_CODENAME } from './config';
 import { AUDIO_PRESETS, AUDIO_PRESET_NAMES, MUSIC_VIDEO_AAC_BITRATE, audioBitrate, shouldResampleLossless } from './audio-workflow';
 import type { AudioPresetName } from './audio-workflow';
-import { parseEpisodeIdentity, preservedOutputBaseName, sanitizePathSegment, smartSeriesBaseName } from './output-naming';
+import { commonSeriesFolderName, parseEpisodeIdentity, preservedOutputBaseName, sanitizePathSegment, smartSeriesBaseName } from './output-naming';
 import { BUILT_IN_PRESET_NAMES } from './presets';
 import type { BuiltInPresetCatalog, BuiltInPresetDefinition, BuiltInPresetName, EncoderFamily, PreferredVideoCodec, PresetAudioCodec } from './presets';
 import { advancedVideoArguments, supportedAdvancedVideoFields } from './advanced-video-settings';
@@ -13,7 +13,7 @@ import {
 } from './encoder-controls';
 import type { EncoderSpeed } from './encoder-controls';
 import { isValidCustomPresetName } from './custom-presets';
-import { aspectPreservingDimensions, cuvidCrop, detectedCrop, qsvCropOptions } from './video-crop';
+import { aspectPreservingDimensions, cuvidDecoderArguments, detectedCrop, qsvCropOptions } from './video-crop';
 import { bufferSizeFor, deliveryPresetForOutput, deliveryQualityForOutput, scaleDimensionsFor, videoOutputProfile } from './video-output-profile';
 import { applyEncodeProgress, canFinishEncodeQueue, createEncodeQueueProgress, isQueueTerminal } from './encode-progress-state';
 import type { EncodeJobProgressState, EncodeQueueProgressState } from './encode-progress-state';
@@ -36,7 +36,7 @@ type AudioSetting = { enabled: boolean; codec: AudioCodec; bitrate: string; flag
 type SubtitleSetting = { enabled: boolean; codec: SubtitleCodec; flags: StreamFlags; metadata: EditableStreamMetadata };
 type ProcessingSection = 'video' | 'audio' | 'subtitles';
 type ProcessingSettings = Record<ProcessingSection, boolean>;
-type FolderSeriesLayout = { sourceRoot: string; showFolder: string; season: number };
+type FolderSeriesLayout = { sourceRoot: string; showFolder: string };
 type JobSettings = {
   preset: string; format: OutputFormat; encoder: string; encoderSpeed: EncoderSpeed; encoderTune: string;
   resolution: string; quality: string; videoBitrate: string; maxRate: string; bufferMultiplier: number; bufferSize: string;
@@ -381,13 +381,15 @@ const applyAudioPreset = (source: SourceFile, presetName: string) => {
 
 const applyMusicVideoPreset = (source: SourceFile) => {
   const preset = requiredBuiltInPreset('Streaming');
+  const outputProfile = videoOutputProfile(source.media?.video?.height ?? 0, 'auto');
   const settings = settingsByPath.get(source.path) ?? initialSettings(source);
   settingsByPath.set(source.path, settings);
   const encoder = hardwareEncoderFor(preset.preferredVideoCodec);
   Object.assign(settings, {
     preset: 'Music Video', format: 'mp4' as const, encoder, encoderSpeed: 4, encoderTune: normalizeEncoderTune(encoder, 'hq'),
-    quality: deliveryQualityForOutput('Streaming', videoOutputProfile(source.media?.video?.height ?? 0, 'auto').tier, '28'),
-    videoBitrate: '0', maxRate: '7000', bufferMultiplier: 2, bufferSize: '14000',
+    quality: deliveryQualityForOutput('Streaming', outputProfile.tier, '28'),
+    videoBitrate: '0', maxRate: String(outputProfile.maxRate), bufferMultiplier: 2,
+    bufferSize: String(bufferSizeFor(outputProfile.maxRate, 2)),
     deliveryMode: true, advancedVideo: copyAdvancedVideo(preset.advancedVideo),
     processing: { video: true, audio: true, subtitles: true },
   });
@@ -647,17 +649,9 @@ const snapshotPreset = (settings: JobSettings, name: string): SavedPreset => {
 };
 const detectFolderSeriesLayout = (folderSources: SourceFile[]): FolderSeriesLayout | null => {
   if (!folderSources.length) return null;
-  const identities = folderSources.map((source) => parseEpisodeIdentity(source.name));
-  if (identities.some((identity) => identity === null)) return null;
-  const parsed = identities.filter((identity) => identity !== null);
-  const normalizedTitle = parsed[0].showTitle.toLocaleLowerCase();
-  if (parsed.some((identity) => identity.showTitle.toLocaleLowerCase() !== normalizedTitle)) return null;
-  const seasons = [...new Set(parsed.map((identity) => identity.season))];
-  if (seasons.length !== 1) return null;
-  const years = [...new Set(parsed.flatMap((identity) => identity.year === null ? [] : [identity.year]))];
-  if (years.length > 1) return null;
-  const showFolder = sanitizePathSegment(`${parsed[0].showTitle}${years[0] ? ` (${years[0]})` : ''}`);
-  return { sourceRoot: parentPath(folderSources[0].path), showFolder, season: seasons[0] };
+  const showFolder = commonSeriesFolderName(folderSources.map((source) => source.name));
+  if (!showFolder) return null;
+  return { sourceRoot: folderSources[0].sourceRoot ?? parentPath(folderSources[0].path), showFolder };
 };
 const makeDefaultOutputDirectory = (source: SourceFile) => {
   if (isAudioWorkflow(source)) {
@@ -758,18 +752,19 @@ const hardwareInputArguments = (source: SourceFile, settings: JobSettings) => {
   if (!appSettings.hardwareAcceleration) return { args: [] as string[], cropHandledByDecoder: false, backend: 'software' as const };
   if (settings.encoder.endsWith('_nvenc') && hardwareCapabilities.cudaAvailable && hardwareCapabilities.nvdecAvailable) {
     const decoder = hardwareDecoderName(source, 'cuvid');
-    if (decoder && hardwareCapabilities.cuvidDecoders.includes(decoder) && !source.media?.hasCoverArt) {
+    if (decoder && hardwareCapabilities.cuvidDecoders.includes(decoder)) {
+      const video = source.media?.video;
       const args = [
         '-init_hw_device', 'cuda=cu:0', '-filter_hw_device', 'cu', '-hwaccel', 'cuda',
-        '-hwaccel_output_format', 'cuda', '-hwaccel_flags', '+unsafe_output', '-c:v:0', decoder,
+        '-hwaccel_output_format', 'cuda', '-hwaccel_flags', '+unsafe_output',
       ];
-      const video = source.media?.video;
       const crop = detectedCropForSource(source);
-      const decoderCrop = settings.filters.autoCrop && crop && video
-        ? cuvidCrop(crop, video.width, video.height)
-        : null;
-      if (decoderCrop) args.push('-crop', decoderCrop);
-      return { args, cropHandledByDecoder: true, backend: 'cuda' as const };
+      if (video) args.push(...cuvidDecoderArguments(
+        decoder, video.index, settings.filters.autoCrop ? crop : null, video.width, video.height,
+      ));
+      return {
+        args, cropHandledByDecoder: Boolean(settings.filters.autoCrop && crop && video), backend: 'cuda' as const,
+      };
     }
     return {
       args: ['-init_hw_device', 'cuda=cu:0', '-filter_hw_device', 'cu', '-hwaccel', 'cuda', '-hwaccel_output_format', 'cuda'],
@@ -799,7 +794,7 @@ const decoderStatus = (source: SourceFile, settings: JobSettings) => {
   }
   if (settings.encoder.endsWith('_nvenc') && hardwareCapabilities.cudaAvailable && hardwareCapabilities.nvdecAvailable) {
     const decoder = hardwareDecoderName(source, 'cuvid');
-    return decoder && hardwareCapabilities.cuvidDecoders.includes(decoder) && !source.media?.hasCoverArt
+    return decoder && hardwareCapabilities.cuvidDecoders.includes(decoder)
       ? { label: 'NVIDIA CUVID', hardware: true }
       : { label: 'NVIDIA NVDEC', hardware: true };
   }
@@ -1441,7 +1436,7 @@ const showAppMenu = () => {
   const runtimeSelector = sources.length === 0 && Boolean(document.querySelector('.welcome-shell'))
     ? `<label class="menu-check runtime-channel-toggle"><input id="stable-ffmpeg" type="checkbox"${checked(appSettings.useStableFfmpeg)}/><span><strong>Stable</strong><small>Use the stable Jellyfin FFmpeg runtime</small></span></label>`
     : '';
-  menu.innerHTML = `<div class="menu-identity"><strong>EA Media Tools</strong><span>Version ${escapeHtml(runtimeState?.appVersion ?? '2.0.1')} · ${APP_CODENAME}</span></div>${runtimeSelector}<label class="menu-check"><input id="hardware-acceleration" type="checkbox"${checked(appSettings.hardwareAcceleration)}/><span>Hardware Acceleration</span></label><button id="view-logs">View Logs</button><button id="view-config">View Running Config</button><button id="view-presets">View Built-in Presets INI</button><button id="show-presets">Show Built-in Presets in Folder</button><button id="view-custom-presets">View Custom Presets INI</button><button id="show-custom-presets">Show Custom Presets in Folder</button><button id="view-changelog">View Change Log</button><button id="check-update">Check for update</button><button class="danger" id="exit-app">Exit</button>`;
+  menu.innerHTML = `<div class="menu-identity"><strong>EA Media Tools</strong><span>Version ${escapeHtml(runtimeState?.appVersion ?? '2.1.0')} · ${APP_CODENAME}</span></div>${runtimeSelector}<label class="menu-check"><input id="hardware-acceleration" type="checkbox"${checked(appSettings.hardwareAcceleration)}/><span>Hardware Acceleration</span></label><button id="view-logs">View Logs</button><button id="view-config">View Running Config</button><button id="view-changelog">View Change Log</button><button id="check-update">Check for update</button><button class="danger" id="exit-app">Exit</button>`;
   document.body.appendChild(menu);
   menu.addEventListener('click', (event) => event.stopPropagation());
   menu.querySelector<HTMLInputElement>('#stable-ffmpeg')?.addEventListener('change', async (event) => {
@@ -1510,18 +1505,8 @@ const showAppMenu = () => {
   menu.querySelector('#view-config')?.addEventListener('click', () => void showTextReader(
     'EA Media Tools running config', 'config · user settings and active custom working state', () => window.mediaAPI.readConfig(appSettings),
   ));
-  menu.querySelector('#view-presets')?.addEventListener('click', () => void showTextReader(
-    'EA Media Tools built-in presets', 'presets.ini · loaded from the install resources directory', () => window.mediaAPI.readPresetFile(),
-  ));
-  menu.querySelector('#show-presets')?.addEventListener('click', () => void window.mediaAPI.showPresetFile());
-  menu.querySelector('#view-custom-presets')?.addEventListener('click', () => void showTextReader(
-    'EA Media Tools custom presets', 'custom_preset.ini · created after the first named custom preset', () => window.mediaAPI.readCustomPresetFile(),
-  ));
-  menu.querySelector('#show-custom-presets')?.addEventListener('click', async () => {
-    if (!await window.mediaAPI.showCustomPresetFile()) showToast('No custom_preset.ini exists yet');
-  });
   menu.querySelector('#view-changelog')?.addEventListener('click', () => void showTextReader(
-    `EA Media Tools ${runtimeState?.appVersion ?? '2.0.1'} change log`,
+    `EA Media Tools ${runtimeState?.appVersion ?? '2.1.0'} change log`,
     `${APP_CODENAME} · installed release notes from GitHub`,
     () => window.mediaAPI.readChangelog(),
   ));
@@ -2224,7 +2209,7 @@ const startApplication = async () => {
     }
     await new Promise((resolve) => window.setTimeout(resolve, runtimeState?.phase === 'error' ? 900 : 350));
   } catch (error) {
-    runtimeState = { phase: 'error', message: error instanceof Error ? error.message : 'Unable to initialize FFmpeg', progress: null, appVersion: '2.0.1', isPackaged: false, updateEnabled: false, ffmpegAvailable: false, ffmpegPath: '', ffprobePath: '', ffmpegVersion: null, releaseTag: null, ffmpegChannel: appSettings.useStableFfmpeg ? 'stable' : 'unstable', rsgainAvailable: false, rsgainPath: '', rsgainVersion: null, ccextractorAvailable: false, ccextractorPath: '', ccextractorVersion: null };
+    runtimeState = { phase: 'error', message: error instanceof Error ? error.message : 'Unable to initialize FFmpeg', progress: null, appVersion: '2.1.0', isPackaged: false, updateEnabled: false, ffmpegAvailable: false, ffmpegPath: '', ffprobePath: '', ffmpegVersion: null, releaseTag: null, ffmpegChannel: appSettings.useStableFfmpeg ? 'stable' : 'unstable', rsgainAvailable: false, rsgainPath: '', rsgainVersion: null, ccextractorAvailable: false, ccextractorPath: '', ccextractorVersion: null };
     renderBootstrap(runtimeState); await new Promise((resolve) => window.setTimeout(resolve, 900));
   } finally { removeProgressListener(); }
   if (!builtInPresets) return;

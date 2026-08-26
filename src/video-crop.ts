@@ -17,7 +17,7 @@ export const detectedCrop = (
   const [width, height, x, y] = crop;
   if (width <= 0 || height <= 0 || x < 0 || y < 0) return null;
   if (x + width > sourceWidth || y + height > sourceHeight) return null;
-  if (x === 0 && y === 0) return null;
+  if (x === 0 && y === 0 && width === sourceWidth && height === sourceHeight) return null;
   return { width, height, x, y, filter: `${width}:${height}:${x}:${y}` };
 };
 
@@ -27,6 +27,19 @@ export const cuvidCrop = (crop: DetectedCrop, sourceWidth: number, sourceHeight:
   const left = crop.x;
   const right = sourceWidth - crop.width - crop.x;
   return top || bottom || left || right ? `${top}x${bottom}x${left}x${right}` : null;
+};
+
+export const cuvidDecoderArguments = (
+  decoder: string,
+  streamIndex: number,
+  crop: DetectedCrop | null,
+  sourceWidth: number,
+  sourceHeight: number,
+) => {
+  const args = [`-c:${streamIndex}`, decoder];
+  const decoderCrop = crop ? cuvidCrop(crop, sourceWidth, sourceHeight) : null;
+  if (decoderCrop) args.push('-crop', decoderCrop);
+  return args;
 };
 
 export const qsvCropOptions = (crop: DetectedCrop) => [

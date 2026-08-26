@@ -6,6 +6,9 @@ import path from 'node:path';
 import { BrowserWindow, type WebContents } from 'electron';
 import { logActivity } from './app-logger';
 import { ccextractorArguments, injectClosedCaptionInput } from './closed-caption';
+import {
+  ADAPTIVE_SAMPLE_MS, averageAggregateFps, canAddEncodeJob, encoderConcurrencyLimit,
+} from './encode-concurrency';
 import { rsgainArguments, successfulNormalizationRoots } from './audio-workflow';
 import { replaceSourceWithMetadataOutput } from './metadata-replacement';
 import type { EncodeJob, EncodeProgress, EncodeStartResult } from './shared-types';
@@ -21,7 +24,7 @@ let queueFailureRequested = false;
 let queueFailureMessage: string | undefined;
 let activeQueuePromise: Promise<void> | null = null;
 
-const ENCODE_COOLDOWN_MS = 10_000;
+const ENCODE_COOLDOWN_MS = ADAPTIVE_SAMPLE_MS;
 const SHUTDOWN_GRACE_MS = 8_000;
 const SHUTDOWN_FORCE_MS = 2_000;
 
@@ -81,9 +84,6 @@ const waitForEncodeCooldown = () => new Promise<boolean>((resolve) => {
   state.timer = setTimeout(() => finish(true), ENCODE_COOLDOWN_MS);
   cancelCooldowns.add(cancel);
 });
-
-const isNvencJob = (job: EncodeJob) => job.args.some((argument, index) =>
-  argument === '-c:v' && job.args[index + 1]?.endsWith('_nvenc'));
 
 const stopActiveProcesses = () => {
   for (const process of activeProcesses.values()) process.kill();
@@ -215,6 +215,7 @@ const runJob = (
   jobIndex: number,
   totalJobs: number,
   webContents: WebContents,
+  onFps?: (fps: number) => void,
 ) => new Promise<void>((resolve, reject) => {
   const startedAt = Date.now();
   const outputParts = path.parse(job.outputPath);
@@ -282,6 +283,8 @@ const runJob = (
       const key = line.slice(0, separator);
       block[key] = line.slice(separator + 1);
       if (key === 'progress') {
+        const fps = Number(block.fps);
+        if (block.progress !== 'end' && Number.isFinite(fps) && fps > 0) onFps?.(fps);
         emit(webContents, status(block.progress === 'end' ? 'completed' : 'encoding'));
         if (block.progress !== 'end') block = {};
       }
@@ -407,14 +410,20 @@ export const startEncodeQueue = async (
   queueFailureMessage = undefined;
   cancelledJobs.clear();
   const queueStartedAt = Date.now();
-  const concurrency = jobs.length > 1 && jobs.every(isNvencJob) ? 2 : 1;
+  const concurrencyLimit = encoderConcurrencyLimit(jobs);
   const useCooldown = jobs.some((job) => job.args.includes('-c:v'));
-  logActivity('INFO', 'ffmpeg.queue.started', { jobs: jobs.length, concurrency, cooldownSeconds: useCooldown ? 10 : 0 });
+  logActivity('INFO', 'ffmpeg.queue.started', {
+    jobs: jobs.length, concurrency: 1, concurrencyLimit, adaptiveSampleSeconds: 10,
+    minimumFpsPerJob: 200, cooldownSeconds: useCooldown ? 10 : 0,
+  });
 
   const queuePromise = (async () => {
     try {
       let nextIndex = 0;
       let queueHadCancelledJob = false;
+      let targetConcurrency = 1;
+      const fpsWindows = new Map<number, number[]>();
+      const workers: Promise<void>[] = [];
       const runWorker = async () => {
         let completedAJob = false;
         while (!cancellationRequested && !queueFailureRequested) {
@@ -460,7 +469,10 @@ export const startEncodeQueue = async (
                 };
               }
             }
-            await runJob(ffmpegPath, preparedJob, index + 1, jobs.length, webContents);
+            fpsWindows.set(index, []);
+            await runJob(ffmpegPath, preparedJob, index + 1, jobs.length, webContents, (fps) => {
+              fpsWindows.get(index)?.push(fps);
+            });
             await copySidecars(preparedJob);
             completedAJob = true;
           } catch (error) {
@@ -477,6 +489,7 @@ export const startEncodeQueue = async (
             }
             return;
           } finally {
+            fpsWindows.delete(index);
             if (captionOutput) {
               await fs.promises.rm(captionOutput, { force: true }).catch(() => undefined);
               activeCaptionOutputs.delete(captionOutput);
@@ -484,7 +497,27 @@ export const startEncodeQueue = async (
           }
         }
       };
-      await Promise.allSettled(Array.from({ length: concurrency }, runWorker));
+      const launchWorker = () => { workers.push(runWorker()); };
+      launchWorker();
+      while (
+        concurrencyLimit > 1 && nextIndex < jobs.length
+        && !cancellationRequested && !queueFailureRequested
+      ) {
+        const elapsed = await waitForEncodeCooldown();
+        if (!elapsed || cancellationRequested || queueFailureRequested) break;
+        const aggregateFps = averageAggregateFps(fpsWindows.values());
+        const expanded = nextIndex < jobs.length
+          && canAddEncodeJob(aggregateFps, targetConcurrency, concurrencyLimit);
+        logActivity('INFO', 'ffmpeg.queue.concurrency.sample', {
+          aggregateFps, activeTarget: targetConcurrency, concurrencyLimit, expanded,
+        });
+        for (const samples of fpsWindows.values()) samples.length = 0;
+        if (expanded) {
+          targetConcurrency += 1;
+          launchWorker();
+        }
+      }
+      await Promise.allSettled(workers);
       if (!cancellationRequested && !queueFailureRequested) {
         try {
           const normalizeRoots = successfulNormalizationRoots(jobs, !queueHadCancelledJob);

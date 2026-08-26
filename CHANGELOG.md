@@ -4,6 +4,23 @@ All notable changes to EA Media Tools are documented here.
 
 ## [Unreleased]
 
+## [2.1.0] - 2026-08-26
+
+### Added
+
+- Add adaptive NVENC batch scheduling that samples aggregate average FPS every 10 seconds, reserves 200 FPS per active and proposed job, and respects the encoder session cap.
+- Add smart episodic output names and series/year/season folder layouts for folder batches, including batches spanning multiple seasons.
+
+### Changed
+
+- Set Streaming maximum video rates to 5000 kbit/s for 1080p and 8000 kbit/s for 4K, with buffer size continuing to calculate from the preset multiplier.
+- Use an available codec-specific NVIDIA CUVID decoder and its pre-input crop option for auto-crop, including inputs that contain attached cover art.
+- Remove built-in and custom preset file/folder shortcuts from the gear menu.
+
+### Fixed
+
+- Accept valid auto-crop geometry whose cropped picture begins at the top-left edge.
+
 ## [2.0.1] - 2026-08-26
 
 ### Added
@@ -190,6 +207,7 @@ All notable changes to EA Media Tools are documented here.
 - Convert crop offsets to CUVID edge values with division by two and floor rounding.
 - Cancel all active parallel encodes and interrupt pending cooldowns when the queue is stopped or a job fails.
 
+[2.1.0]: https://github.com/eaforlife/media-converter/compare/v2.0.1...v2.1.0
 [2.0.1]: https://github.com/eaforlife/media-converter/compare/v2.0.0...v2.0.1
 [2.0.0]: https://github.com/eaforlife/media-converter/compare/v1.2.1...v2.0.0
 [1.2.1]: https://github.com/eaforlife/media-converter/compare/v1.2.0...v1.2.1

@@ -50,3 +50,15 @@ export const smartSeriesBaseName = (name: string) => {
   if (!identity) return sanitizePathSegment(stripExtension(name));
   return `${identity.showTitle} S${String(identity.season).padStart(2, '0')}E${String(identity.episode).padStart(2, '0')}`;
 };
+
+export const commonSeriesFolderName = (names: readonly string[]) => {
+  if (!names.length) return null;
+  const identities = names.map(parseEpisodeIdentity);
+  if (identities.some((identity) => identity === null)) return null;
+  const parsed = identities.filter((identity): identity is EpisodeIdentity => identity !== null);
+  const normalizedTitle = parsed[0].showTitle.toLocaleLowerCase();
+  if (parsed.some((identity) => identity.showTitle.toLocaleLowerCase() !== normalizedTitle)) return null;
+  const years = [...new Set(parsed.flatMap((identity) => identity.year === null ? [] : [identity.year]))];
+  if (years.length > 1) return null;
+  return sanitizePathSegment(`${parsed[0].showTitle}${years[0] ? ` (${years[0]})` : ''}`);
+};

@@ -2,7 +2,7 @@
 
 EA Media Tools is a desktop video and audio converter powered by Jellyfin FFmpeg. It inspects video, audio, subtitle, chapter, HDR, and Dolby Vision metadata; selects hardware or CPU processing; and runs queued conversions with live progress information.
 
-Version 2.0.1, codename **jaguar**, is the current stable release. It supports video files, short music videos with attached artwork, and recursive audio libraries. Hardware acceleration is enabled by default but can be disabled for CPU video encoding and decoding.
+Version 2.1.0, codename **jaguar**, is the current stable release. It supports video files, short music videos with attached artwork, and recursive audio libraries. Hardware acceleration is enabled by default but can be disabled for CPU video encoding and decoding.
 
 ## Download
 
@@ -12,7 +12,7 @@ Choose the asset that matches your operating system and CPU:
 
 | System | Intel/AMD 64-bit | ARM 64-bit |
 | --- | --- | --- |
-| Windows | `EA-Media-Tools-2.0.1-x64-Setup.exe` | `EA-Media-Tools-2.0.1-arm64-Setup.exe` |
+| Windows | `EA-Media-Tools-2.1.0-x64-Setup.exe` | `EA-Media-Tools-2.1.0-arm64-Setup.exe` |
 | macOS | ZIP containing `darwin-x64` | ZIP containing `darwin-arm64` for Apple silicon |
 | Debian/Ubuntu | `.deb` containing `amd64` | `.deb` containing `arm64` |
 
@@ -41,7 +41,7 @@ The macOS app is not signed or notarized. To uninstall it, quit the app and move
 Install the downloaded package from a terminal. Replace the filename with the asset you downloaded:
 
 ```bash
-sudo apt install ./ea-media-tools_2.0.1_amd64.deb
+sudo apt install ./ea-media-tools_2.1.0_amd64.deb
 ```
 
 ARM64 systems use the package ending in `arm64.deb`. Launch **EA Media Tools** from the desktop application menu. Remove it with:
@@ -64,7 +64,7 @@ Videos shorter than eight minutes with attached cover artwork use the Music Vide
 
 The app then checks the GPU driving the primary physical display. Virtual and secondary display adapters are ignored and recorded in **View Logs**. An encoder appears only after the corresponding Jellyfin FFmpeg flag completes an actual test encode on the installed hardware.
 
-Folder analysis inspects up to two videos at a time. NVENC-only batches encode up to two files simultaneously; each available encode slot waits 10 seconds before starting its next file. Batches using another hardware encoder remain serial.
+Folder analysis inspects up to two videos at a time. An NVENC-only batch begins with one encode, measures aggregate average speed for 10 seconds, and adds one job only when at least 200 FPS remains reserved for every current job and the new job. It repeats that measurement until the GPU no longer has enough headroom or reaches the supported NVENC session cap. A finished slot waits 10 seconds before taking another file. Other encoder families remain serial because the app does not yet have a reliable session-capability signal for them.
 
 The encode window keeps a separate progress page for every queued video. Browse pages with **Previous** and **Next** to inspect pending, active, completed, cancelled, or failed jobs. **Live FFmpeg Output** opens one console-style session log containing every command as its encode starts; executable and media paths are displayed as `ffmpeg`, `<input>`, and `<output>`. **Start New** becomes available after the queue settles. **Done** appears only after every job has completed or cancelled, then waits for active workers and partial-output cleanup before closing the app.
 
@@ -72,17 +72,17 @@ Video, audio, and subtitle tabs each have a processing checkbox. Checked section
 
 Advanced video controls are selected for the active encoder. NVENC exposes B-frames, multipass, B-frame references, adaptive B-frames, scene-cut detection, RC lookahead, non-reference P-frames, spatial AQ, and temporal AQ. QSV, AMF, and software encoders show only controls with an encoder-specific FFmpeg mapping; CUDA-only flags are never sent to them. P1-P7 speed and Tune controls follow the same rule. The top bar reports the decoder selected for the current source.
 
-Built-in video preset values are loaded from `presets.ini` in the installed app's resources directory. Named custom presets are stored separately in the per-user `custom_preset.ini`; that file is created only after the first custom preset is saved. Use the gear menu to view or locate either file. Changes take effect after restarting the app.
+Built-in video preset values are loaded from `presets.ini` in the installed app's resources directory. Named custom presets are stored separately in the platform application-data directory as `custom_preset.ini`; that file is created only after the first custom preset is saved. Changes take effect after restarting the app.
 
 ## How to customize presets
 
-Open the gear menu and choose **Show Built-in Presets in Folder**. Edit `presets.ini`, save it, and restart EA Media Tools. Configuration files contain data only and must not include comments. Keep every built-in section (`Archive`, `Regular`, `Streaming`, and `Cellular`) and every key in place.
+Open the EA Media Tools installation, locate its resources directory, and edit `presets.ini`. Save it and restart EA Media Tools. Configuration files contain data only and must not include comments. Keep every built-in section (`Archive`, `Regular`, `Streaming`, and `Cellular`) and every key in place. The gear menu intentionally does not expose preset-file or preset-folder shortcuts.
 
 Boolean fields use `0` for disabled and `1` for enabled. `encoder_speed` accepts `1` through `7`, where P1 is fastest and P7 is slowest. EA Media Tools maps those levels to native NVENC, QSV, AMF, VideoToolbox, x264, x265, or SVT-AV1 settings. Tune defaults use the `tune_nvenc`, `tune_amf`, `tune_qsv`, `tune_vaapi`, `tune_videotoolbox`, and `tune_software` keys; an empty value means the encoder has no general-purpose equivalent. Modern NVENC combines the selected P-level with `tune_nvenc=hq`; the deprecated `-preset hq` alias is not used because it maps to P7 and would bypass the speed control.
 
 Quality defaults use matching `quality_nvenc`, `quality_amf`, `quality_qsv`, `quality_vaapi`, `quality_videotoolbox`, and `quality_software` keys. The installed values are conservative VMAF-aligned starting points for comparable perceptual quality, but exact results still depend on codec generation, driver, source content, and hardware. Multipass accepts `0` (none), `1` (quarter resolution), or `2` (full resolution). `b_ref_mode` accepts `disabled`, `each`, or `middle`. `rc_lookahead` accepts `0` through `42`, and `spatial_aq` accepts `0` through `15`; zero disables either feature.
 
-Changing a built-in value in the app switches the working selection to Custom and immediately reveals the preset-name field. Enter a name and choose **Save** to create or update that section in `custom_preset.ini`. Its description is the same as its section name. If `custom_preset.ini` does not exist, the app exposes no saved custom presets. Use **View Custom Presets INI** or **Show Custom Presets in Folder** from the gear menu to edit or locate it.
+Changing a built-in value in the app switches the working selection to Custom and immediately reveals the preset-name field. Enter a name and choose **Save** to create or update that section in `custom_preset.ini`. Its description is the same as its section name. If `custom_preset.ini` does not exist in the platform application-data directory, the app exposes no saved custom presets.
 
 Open the gear menu and choose **View Change Log** to read the installed version's GitHub release notes inside the app.
 
@@ -96,8 +96,8 @@ Auto Scale chooses an output profile from the source resolution. Selecting a sca
 
 | Output profile | FFmpeg scale | Maximum video rate | Streaming NVENC quality |
 | --- | --- | --- | --- |
-| 4K | `2720:-2` | 9500 kbps | CQ 29 |
-| 1080p | `1760:-2` | 7000 kbps | CQ 27 |
+| 4K | `2720:-2` | 8000 kbps | CQ 29 |
+| 1080p | `1760:-2` | 5000 kbps | CQ 27 |
 | 720p | `1320:-2` | 2500 kbps | CQ 29 |
 | 360p / Cellular | `720:-2` | 2500 kbps | CQ 32 |
 

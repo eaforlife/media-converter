@@ -10,8 +10,8 @@ import {
 
 test('auto scaling classifies each source into the strict output tiers', () => {
   const cases = [
-    { height: 2160, tier: '4k', scale: ['2720', '-2'], maxRate: 9500 },
-    { height: 1080, tier: '1080p', scale: ['1760', '-2'], maxRate: 7000 },
+    { height: 2160, tier: '4k', scale: ['2720', '-2'], maxRate: 8000 },
+    { height: 1080, tier: '1080p', scale: ['1760', '-2'], maxRate: 5000 },
     { height: 720, tier: '720p', scale: ['1320', '-2'], maxRate: 2500 },
     { height: 360, tier: '360p', scale: ['720', '-2'], maxRate: 2500 },
   ] as const;
@@ -29,7 +29,7 @@ test('explicit scaling uses the selected output profile instead of the source ti
   deepStrictEqual(scaleDimensionsFor(sourceHeight, '1080p'), ['1760', '-2']);
   deepStrictEqual(scaleDimensionsFor(sourceHeight, '720p'), ['1320', '-2']);
   deepStrictEqual(scaleDimensionsFor(sourceHeight, '360p'), ['720', '-2']);
-  equal(videoOutputProfile(sourceHeight, '1080p').maxRate, 7000);
+  equal(videoOutputProfile(sourceHeight, '1080p').maxRate, 5000);
   equal(videoOutputProfile(sourceHeight, '720p').maxRate, 2500);
 });
 
@@ -51,7 +51,7 @@ test('cellular and 360p resolve to the same output and delivery profiles', () =>
 test('disabled scaling emits no scale filter while retaining the source rate tier', () => {
   equal(scaleDimensionsFor(2160, 'disabled'), null);
   equal(videoOutputProfile(2160, 'disabled').tier, '4k');
-  equal(videoOutputProfile(2160, 'disabled').maxRate, 9500);
+  equal(videoOutputProfile(2160, 'disabled').maxRate, 8000);
 });
 
 test('buffer sizing retains the preset multiplier when max rate changes', () => {
