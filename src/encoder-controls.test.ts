@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
-  encoderSpeedArguments, encoderSpeedLabel, encoderTuneArguments, encoderTuneOptions,
+  encoderBackendLabel, encoderSpeedArguments, encoderSpeedDisplay, encoderSpeedLabel, encoderTuneArguments, encoderTuneOptions,
   normalizeEncoderSpeed, normalizeEncoderTune, supportsEncoderSpeed,
 } from './encoder-controls.ts';
 
@@ -9,6 +9,15 @@ test('normalizes the seven encoder speed levels', () => {
   assert.equal(normalizeEncoderSpeed(1), 1);
   assert.equal(normalizeEncoderSpeed(7), 7);
   assert.equal(normalizeEncoderSpeed(99), 4);
+});
+
+test('formats encoder names and speed values for display', () => {
+  assert.equal(encoderBackendLabel('hevc_nvenc'), 'NVIDIA NVENC');
+  assert.equal(encoderBackendLabel('av1_amf'), 'AMD AMF');
+  assert.equal(encoderBackendLabel('h264_qsv'), 'INTEL QSV');
+  assert.equal(encoderBackendLabel('libx265'), 'SOFTWARE ENCODE');
+  assert.equal(encoderSpeedDisplay('hevc_nvenc', 1), 'P1');
+  assert.equal(encoderSpeedDisplay('libx265', 7), 'P7 / veryslow');
 });
 
 test('maps speed levels to each supported encoder family', () => {

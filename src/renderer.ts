@@ -8,7 +8,7 @@ import type { BuiltInPresetCatalog, BuiltInPresetDefinition, BuiltInPresetName, 
 import { advancedVideoArguments, supportedAdvancedVideoFields } from './advanced-video-settings';
 import type { AdvancedVideoField } from './advanced-video-settings';
 import {
-  encoderSpeedArguments, encoderSpeedLabel, encoderTuneArguments, encoderTuneOptions,
+  encoderBackendLabel, encoderSpeedArguments, encoderSpeedDisplay, encoderSpeedLabel, encoderTuneArguments, encoderTuneOptions,
   normalizeEncoderSpeed, normalizeEncoderTune, supportsEncoderSpeed,
 } from './encoder-controls';
 import type { EncoderSpeed } from './encoder-controls';
@@ -753,25 +753,23 @@ const hardwareInputArguments = (source: SourceFile, settings: JobSettings) => {
   return { args: ['-hwaccel', 'auto'], cropHandledByDecoder: false, backend: 'software' as const };
 };
 const decoderStatus = (source: SourceFile, settings: JobSettings) => {
-  if (isAudioWorkflow(source)) return 'Audio only Â· no video decoder';
-  if (!settings.processing.video) return 'Decoder Â· stream copy';
-  if (!appSettings.hardwareAcceleration) return 'Decoder Â· CPU software';
+  if (isAudioWorkflow(source) || !settings.processing.video || !appSettings.hardwareAcceleration) {
+    return { label: 'SOFTWARE', hardware: false };
+  }
   if (settings.encoder.endsWith('_nvenc') && hardwareCapabilities.cudaAvailable && hardwareCapabilities.nvdecAvailable) {
     const decoder = hardwareDecoderName(source, 'cuvid');
     return decoder && hardwareCapabilities.cuvidDecoders.includes(decoder) && !source.media?.hasCoverArt
-      ? `Decoder Â· NVIDIA NVDEC (${decoder})`
-      : 'Decoder Â· NVIDIA CUDA auto';
+      ? { label: 'NVIDIA CUVID', hardware: true }
+      : { label: 'NVIDIA NVDEC', hardware: true };
   }
-  if (settings.encoder.endsWith('_amf') && hardwareCapabilities.amfDecodeAvailable) return 'Decoder Â· AMD AMF';
+  if (settings.encoder.endsWith('_amf') && hardwareCapabilities.amfDecodeAvailable) {
+    return { label: 'AMD AMF', hardware: true };
+  }
   if (settings.encoder.endsWith('_qsv') && hardwareCapabilities.qsvDecodeAvailable) {
-    const decoder = hardwareDecoderName(source, 'qsv');
-    return decoder && hardwareCapabilities.qsvDecoders.includes(decoder)
-      ? `Decoder Â· Intel QSV (${decoder})`
-      : 'Decoder Â· Intel QSV auto';
+    return { label: 'INTEL QSV', hardware: true };
   }
-  if (settings.encoder.endsWith('_videotoolbox')) return 'Decoder Â· Apple VideoToolbox';
-  if (settings.encoder.endsWith('_vaapi')) return 'Decoder Â· CPU software; VA-API upload';
-  return 'Decoder Â· FFmpeg auto';
+  if (settings.encoder.endsWith('_videotoolbox')) return { label: 'APPLE VIDEOTOOLBOX', hardware: true };
+  return { label: 'SOFTWARE', hardware: false };
 };
 const hardwareScaleDimensions = (source: SourceFile, settings: JobSettings): [string, string] | null => {
   const video = source.media?.video;
@@ -1575,6 +1573,7 @@ const renderWorkspace = () => {
   const source = sources[selectedIndex];
   if (!source) return renderWelcome();
   const settings = getSettings(source);
+  const decoder = decoderStatus(source, settings);
   const metadataOnly = isMetadataOnly(settings);
   const metadataEditCount = sources.filter((item) => isMetadataOnly(getSettings(item)) && sourceHasMetadataChanges(item)).length;
   const outputFileName = makeOutputFileName(source);
@@ -1602,14 +1601,14 @@ const renderWorkspace = () => {
   const destinationToggle = audioWorkflow
     ? `<label class="smart-naming ${passthrough ? 'disabled' : ''}"><input id="separate-audio-directory" type="checkbox"${checked(!passthrough && appSettings.separateAudioDirectory)}${encodingActive || passthrough ? ' disabled' : ''}/><span>Separate encode directory</span></label>`
     : musicVideo ? '' : `<label class="smart-naming ${metadataOnly ? 'disabled' : ''}"><input id="smart-file-naming" type="checkbox"${checked(!metadataOnly && appSettings.smartFileNaming)}${encodingActive || metadataOnly ? ' disabled' : ''}/><span>${metadataOnly ? 'Original filename retained' : 'Smart file naming'}</span></label>`;
-  app.innerHTML = `<main class="workspace"><header class="topbar"><div class="brand"><span class="brand-mark">${icon('app', 21)}</span><span>EA Media Tools</span></div><div class="topbar-spacer"></div><button class="top-action queue-button">${icon('queue', 17)} Queue <span class="queue-count">${sources.length}</span></button><button class="icon-button" data-app-settings aria-label="Settings">${icon('settings', 18)}</button>${windowControls()}</header>
+  app.innerHTML = `<main class="workspace"><header class="topbar"><div class="brand"><span class="brand-mark">${icon('app', 21)}</span><span>EA Media Tools</span></div><div class="topbar-spacer"></div><div class="decoder-indicator ${decoder.hardware ? 'hardware' : 'software'}" title="${decoder.hardware ? 'Hardware decoder' : 'Software decoder'}"><span class="decoder-orb" aria-hidden="true"></span><span>${decoder.label}</span></div><button class="top-action queue-button">${icon('queue', 17)} Queue <span class="queue-count">${sources.length}</span></button><button class="icon-button" data-app-settings aria-label="Settings">${icon('settings', 18)}</button>${windowControls()}</header>
     <aside class="sidebar"><div class="sidebar-heading"><span>SOURCES</span><span>${sources.length}</span></div><div class="source-list">${fileRows}</div>${sourceMode === 'file' ? `<button class="add-more" id="add-more-videos">${icon('plus', 16)} Add more ${workflowLabel} files</button>` : ''}<div class="sidebar-tip"><span>${icon('sparkles', 17)}</span><div><strong>Batch queue active</strong><p>All selected ${workflowLabel} files are queued automatically. Preset changes apply to the entire batch.</p></div></div></aside>
     <section class="work-area"><div class="source-hero"><div class="media-preview">${source.previewDataUrl ? `<img src="${source.previewDataUrl}" alt="35 percent source preview"/>` : `<div class="preview-grid"></div><div class="preview-play">${icon(audioWorkflow ? 'audio' : 'play', 23)}</div>`}<span>${escapeHtml(source.extension)}</span></div><div class="source-info"><div class="section-label">CURRENT ${workflowLabel.toUpperCase()} SOURCE${audioWorkflow ? '' : ' · PREVIEW AT 35%'}</div><h2>${escapeHtml(source.name)}</h2><p title="${escapeHtml(source.path)}">${escapeHtml(source.path)}</p>
       <div class="metadata">${audioWorkflow ? `<span><b>Audio</b>${escapeHtml(audioSummary(source))}</span><span><b>Sample rate</b>${source.media?.audio[0]?.sampleRate ? `${source.media.audio[0].sampleRate / 1000} kHz` : 'Unknown'}</span><span><b>Channels</b>${source.media?.audio[0]?.channels ?? 'Unknown'}</span><span><b>Duration</b>${formatDuration(source.media?.duration ?? null)}</span>` : `<span><b>Video</b>${video ? `${escapeHtml(video.codec)} · ${video.width}×${video.height}` : 'Unknown'}</span><span><b>Dynamic range</b>${escapeHtml(hdrLabel(source))}</span><span><b>Audio</b>${escapeHtml(audioSummary(source))}</span><span><b>Chapters</b>${source.media?.chapterCount ?? 'Unknown'}</span><span><b>Subtitles</b>${escapeHtml(subtitleSummary(source))}</span>`}</div></div></div>
       ${source.probeError ? `<div class="probe-warning">${icon('x', 16)} ${escapeHtml(source.probeError)}</div>` : ''}
       <div class="preset-bar ${metadataOnly ? 'processing-disabled' : ''}"><div class="preset-icon">${icon('gauge', 22)}</div><label class="preset-control"><span>PRESET</span><select id="preset"${metadataOnly || musicVideo ? ' disabled' : ''}>${visiblePresets.map((preset) => `<option${selected(settings.preset === preset)}>${preset}</option>`).join('')}${savedPresets.length ? `<optgroup label="Saved presets">${savedPresets.map((preset) => `<option${selected(settings.preset === preset.name)}>${escapeHtml(preset.name)}</option>`).join('')}</optgroup>` : ''}</select><small class="preset-description">${metadataOnly ? 'Metadata-only mode copies every stream and preserves the source container.' : escapeHtml(presetDescription)}</small></label><div class="custom-preset-editor" id="custom-preset-editor"${settings.preset === 'Custom' && !metadataOnly ? '' : ' hidden'}><label><span>PRESET NAME</span><input id="custom-preset-name" value="${escapeHtml(customPresetDraftName)}" placeholder="My preset" maxlength="80"/></label><button class="save-preset" id="save-preset">Save</button></div></div>
       <nav class="tabs">${tabs.map(([label, tabIcon]) => `<button class="tab ${activeTab === label ? 'active' : ''}" data-tab="${label}">${icon(tabIcon, 17)}${label}${label === 'Audio' ? `<i>${source.media?.audio.length ?? 0}</i>` : label === 'Subtitles' ? `<i>${source.media?.subtitles.length ?? 0}</i>` : ''}</button>`).join('')}</nav><div class="tab-content" id="tab-content">${renderTabContent(activeTab, source, settings)}</div></section>
-    <footer class="encode-footer"><div class="destination"><div class="destination-heading"><span>${metadataOnly ? 'SOURCE REPLACEMENT' : passthrough ? 'SOURCE LIBRARY' : 'DESTINATION'}</span></div><div class="destination-controls"><div class="destination-row"><div class="destination-path" title="${escapeHtml(outputDirectoryFor(source))}">${icon('folder', 16)}<span>${escapeHtml(outputDirectoryFor(source))}</span></div><button id="browse-output"${encodingActive || metadataOnly || passthrough ? ' disabled' : ''}>Browse</button></div>${destinationToggle}</div><small class="destination-output" title="${escapeHtml(makeOutputPath(source))}">${metadataOnly ? 'The original file will be replaced after a verified stream-copy update.' : passthrough ? 'Source audio is retained; enabled normalization runs in place.' : `Output: ${escapeHtml(outputFileName)}`}</small></div><div class="decoder-status" title="Decoder selected for this source">${icon('video', 15)}<span>${escapeHtml(decoderStatus(source, settings))}</span></div><button class="encode-button ${metadataOnly ? 'metadata-update-button' : ''}" id="start-encode"${encodingActive || metadataOnly && metadataEditCount === 0 ? ' disabled' : ''}>${icon(metadataOnly ? 'check' : 'play', 17)} ${metadataOnly ? metadataEditCount ? `Update metadata (${metadataEditCount})` : 'No metadata changes' : `${passthrough ? 'Process' : 'Encode'} ${sources.length} ${workflowLabel}${sources.length === 1 ? '' : ' files'}`}</button></footer></main>`;
+    <footer class="encode-footer"><div class="destination"><div class="destination-heading"><span>${metadataOnly ? 'SOURCE REPLACEMENT' : passthrough ? 'SOURCE LIBRARY' : 'DESTINATION'}</span></div><div class="destination-controls"><div class="destination-row"><div class="destination-path" title="${escapeHtml(outputDirectoryFor(source))}">${icon('folder', 16)}<span>${escapeHtml(outputDirectoryFor(source))}</span></div><button id="browse-output"${encodingActive || metadataOnly || passthrough ? ' disabled' : ''}>Browse</button></div>${destinationToggle}</div><small class="destination-output" title="${escapeHtml(makeOutputPath(source))}">${metadataOnly ? 'The original file will be replaced after a verified stream-copy update.' : passthrough ? 'Source audio is retained; enabled normalization runs in place.' : `Output: ${escapeHtml(outputFileName)}`}</small></div><button class="encode-button ${metadataOnly ? 'metadata-update-button' : ''}" id="start-encode"${encodingActive || metadataOnly && metadataEditCount === 0 ? ' disabled' : ''}>${icon(metadataOnly ? 'check' : 'play', 17)} ${metadataOnly ? metadataEditCount ? `Update metadata (${metadataEditCount})` : 'No metadata changes' : `${passthrough ? 'Process' : 'Encode'} ${sources.length} ${workflowLabel}${sources.length === 1 ? '' : ' files'}`}</button></footer></main>`;
   bindWorkspaceEvents();
   const workArea = document.querySelector<HTMLElement>('.work-area');
   if (workArea) workArea.scrollTop = previousScrollTop;
@@ -1693,7 +1692,7 @@ const renderAdvancedVideoPanel = (settings: JobSettings) => {
   if (supported.has('nonReferenceP')) controls.push(renderAdvancedToggle('nonReferenceP', 'Non-reference P', 'Allow automatic non-reference P-frames.', advanced.nonReferenceP));
   if (supported.has('spatialAq')) controls.push(renderAdvancedRange('spatialAq', 'Spatial AQ', '0 disables spatial AQ; maximum strength 15.', advanced.spatialAq, 15));
   if (supported.has('temporalAq')) controls.push(renderAdvancedToggle('temporalAq', 'Temporal AQ', 'Enable temporal adaptive quantization.', advanced.temporalAq));
-  return `<section class="settings-card advanced-video-panel"><div class="card-title"><div><span>ADVANCED ENCODER SETTINGS</span><h3>${escapeHtml(settings.encoder)}</h3></div><span class="quality-badge">EDITABLE</span></div><p>Only options supported by the selected encoder are shown. Preset defaults come from presets.ini.</p><div class="advanced-video-grid">${controls.join('')}</div></section>`;
+  return `<section class="settings-card advanced-video-panel"><div class="card-title"><div><span>ADVANCED ENCODER SETTINGS</span><h3>${encoderBackendLabel(settings.encoder)}</h3></div><span class="quality-badge">EDITABLE</span></div><p>Only options supported by the selected encoder are shown. Preset defaults come from presets.ini.</p><div class="advanced-video-grid">${controls.join('')}</div></section>`;
 };
 
 const renderVideoSettings = (source: SourceFile, settings: JobSettings) => {
@@ -1707,7 +1706,7 @@ const renderVideoSettings = (source: SourceFile, settings: JobSettings) => {
   const speedSupported = supportsEncoderSpeed(settings.encoder);
   const tuneOptions = encoderTuneOptions(settings.encoder);
   const encoderControls = speedSupported || tuneOptions.length
-    ? `<div class="encoder-controls">${speedSupported ? `<div class="quality-control encoder-speed-control"><div><label for="encoder-speed">Encoding speed</label><span>Encoder-specific mapping: ${escapeHtml(encoderSpeedLabel(settings.encoder, settings.encoderSpeed))}</span></div><output id="encoder-speed-value">P${settings.encoderSpeed} Â· ${escapeHtml(encoderSpeedLabel(settings.encoder, settings.encoderSpeed))}</output><input id="encoder-speed" type="range" min="1" max="7" step="1" value="${settings.encoderSpeed}"/><div class="range-labels"><span>P1 Fast</span><span>P7 Ultra slow</span></div></div>` : ''}${tuneOptions.length ? `<label class="encoder-tune-control">Tune<select id="encoder-tune">${tuneOptions.map((option) => `<option value="${option.value}"${selected(option.value === settings.encoderTune)}>${escapeHtml(option.label)}</option>`).join('')}</select><small class="field-help">Options are limited to the selected encoder.</small></label>` : ''}</div>`
+    ? `<div class="encoder-controls">${speedSupported ? `<div class="quality-control encoder-speed-control"><div><label for="encoder-speed">Encoding speed</label><span>Encoder-specific mapping: ${escapeHtml(encoderSpeedLabel(settings.encoder, settings.encoderSpeed))}</span></div><output id="encoder-speed-value">${escapeHtml(encoderSpeedDisplay(settings.encoder, settings.encoderSpeed))}</output><input id="encoder-speed" type="range" min="1" max="7" step="1" value="${settings.encoderSpeed}"/><div class="range-labels"><span>P1 Fast</span><span>P7 Ultra slow</span></div></div>` : ''}${tuneOptions.length ? `<label class="encoder-tune-control">Tune<select id="encoder-tune">${tuneOptions.map((option) => `<option value="${option.value}"${selected(option.value === settings.encoderTune)}>${escapeHtml(option.label)}</option>`).join('')}</select><small class="field-help">Options are limited to the selected encoder.</small></label>` : ''}</div>`
     : '';
   const formatTip = delivery ? '<span class="field-tooltip" title="MP4 is recommended for direct web playback and avoids a later remux.">i</span>' : '';
   return `<div class="settings-layout video-settings-layout">${renderProcessingToggle('video', processing, 'Encode video streams')}<fieldset class="settings-card processing-fieldset ${processing ? '' : 'processing-disabled'}"${processing ? '' : ' disabled'}><div class="card-title"><div><span>OUTPUT SETTINGS</span><h3>Container & dimensions</h3></div><span class="quality-badge">${escapeHtml(settings.preset.toUpperCase())}</span></div>
@@ -1851,7 +1850,7 @@ const bindContentEvents = () => {
   document.querySelector<HTMLInputElement>('#encoder-speed')?.addEventListener('input', (event) => {
     settings.encoderSpeed = normalizeEncoderSpeed(Number((event.currentTarget as HTMLInputElement).value));
     const value = document.querySelector<HTMLOutputElement>('#encoder-speed-value');
-    if (value) value.textContent = `P${settings.encoderSpeed} Â· ${encoderSpeedLabel(settings.encoder, settings.encoderSpeed)}`;
+    if (value) value.textContent = encoderSpeedDisplay(settings.encoder, settings.encoderSpeed);
     markCustom(settings);
     updateCommand();
   });

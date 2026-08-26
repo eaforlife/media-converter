@@ -145,6 +145,10 @@ button { border: 0; cursor: pointer; }
 }
 .top-action:hover { background: #1a1e26; color: #fff; }
 .topbar-spacer { flex: 1; }
+.decoder-indicator { height: 29px; display: flex; align-items: center; gap: 8px; margin-right: 8px; padding: 0 10px; border: 1px solid #303640; border-radius: 8px; color: #aeb6c1; background: #151920; font-size: 8px; font-weight: 800; letter-spacing: .06em; white-space: nowrap; }
+.decoder-orb { width: 7px; height: 7px; flex: 0 0 auto; border-radius: 50%; }
+.decoder-indicator.hardware .decoder-orb { background: #58d68d; box-shadow: 0 0 5px #58d68d, 0 0 11px rgba(88,214,141,.65); }
+.decoder-indicator.software .decoder-orb { background: #e5b94f; box-shadow: 0 0 5px #e5b94f, 0 0 11px rgba(229,185,79,.62); }
 .queue-button { margin-right: 6px; }
 .queue-count { min-width: 19px; height: 19px; display: grid; place-items: center; padding: 0 5px; color: #a5adba; border: 1px solid #353b46; border-radius: 6px; font-size: 9px; }
 
@@ -282,9 +286,6 @@ input[type='range'] { width: 100%; height: 3px; margin: 17px 0 5px; accent-color
 .destination-path span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .destination-row > button { padding: 0 13px; border: 1px solid #343b46; border-radius: 0 7px 7px 0; color: #a7aeb9; background: #20252d; font-size: 8px; }
 .destination-output { max-width: 620px; display: block; overflow: hidden; margin-top: 5px; color: #68717e; font-size: 8px; text-overflow: ellipsis; white-space: nowrap; }
-.decoder-status { max-width: 255px; display: flex; align-items: center; gap: 7px; padding: 8px 10px; border: 1px solid #2c323c; border-radius: 7px; color: #919aa7; background: #151920; font-size: 8px; }
-.decoder-status .icon { flex: 0 0 auto; color: #f17a4d; }
-.decoder-status span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .secondary-button, .encode-button { height: 40px; display: flex; align-items: center; justify-content: center; gap: 7px; padding: 0 16px; border-radius: 8px; font-size: 9px; font-weight: 700; }
 .secondary-button { border: 1px solid #343b46; color: #a9b0ba; background: #191d24; }
 .secondary-button:hover { background: #20252d; color: #fff; }

@@ -35,6 +35,23 @@ export const encoderSpeedLabel = (encoder: string, speed: EncoderSpeed) => {
   return '';
 };
 
+export const encoderSpeedDisplay = (encoder: string, speed: EncoderSpeed) => {
+  const level = `P${speed}`;
+  const mappedLabel = encoderSpeedLabel(encoder, speed);
+  return !mappedLabel || mappedLabel.toUpperCase() === level.toUpperCase()
+    ? level
+    : `${level} / ${mappedLabel}`;
+};
+
+export const encoderBackendLabel = (encoder: string) => {
+  if (encoder.endsWith('_nvenc')) return 'NVIDIA NVENC';
+  if (encoder.endsWith('_amf')) return 'AMD AMF';
+  if (encoder.endsWith('_qsv')) return 'INTEL QSV';
+  if (encoder.endsWith('_videotoolbox')) return 'APPLE VIDEOTOOLBOX';
+  if (encoder.endsWith('_vaapi')) return 'VA-API';
+  return 'SOFTWARE ENCODE';
+};
+
 export const encoderSpeedArguments = (encoder: string, requestedSpeed: number) => {
   const speed = normalizeEncoderSpeed(requestedSpeed);
   if (encoder.endsWith('_nvenc')) return ['-preset', `p${speed}`];
