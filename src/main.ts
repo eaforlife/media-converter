@@ -599,6 +599,9 @@ const createWindow = () => {
 };
 
 if (!handlingSquirrelEvent) app.whenReady().then(async () => {
+  if (app.isPackaged && process.platform === 'win32') {
+    await cleanupPreviousInstall(path.dirname(process.execPath)).catch(() => undefined);
+  }
   await initializeLogger();
   logActivity('INFO', 'application.started', { version: app.getVersion(), packaged: app.isPackaged });
   await initializePreviewStorage();

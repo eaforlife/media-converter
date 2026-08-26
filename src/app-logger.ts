@@ -1,6 +1,7 @@
 import { app } from 'electron';
 import fs from 'node:fs';
 import path from 'node:path';
+import { cleanupRuntimeLogs, runtimeLogNeedsReset } from './install-cleanup';
 
 const MAX_LOG_BYTES = 5 * 1024 * 1024;
 let writeQueue = Promise.resolve();
@@ -27,10 +28,16 @@ const rotateIfNeeded = async () => {
 };
 
 export const initializeLogger = async () => {
-  await fs.promises.mkdir(app.getPath('userData'), { recursive: true });
+  const directory = app.getPath('userData');
+  await fs.promises.mkdir(directory, { recursive: true });
   if (!app.isPackaged) {
     await fs.promises.rm(logPath(), { force: true }).catch(() => undefined);
     return;
+  }
+  await cleanupRuntimeLogs(directory);
+  const existing = await fs.promises.readFile(logPath(), 'utf8').catch(() => '');
+  if (runtimeLogNeedsReset(existing, app.getVersion())) {
+    await fs.promises.rm(logPath(), { force: true }).catch(() => undefined);
   }
   await rotateIfNeeded();
 };
@@ -39,21 +46,9 @@ export const rotateLogForUpdate = async (version: string) => {
   const directory = app.getPath('userData');
   const current = logPath();
   await fs.promises.mkdir(directory, { recursive: true });
-  let renamed: string | null = null;
-  try {
-    await fs.promises.access(current);
-    const stamp = new Date().toISOString().replace(/[-:TZ.]/g, '');
-    const archiveName = `app_old${stamp}.log`;
-    await fs.promises.rename(current, path.join(directory, archiveName));
-    renamed = archiveName;
-  } catch {
-    // A first-time install or missing prior log only needs the update entry.
-  }
-  const entries = [
-    ...(renamed ? [logLine('INFO', 'application.log-renamed', `Renamed old log to ${renamed}`)] : []),
-    logLine('INFO', 'application.updated', `App updated to version ${version}`),
-  ];
-  await fs.promises.writeFile(current, `${entries.join('\n')}\n`, 'utf8');
+  await cleanupRuntimeLogs(directory);
+  await fs.promises.rm(current, { force: true }).catch(() => undefined);
+  await fs.promises.writeFile(current, `${logLine('INFO', 'application.updated', `App updated to version ${version}`)}\n`, 'utf8');
 };
 
 export const logActivity = (

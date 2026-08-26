@@ -2,7 +2,7 @@
 
 EA Media Tools is a desktop video and audio converter powered by Jellyfin FFmpeg. It inspects video, audio, subtitle, chapter, HDR, and Dolby Vision metadata; selects hardware or CPU processing; and runs queued conversions with live progress information.
 
-Version 2.0.0, codename **jaguar**, is the current stable release. It supports video files, short music videos with attached artwork, and recursive audio libraries. Hardware acceleration is enabled by default but can be disabled for CPU video encoding and decoding.
+Version 2.0.1, codename **jaguar**, is the current stable release. It supports video files, short music videos with attached artwork, and recursive audio libraries. Hardware acceleration is enabled by default but can be disabled for CPU video encoding and decoding.
 
 ## Download
 
@@ -12,7 +12,7 @@ Choose the asset that matches your operating system and CPU:
 
 | System | Intel/AMD 64-bit | ARM 64-bit |
 | --- | --- | --- |
-| Windows | `EA-Media-Tools-2.0.0-x64-Setup.exe` | `EA-Media-Tools-2.0.0-arm64-Setup.exe` |
+| Windows | `EA-Media-Tools-2.0.1-x64-Setup.exe` | `EA-Media-Tools-2.0.1-arm64-Setup.exe` |
 | macOS | ZIP containing `darwin-x64` | ZIP containing `darwin-arm64` for Apple silicon |
 | Debian/Ubuntu | `.deb` containing `amd64` | `.deb` containing `arm64` |
 
@@ -41,7 +41,7 @@ The macOS app is not signed or notarized. To uninstall it, quit the app and move
 Install the downloaded package from a terminal. Replace the filename with the asset you downloaded:
 
 ```bash
-sudo apt install ./ea-media-tools_2.0.0_amd64.deb
+sudo apt install ./ea-media-tools_2.0.1_amd64.deb
 ```
 
 ARM64 systems use the package ending in `arm64.deb`. Launch **EA Media Tools** from the desktop application menu. Remove it with:
@@ -68,9 +68,9 @@ Folder analysis inspects up to two videos at a time. NVENC-only batches encode u
 
 The encode window keeps a separate progress page for every queued video. Browse pages with **Previous** and **Next** to inspect pending, active, completed, cancelled, or failed jobs. **Live FFmpeg Output** opens one console-style session log containing every command as its encode starts; executable and media paths are displayed as `ffmpeg`, `<input>`, and `<output>`. **Start New** becomes available after the queue settles. **Done** appears only after every job has completed or cancelled, then waits for active workers and partial-output cleanup before closing the app.
 
-Video, audio, and subtitle tabs each have a processing checkbox. Checked sections use their configured encoder settings; unchecked sections copy every source stream without re-encoding. Uncheck all three sections to enter metadata-only mode, where stream languages and default, forced, and hearing-impaired dispositions can be edited. Batch metadata changes stay local to each selected source. The app creates a same-directory `_tmp00` (or queue-indexed) stream copy, installs it only after FFmpeg succeeds, and restores the original if replacement cannot complete.
+Video, audio, and subtitle tabs each have a processing checkbox. Checked sections use their configured encoder settings; unchecked sections copy every source stream without re-encoding. Uncheck all three sections to enter metadata-only mode, where stream languages and default, forced, and hearing-impaired dispositions can be edited. After changing metadata, choose **Apply to all sources in queue** to copy only those changed fields to corresponding streams in every queued video or audio source. The app creates a same-directory `_tmp00` (or queue-indexed) stream copy, installs it only after FFmpeg succeeds, and restores the original if replacement cannot complete.
 
-Advanced video controls are selected for the active encoder. NVENC exposes B-frames, multipass, B-frame references, adaptive B-frames, scene-cut detection, RC lookahead, non-reference P-frames, spatial AQ, and temporal AQ. QSV, AMF, and software encoders show only controls with an encoder-specific FFmpeg mapping; CUDA-only flags are never sent to them. P1–P7 speed and Tune controls follow the same rule. The footer reports the exact decoder path selected for the current source.
+Advanced video controls are selected for the active encoder. NVENC exposes B-frames, multipass, B-frame references, adaptive B-frames, scene-cut detection, RC lookahead, non-reference P-frames, spatial AQ, and temporal AQ. QSV, AMF, and software encoders show only controls with an encoder-specific FFmpeg mapping; CUDA-only flags are never sent to them. P1-P7 speed and Tune controls follow the same rule. The top bar reports the decoder selected for the current source.
 
 Built-in video preset values are loaded from `presets.ini` in the installed app's resources directory. Named custom presets are stored separately in the per-user `custom_preset.ini`; that file is created only after the first custom preset is saved. Use the gear menu to view or locate either file. Changes take effect after restarting the app.
 
@@ -78,7 +78,9 @@ Built-in video preset values are loaded from `presets.ini` in the installed app'
 
 Open the gear menu and choose **Show Built-in Presets in Folder**. Edit `presets.ini`, save it, and restart EA Media Tools. Configuration files contain data only and must not include comments. Keep every built-in section (`Archive`, `Regular`, `Streaming`, and `Cellular`) and every key in place.
 
-Boolean fields use `0` for disabled and `1` for enabled. `encoder_speed` accepts `1` through `7`, where P1 is fastest and P7 is slowest. EA Media Tools maps those levels to native NVENC, QSV, AMF, VideoToolbox, x264, x265, or SVT-AV1 settings. `encoder_tune` may be blank; a value is applied only when the selected encoder exposes that tune. Multipass accepts `0` (none), `1` (quarter resolution), or `2` (full resolution). `b_ref_mode` accepts `disabled`, `each`, or `middle`. `rc_lookahead` accepts `0` through `42`, and `spatial_aq` accepts `0` through `15`; zero disables either feature.
+Boolean fields use `0` for disabled and `1` for enabled. `encoder_speed` accepts `1` through `7`, where P1 is fastest and P7 is slowest. EA Media Tools maps those levels to native NVENC, QSV, AMF, VideoToolbox, x264, x265, or SVT-AV1 settings. Tune defaults use the `tune_nvenc`, `tune_amf`, `tune_qsv`, `tune_vaapi`, `tune_videotoolbox`, and `tune_software` keys; an empty value means the encoder has no general-purpose equivalent. Modern NVENC combines the selected P-level with `tune_nvenc=hq`; the deprecated `-preset hq` alias is not used because it maps to P7 and would bypass the speed control.
+
+Quality defaults use matching `quality_nvenc`, `quality_amf`, `quality_qsv`, `quality_vaapi`, `quality_videotoolbox`, and `quality_software` keys. The installed values are conservative VMAF-aligned starting points for comparable perceptual quality, but exact results still depend on codec generation, driver, source content, and hardware. Multipass accepts `0` (none), `1` (quarter resolution), or `2` (full resolution). `b_ref_mode` accepts `disabled`, `each`, or `middle`. `rc_lookahead` accepts `0` through `42`, and `spatial_aq` accepts `0` through `15`; zero disables either feature.
 
 Changing a built-in value in the app switches the working selection to Custom and immediately reveals the preset-name field. Enter a name and choose **Save** to create or update that section in `custom_preset.ini`. Its description is the same as its section name. If `custom_preset.ini` does not exist, the app exposes no saved custom presets. Use **View Custom Presets INI** or **Show Custom Presets in Folder** from the gear menu to edit or locate it.
 
@@ -88,9 +90,11 @@ Open the gear menu and choose **View Change Log** to read the installed version'
 
 Windows x64 builds check the public Squirrel feed at startup and every 15 minutes in the background. The loading screen remains visible until the startup check resolves. When a downloaded update is ready, choosing **Restart and update** cleanly cancels active encodes and removes partial outputs before installation. **Versions 0.3.0 and 0.3.1 use the repository's former URL and must be upgraded manually once.** Windows ARM64 and unsigned macOS builds should download new releases manually; Linux updates are provided through the installed package manager.
 
+Every packaged Windows startup removes obsolete `app-<version>` installation directories and retries anything that was locked during the update event. Only the running version is kept. Logs archived by an earlier version are deleted, and the active runtime log is reset when its recorded application version differs from the current release.
+
 Auto Scale chooses an output profile from the source resolution. Selecting a scale explicitly applies that output profile's dimensions, bitrate limits, and buffer to the active built-in preset. When auto-crop removes black bars, the app derives an even output height from the cropped display aspect ratio before sending the dimensions to CUDA, QSV, AMF, VA-API, VideoToolbox, or a CPU encoder:
 
-| Output profile | FFmpeg scale | Maximum video rate | Streaming quality |
+| Output profile | FFmpeg scale | Maximum video rate | Streaming NVENC quality |
 | --- | --- | --- | --- |
 | 4K | `2720:-2` | 9500 kbps | CQ 29 |
 | 1080p | `1760:-2` | 7000 kbps | CQ 27 |

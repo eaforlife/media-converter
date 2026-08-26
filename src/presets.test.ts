@@ -12,7 +12,11 @@ test('loads ordered built-in preset values from presets.ini', () => {
   assert.equal(presets.Streaming.audioRates.opus.stereo, '96k');
   assert.equal(presets.Streaming.audioRates.opus.surround, '128k');
   assert.equal(presets.Streaming.encoderSpeed, 2);
-  assert.equal(presets.Streaming.encoderTune, 'hq');
+  assert.equal(presets.Streaming.encoderTune.nvenc, 'hq');
+  assert.equal(presets.Streaming.encoderTune.amf, 'high_quality');
+  assert.equal(presets.Regular.quality.nvenc, '24');
+  assert.equal(presets.Regular.quality.amf, '22');
+  assert.equal(presets.Regular.quality.software, '25');
   assert.deepEqual(presets.Streaming.advancedVideo, {
     bFrames: true, multipass: 1, bRefMode: 'middle', adaptiveBFrames: true,
     sceneCutDetection: true, rcLookahead: 27, nonReferenceP: true, spatialAq: 10, temporalAq: true,

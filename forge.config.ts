@@ -17,13 +17,29 @@ const appVersion = JSON.parse(fs.readFileSync(path.resolve('package.json'), 'utf
 const windowsSign = certificateFile && certificatePassword
   ? { certificateFile, certificatePassword }
   : undefined;
+const packagedResourcesDirectory = async (outputPath: string, platform: string) => {
+  if (platform !== 'darwin') return path.join(outputPath, 'resources');
+  if (outputPath.endsWith('.app')) return path.join(outputPath, 'Contents', 'Resources');
+  const application = (await fs.promises.readdir(outputPath, { withFileTypes: true }))
+    .find((entry) => entry.isDirectory() && entry.name.endsWith('.app'));
+  if (!application) throw new Error(`Packaged macOS application was not found in ${outputPath}`);
+  return path.join(outputPath, application.name, 'Contents', 'Resources');
+};
 
 const config: ForgeConfig = {
   packagerConfig: {
     asar: true,
     executableName: 'ea-media-tools',
-    extraResource: [path.resolve('presets.ini')],
     windowsSign,
+  },
+  hooks: {
+    postPackage: async (_forgeConfig, result) => {
+      await Promise.all(result.outputPaths.map(async (outputPath) => {
+        const resources = await packagedResourcesDirectory(outputPath, result.platform);
+        await fs.promises.mkdir(resources, { recursive: true });
+        await fs.promises.copyFile(path.resolve('presets.ini'), path.join(resources, 'presets.ini'));
+      }));
+    },
   },
   rebuildConfig: {},
   publishers: [

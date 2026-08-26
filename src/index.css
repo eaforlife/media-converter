@@ -232,6 +232,7 @@ button { border: 0; cursor: pointer; }
 .stream-metadata-editor .flag-controls { margin-top: 0; padding-top: 0; border-top: 0; }
 .smart-naming.disabled { opacity: .55; cursor: default; }
 .metadata-update-button { min-width: 190px; background: linear-gradient(135deg, #db643d, #b53d22); }
+.metadata-apply-all { min-width: 180px; white-space: nowrap; }
 .card-title { display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 18px; }
 .card-title span { color: #626b78; font-size: 7px; font-weight: 800; letter-spacing: .14em; }
 .card-title h3 { margin: 4px 0 0; color: #dce0e6; font-size: 12px; }

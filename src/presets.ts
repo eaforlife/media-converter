@@ -3,7 +3,7 @@ import type { AdvancedVideoSettings, ScaleMode } from './shared-types';
 export type BuiltInPresetName = 'Archive' | 'Regular' | 'Streaming' | 'Cellular';
 export type PreferredVideoCodec = 'H.264' | 'HEVC' | 'AV1';
 export type PresetAudioCodec = 'aac' | 'opus';
-export type QualityFamily = 'nvenc' | 'amf' | 'qsv' | 'software';
+export type EncoderFamily = 'nvenc' | 'amf' | 'qsv' | 'vaapi' | 'videotoolbox' | 'software';
 
 type AudioRates = Record<PresetAudioCodec, { stereo: string; surround: string }>;
 
@@ -13,8 +13,8 @@ export type BuiltInPresetDefinition = {
   format: 'mp4' | 'mkv';
   preferredVideoCodec: PreferredVideoCodec;
   encoderSpeed: number;
-  encoderTune: string;
-  quality: Record<QualityFamily, string>;
+  encoderTune: Record<EncoderFamily, string>;
+  quality: Record<EncoderFamily, string>;
   resolution: string;
   scale: ScaleMode;
   scaleLocked: boolean;
@@ -87,10 +87,14 @@ export const parseBuiltInPresets = (ini: string): BuiltInPresetCatalog => {
       format: enumValue(get('format'), ['mp4', 'mkv'], label('format')),
       preferredVideoCodec: enumValue(get('preferred_video_codec'), ['H.264', 'HEVC', 'AV1'], label('preferred_video_codec')),
       encoderSpeed: numberValue(get('encoder_speed'), label('encoder_speed'), 1, 7),
-      encoderTune: optional('encoder_tune'),
+      encoderTune: {
+        nvenc: optional('tune_nvenc'), amf: optional('tune_amf'), qsv: optional('tune_qsv'),
+        vaapi: optional('tune_vaapi'), videotoolbox: optional('tune_videotoolbox'), software: optional('tune_software'),
+      },
       quality: {
         nvenc: get('quality_nvenc'), amf: get('quality_amf'),
-        qsv: get('quality_qsv'), software: get('quality_software'),
+        qsv: get('quality_qsv'), vaapi: get('quality_vaapi'),
+        videotoolbox: get('quality_videotoolbox'), software: get('quality_software'),
       },
       resolution: get('resolution'),
       scale: enumValue(get('scale'), ['auto', '1080p', '720p', '360p', 'disabled'], label('scale')),

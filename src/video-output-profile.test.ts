@@ -35,6 +35,7 @@ test('explicit scaling uses the selected output profile instead of the source ti
 
 test('streaming uses CQ 27 for 1080p source and scaled output profiles', () => {
   equal(deliveryQualityForOutput('Streaming', videoOutputProfile(1080, 'auto').tier, '29'), '27');
+  equal(deliveryQualityForOutput('Streaming', videoOutputProfile(1080, 'auto').tier, '27'), '25');
   equal(deliveryQualityForOutput('Streaming', videoOutputProfile(2160, '1080p').tier, '29'), '27');
   equal(deliveryQualityForOutput('Streaming', videoOutputProfile(2160, 'auto').tier, '29'), '29');
   equal(deliveryQualityForOutput('Archive', videoOutputProfile(1080, 'auto').tier, '18'), '18');

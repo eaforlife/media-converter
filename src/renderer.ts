@@ -4,7 +4,7 @@ import { AUDIO_PRESETS, AUDIO_PRESET_NAMES, MUSIC_VIDEO_AAC_BITRATE, audioBitrat
 import type { AudioPresetName } from './audio-workflow';
 import { parseEpisodeIdentity, preservedOutputBaseName, sanitizePathSegment, smartSeriesBaseName } from './output-naming';
 import { BUILT_IN_PRESET_NAMES } from './presets';
-import type { BuiltInPresetCatalog, BuiltInPresetDefinition, BuiltInPresetName, PreferredVideoCodec, PresetAudioCodec, QualityFamily } from './presets';
+import type { BuiltInPresetCatalog, BuiltInPresetDefinition, BuiltInPresetName, EncoderFamily, PreferredVideoCodec, PresetAudioCodec } from './presets';
 import { advancedVideoArguments, supportedAdvancedVideoFields } from './advanced-video-settings';
 import type { AdvancedVideoField } from './advanced-video-settings';
 import {
@@ -19,7 +19,7 @@ import { applyEncodeProgress, canFinishEncodeQueue, createEncodeQueueProgress, i
 import type { EncodeJobProgressState, EncodeQueueProgressState } from './encode-progress-state';
 import { formatSessionFfmpegCommand } from './ffmpeg-command-display';
 import { mediaLanguageOptions } from './media-language';
-import { metadataTemporaryPath, streamMetadataChanged } from './metadata-edit';
+import { applyStreamMetadataPatch, metadataTemporaryPath, streamMetadataChanged, streamMetadataPatch } from './metadata-edit';
 import type { EditableStreamMetadata } from './metadata-edit';
 import { attachedCoverArtArguments, isH264HighSource, musicVideoEncoderProfile } from './media-workflow';
 import type {
@@ -150,10 +150,12 @@ const hardwareEncoderFor = (codec: PreferredVideoCodec) => appSettings.hardwareA
 const preferredCodecForEncoder = (encoder: string): PreferredVideoCodec =>
   /av1/i.test(encoder) ? 'AV1' : /264/i.test(encoder) ? 'H.264' : 'HEVC';
 const normalizeQuality = (value: string) => String(Math.min(38, Math.max(12, Number(value) || 20)));
-const qualityFamily = (encoder: string): QualityFamily => encoder.endsWith('_nvenc')
+const encoderFamily = (encoder: string): EncoderFamily => encoder.endsWith('_nvenc')
   ? 'nvenc' : encoder.endsWith('_amf') ? 'amf'
-    : encoder.endsWith('_qsv') || encoder.endsWith('_vaapi') || encoder.endsWith('_videotoolbox') ? 'qsv' : 'software';
-const presetQuality = (preset: BuiltInPresetDefinition, encoder: string) => preset.quality[qualityFamily(encoder)];
+    : encoder.endsWith('_qsv') ? 'qsv' : encoder.endsWith('_vaapi') ? 'vaapi'
+      : encoder.endsWith('_videotoolbox') ? 'videotoolbox' : 'software';
+const presetQuality = (preset: BuiltInPresetDefinition, encoder: string) => preset.quality[encoderFamily(encoder)];
+const presetTune = (preset: BuiltInPresetDefinition, encoder: string) => preset.encoderTune[encoderFamily(encoder)];
 const deliveryQuality = (
   preset: BuiltInPresetDefinition,
   tier: ReturnType<typeof videoOutputProfile>['tier'],
@@ -275,6 +277,45 @@ const sourceHasMetadataChanges = (source: SourceFile, settings = getSettings(sou
   return (source.media?.subtitles ?? []).some((track) =>
     streamMetadataChanged(track, settings.subtitles[track.index].metadata));
 };
+const matchingMetadataQueueSources = (origin: SourceFile) => sources.filter((source) =>
+  isAudioWorkflow(source) === isAudioWorkflow(origin));
+const applyMetadataChangesToQueue = (originSource: SourceFile) => {
+  const originSettings = getSettings(originSource);
+  const originAudio = originSource.media?.audio ?? [];
+  const originSubtitles = originSource.media?.subtitles ?? [];
+  let updatedSources = 0;
+  for (const targetSource of matchingMetadataQueueSources(originSource)) {
+    if (targetSource === originSource) continue;
+    const targetSettings = getSettings(targetSource);
+    let updated = false;
+    if (!isAudioWorkflow(originSource) && originSource.media?.video && targetSource.media?.video) {
+      updated = applyStreamMetadataPatch(
+        targetSettings.videoMetadata,
+        streamMetadataPatch(originSource.media.video, originSettings.videoMetadata),
+      ) || updated;
+    }
+    const targetAudio = targetSource.media?.audio ?? [];
+    originAudio.forEach((track, position) => {
+      const targetTrack = targetAudio[position];
+      const originMetadata = originSettings.audio[track.index]?.metadata;
+      const targetMetadata = targetTrack && targetSettings.audio[targetTrack.index]?.metadata;
+      if (originMetadata && targetMetadata) {
+        updated = applyStreamMetadataPatch(targetMetadata, streamMetadataPatch(track, originMetadata)) || updated;
+      }
+    });
+    const targetSubtitles = targetSource.media?.subtitles ?? [];
+    originSubtitles.forEach((track, position) => {
+      const targetTrack = targetSubtitles[position];
+      const originMetadata = originSettings.subtitles[track.index]?.metadata;
+      const targetMetadata = targetTrack && targetSettings.subtitles[targetTrack.index]?.metadata;
+      if (originMetadata && targetMetadata) {
+        updated = applyStreamMetadataPatch(targetMetadata, streamMetadataPatch(track, originMetadata)) || updated;
+      }
+    });
+    if (updated) updatedSources += 1;
+  }
+  return updatedSources;
+};
 const initialAudioSettings = (source: SourceFile): JobSettings => {
   const track = source.media?.audio[0];
   const preset = AUDIO_PRESETS.Streaming;
@@ -372,7 +413,7 @@ const initialSettings = (source: SourceFile): JobSettings => {
   const encoder = hardwareEncoderFor(preset.preferredVideoCodec);
   const selectedAudio = preferredAudioIndexes(source.media?.audio ?? []);
   const settings: JobSettings = {
-    preset: 'Streaming', format: preset.format, encoder, encoderSpeed: normalizeEncoderSpeed(preset.encoderSpeed), encoderTune: normalizeEncoderTune(encoder, preset.encoderTune),
+    preset: 'Streaming', format: preset.format, encoder, encoderSpeed: normalizeEncoderSpeed(preset.encoderSpeed), encoderTune: normalizeEncoderTune(encoder, presetTune(preset, encoder)),
     resolution: outputProfile.scale.join(':'), quality: deliveryQuality(preset, outputProfile.tier, encoder),
     videoBitrate: '0', maxRate: String(maxRate), bufferMultiplier: preset.bufferMultiplier, bufferSize: String(bufferSizeFor(maxRate, preset.bufferMultiplier)),
     advancedVideo: copyAdvancedVideo(profilePreset.advancedVideo),
@@ -440,7 +481,7 @@ const applyPreset = (source: SourceFile, preset: string, persist = true) => {
     format: selectedPreset.format,
     encoder,
     encoderSpeed: normalizeEncoderSpeed(defaults ? defaults.encoderSpeed : saved!.encoderSpeed),
-    encoderTune: normalizeEncoderTune(encoder, defaults ? defaults.encoderTune : saved!.encoderTune),
+    encoderTune: normalizeEncoderTune(encoder, defaults ? presetTune(defaults, encoder) : saved!.encoderTune),
     quality: defaults ? deliveryQuality(defaults, outputProfile!.tier, encoder) : normalizeQuality(saved!.quality),
     videoBitrate: defaults ? '0' : saved!.videoBitrate,
     maxRate: defaults ? String(defaults.bitrateControl ? outputProfile!.maxRate : 0) : saved!.maxRate,
@@ -1400,7 +1441,7 @@ const showAppMenu = () => {
   const runtimeSelector = sources.length === 0 && Boolean(document.querySelector('.welcome-shell'))
     ? `<label class="menu-check runtime-channel-toggle"><input id="stable-ffmpeg" type="checkbox"${checked(appSettings.useStableFfmpeg)}/><span><strong>Stable</strong><small>Use the stable Jellyfin FFmpeg runtime</small></span></label>`
     : '';
-  menu.innerHTML = `<div class="menu-identity"><strong>EA Media Tools</strong><span>Version ${escapeHtml(runtimeState?.appVersion ?? '2.0.0')} · ${APP_CODENAME}</span></div>${runtimeSelector}<label class="menu-check"><input id="hardware-acceleration" type="checkbox"${checked(appSettings.hardwareAcceleration)}/><span>Hardware Acceleration</span></label><button id="view-logs">View Logs</button><button id="view-config">View Running Config</button><button id="view-presets">View Built-in Presets INI</button><button id="show-presets">Show Built-in Presets in Folder</button><button id="view-custom-presets">View Custom Presets INI</button><button id="show-custom-presets">Show Custom Presets in Folder</button><button id="view-changelog">View Change Log</button><button id="check-update">Check for update</button><button class="danger" id="exit-app">Exit</button>`;
+  menu.innerHTML = `<div class="menu-identity"><strong>EA Media Tools</strong><span>Version ${escapeHtml(runtimeState?.appVersion ?? '2.0.1')} · ${APP_CODENAME}</span></div>${runtimeSelector}<label class="menu-check"><input id="hardware-acceleration" type="checkbox"${checked(appSettings.hardwareAcceleration)}/><span>Hardware Acceleration</span></label><button id="view-logs">View Logs</button><button id="view-config">View Running Config</button><button id="view-presets">View Built-in Presets INI</button><button id="show-presets">Show Built-in Presets in Folder</button><button id="view-custom-presets">View Custom Presets INI</button><button id="show-custom-presets">Show Custom Presets in Folder</button><button id="view-changelog">View Change Log</button><button id="check-update">Check for update</button><button class="danger" id="exit-app">Exit</button>`;
   document.body.appendChild(menu);
   menu.addEventListener('click', (event) => event.stopPropagation());
   menu.querySelector<HTMLInputElement>('#stable-ffmpeg')?.addEventListener('change', async (event) => {
@@ -1450,7 +1491,14 @@ const showAppMenu = () => {
       itemSettings.encoder = appSettings.hardwareAcceleration
         ? hardwareEncoderFor(preferredCodecForEncoder(itemSettings.encoder))
         : softwareEncoderFor(preferredCodecForEncoder(itemSettings.encoder));
-      itemSettings.encoderTune = normalizeEncoderTune(itemSettings.encoder, itemSettings.encoderTune);
+      const defaults = builtInPreset(itemSettings.preset);
+      if (defaults) {
+        const outputProfile = outputProfileFor(item, itemSettings.filters.scale, defaults.name);
+        itemSettings.encoderTune = normalizeEncoderTune(itemSettings.encoder, presetTune(defaults, itemSettings.encoder));
+        itemSettings.quality = deliveryQuality(defaults, outputProfile.tier, itemSettings.encoder);
+      } else {
+        itemSettings.encoderTune = normalizeEncoderTune(itemSettings.encoder, itemSettings.encoderTune);
+      }
     }
     void persistAppSettings();
     updateCommand();
@@ -1473,7 +1521,7 @@ const showAppMenu = () => {
     if (!await window.mediaAPI.showCustomPresetFile()) showToast('No custom_preset.ini exists yet');
   });
   menu.querySelector('#view-changelog')?.addEventListener('click', () => void showTextReader(
-    `EA Media Tools ${runtimeState?.appVersion ?? '2.0.0'} change log`,
+    `EA Media Tools ${runtimeState?.appVersion ?? '2.0.1'} change log`,
     `${APP_CODENAME} · installed release notes from GitHub`,
     () => window.mediaAPI.readChangelog(),
   ));
@@ -1601,6 +1649,9 @@ const renderWorkspace = () => {
   const destinationToggle = audioWorkflow
     ? `<label class="smart-naming ${passthrough ? 'disabled' : ''}"><input id="separate-audio-directory" type="checkbox"${checked(!passthrough && appSettings.separateAudioDirectory)}${encodingActive || passthrough ? ' disabled' : ''}/><span>Separate encode directory</span></label>`
     : musicVideo ? '' : `<label class="smart-naming ${metadataOnly ? 'disabled' : ''}"><input id="smart-file-naming" type="checkbox"${checked(!metadataOnly && appSettings.smartFileNaming)}${encodingActive || metadataOnly ? ' disabled' : ''}/><span>${metadataOnly ? 'Original filename retained' : 'Smart file naming'}</span></label>`;
+  const metadataApplyAll = metadataOnly && sourceHasMetadataChanges(source) && matchingMetadataQueueSources(source).length > 1
+    ? '<button class="secondary-button metadata-apply-all" id="apply-metadata-all">Apply to all sources in queue</button>'
+    : '';
   app.innerHTML = `<main class="workspace"><header class="topbar"><div class="brand"><span class="brand-mark">${icon('app', 21)}</span><span>EA Media Tools</span></div><div class="topbar-spacer"></div><div class="decoder-indicator ${decoder.hardware ? 'hardware' : 'software'}" title="${decoder.hardware ? 'Hardware decoder' : 'Software decoder'}"><span class="decoder-orb" aria-hidden="true"></span><span>${decoder.label}</span></div><button class="top-action queue-button">${icon('queue', 17)} Queue <span class="queue-count">${sources.length}</span></button><button class="icon-button" data-app-settings aria-label="Settings">${icon('settings', 18)}</button>${windowControls()}</header>
     <aside class="sidebar"><div class="sidebar-heading"><span>SOURCES</span><span>${sources.length}</span></div><div class="source-list">${fileRows}</div>${sourceMode === 'file' ? `<button class="add-more" id="add-more-videos">${icon('plus', 16)} Add more ${workflowLabel} files</button>` : ''}<div class="sidebar-tip"><span>${icon('sparkles', 17)}</span><div><strong>Batch queue active</strong><p>All selected ${workflowLabel} files are queued automatically. Preset changes apply to the entire batch.</p></div></div></aside>
     <section class="work-area"><div class="source-hero"><div class="media-preview">${source.previewDataUrl ? `<img src="${source.previewDataUrl}" alt="35 percent source preview"/>` : `<div class="preview-grid"></div><div class="preview-play">${icon(audioWorkflow ? 'audio' : 'play', 23)}</div>`}<span>${escapeHtml(source.extension)}</span></div><div class="source-info"><div class="section-label">CURRENT ${workflowLabel.toUpperCase()} SOURCE${audioWorkflow ? '' : ' · PREVIEW AT 35%'}</div><h2>${escapeHtml(source.name)}</h2><p title="${escapeHtml(source.path)}">${escapeHtml(source.path)}</p>
@@ -1608,7 +1659,7 @@ const renderWorkspace = () => {
       ${source.probeError ? `<div class="probe-warning">${icon('x', 16)} ${escapeHtml(source.probeError)}</div>` : ''}
       <div class="preset-bar ${metadataOnly ? 'processing-disabled' : ''}"><div class="preset-icon">${icon('gauge', 22)}</div><label class="preset-control"><span>PRESET</span><select id="preset"${metadataOnly || musicVideo ? ' disabled' : ''}>${visiblePresets.map((preset) => `<option${selected(settings.preset === preset)}>${preset}</option>`).join('')}${savedPresets.length ? `<optgroup label="Saved presets">${savedPresets.map((preset) => `<option${selected(settings.preset === preset.name)}>${escapeHtml(preset.name)}</option>`).join('')}</optgroup>` : ''}</select><small class="preset-description">${metadataOnly ? 'Metadata-only mode copies every stream and preserves the source container.' : escapeHtml(presetDescription)}</small></label><div class="custom-preset-editor" id="custom-preset-editor"${settings.preset === 'Custom' && !metadataOnly ? '' : ' hidden'}><label><span>PRESET NAME</span><input id="custom-preset-name" value="${escapeHtml(customPresetDraftName)}" placeholder="My preset" maxlength="80"/></label><button class="save-preset" id="save-preset">Save</button></div></div>
       <nav class="tabs">${tabs.map(([label, tabIcon]) => `<button class="tab ${activeTab === label ? 'active' : ''}" data-tab="${label}">${icon(tabIcon, 17)}${label}${label === 'Audio' ? `<i>${source.media?.audio.length ?? 0}</i>` : label === 'Subtitles' ? `<i>${source.media?.subtitles.length ?? 0}</i>` : ''}</button>`).join('')}</nav><div class="tab-content" id="tab-content">${renderTabContent(activeTab, source, settings)}</div></section>
-    <footer class="encode-footer"><div class="destination"><div class="destination-heading"><span>${metadataOnly ? 'SOURCE REPLACEMENT' : passthrough ? 'SOURCE LIBRARY' : 'DESTINATION'}</span></div><div class="destination-controls"><div class="destination-row"><div class="destination-path" title="${escapeHtml(outputDirectoryFor(source))}">${icon('folder', 16)}<span>${escapeHtml(outputDirectoryFor(source))}</span></div><button id="browse-output"${encodingActive || metadataOnly || passthrough ? ' disabled' : ''}>Browse</button></div>${destinationToggle}</div><small class="destination-output" title="${escapeHtml(makeOutputPath(source))}">${metadataOnly ? 'The original file will be replaced after a verified stream-copy update.' : passthrough ? 'Source audio is retained; enabled normalization runs in place.' : `Output: ${escapeHtml(outputFileName)}`}</small></div><button class="encode-button ${metadataOnly ? 'metadata-update-button' : ''}" id="start-encode"${encodingActive || metadataOnly && metadataEditCount === 0 ? ' disabled' : ''}>${icon(metadataOnly ? 'check' : 'play', 17)} ${metadataOnly ? metadataEditCount ? `Update metadata (${metadataEditCount})` : 'No metadata changes' : `${passthrough ? 'Process' : 'Encode'} ${sources.length} ${workflowLabel}${sources.length === 1 ? '' : ' files'}`}</button></footer></main>`;
+    <footer class="encode-footer"><div class="destination"><div class="destination-heading"><span>${metadataOnly ? 'SOURCE REPLACEMENT' : passthrough ? 'SOURCE LIBRARY' : 'DESTINATION'}</span></div><div class="destination-controls"><div class="destination-row"><div class="destination-path" title="${escapeHtml(outputDirectoryFor(source))}">${icon('folder', 16)}<span>${escapeHtml(outputDirectoryFor(source))}</span></div><button id="browse-output"${encodingActive || metadataOnly || passthrough ? ' disabled' : ''}>Browse</button></div>${destinationToggle}</div><small class="destination-output" title="${escapeHtml(makeOutputPath(source))}">${metadataOnly ? 'The original file will be replaced after a verified stream-copy update.' : passthrough ? 'Source audio is retained; enabled normalization runs in place.' : `Output: ${escapeHtml(outputFileName)}`}</small></div>${metadataApplyAll}<button class="encode-button ${metadataOnly ? 'metadata-update-button' : ''}" id="start-encode"${encodingActive || metadataOnly && metadataEditCount === 0 ? ' disabled' : ''}>${icon(metadataOnly ? 'check' : 'play', 17)} ${metadataOnly ? metadataEditCount ? `Update metadata (${metadataEditCount})` : 'No metadata changes' : `${passthrough ? 'Process' : 'Encode'} ${sources.length} ${workflowLabel}${sources.length === 1 ? '' : ' files'}`}</button></footer></main>`;
   bindWorkspaceEvents();
   const workArea = document.querySelector<HTMLElement>('.work-area');
   if (workArea) workArea.scrollTop = previousScrollTop;
@@ -1920,8 +1971,12 @@ const bindContentEvents = () => {
       markCustom(settings);
       renderWorkspace();
     } else {
+      const defaults = builtInPreset(settings.preset);
       settings[field] = value;
-      settings.encoderTune = normalizeEncoderTune(value, settings.encoderTune);
+      settings.encoderTune = normalizeEncoderTune(value, defaults ? presetTune(defaults, value) : settings.encoderTune);
+      if (defaults) {
+        settings.quality = deliveryQuality(defaults, outputProfileFor(source, settings.filters.scale, defaults.name).tier, value);
+      }
       markCustom(settings);
       renderWorkspace();
     }
@@ -2117,6 +2172,13 @@ const bindWorkspaceEvents = () => {
     void persistAppSettings();
     renderWorkspace();
   });
+  document.querySelector('#apply-metadata-all')?.addEventListener('click', () => {
+    const updated = applyMetadataChangesToQueue(source);
+    showToast(updated
+      ? `Applied metadata changes to ${updated} queued source${updated === 1 ? '' : 's'}`
+      : 'No matching queued streams needed changes');
+    renderWorkspace();
+  });
   document.querySelector('#start-encode')?.addEventListener('click', () => void startEncoding());
   bindWindowControls();
   bindContentEvents();
@@ -2162,7 +2224,7 @@ const startApplication = async () => {
     }
     await new Promise((resolve) => window.setTimeout(resolve, runtimeState?.phase === 'error' ? 900 : 350));
   } catch (error) {
-    runtimeState = { phase: 'error', message: error instanceof Error ? error.message : 'Unable to initialize FFmpeg', progress: null, appVersion: '2.0.0', isPackaged: false, updateEnabled: false, ffmpegAvailable: false, ffmpegPath: '', ffprobePath: '', ffmpegVersion: null, releaseTag: null, ffmpegChannel: appSettings.useStableFfmpeg ? 'stable' : 'unstable', rsgainAvailable: false, rsgainPath: '', rsgainVersion: null, ccextractorAvailable: false, ccextractorPath: '', ccextractorVersion: null };
+    runtimeState = { phase: 'error', message: error instanceof Error ? error.message : 'Unable to initialize FFmpeg', progress: null, appVersion: '2.0.1', isPackaged: false, updateEnabled: false, ffmpegAvailable: false, ffmpegPath: '', ffprobePath: '', ffmpegVersion: null, releaseTag: null, ffmpegChannel: appSettings.useStableFfmpeg ? 'stable' : 'unstable', rsgainAvailable: false, rsgainPath: '', rsgainVersion: null, ccextractorAvailable: false, ccextractorPath: '', ccextractorVersion: null };
     renderBootstrap(runtimeState); await new Promise((resolve) => window.setTimeout(resolve, 900));
   } finally { removeProgressListener(); }
   if (!builtInPresets) return;
