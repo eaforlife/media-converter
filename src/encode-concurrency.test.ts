@@ -2,8 +2,11 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   averageAggregateFps,
+  cancelAdaptiveQueueActivity,
   canAddEncodeJob,
   encoderConcurrencyLimit,
+  initialThroughputConcurrencyLimit,
+  lockThroughputConcurrencyLimit,
   NVENC_SESSION_LIMIT,
 } from './encode-concurrency.ts';
 import type { EncodeJob } from './shared-types.ts';
@@ -11,6 +14,17 @@ import type { EncodeJob } from './shared-types.ts';
 const job = (encoder: string): EncodeJob => ({
   sourcePath: 'C:\\source.mkv', sourceName: 'source.mkv', outputPath: 'C:\\output.mp4',
   args: ['-i', 'C:\\source.mkv', '-c:v', encoder, 'C:\\output.mp4'], duration: 60,
+});
+
+test('cancel all interrupts every adaptive wait and active encode', () => {
+  let cancelledWaits = 0;
+  let killedProcesses = 0;
+  cancelAdaptiveQueueActivity(
+    [() => { cancelledWaits += 1; }, () => { cancelledWaits += 1; }],
+    [{ kill: () => { killedProcesses += 1; } }, { kill: () => { killedProcesses += 1; } }],
+  );
+  assert.equal(cancelledWaits, 2);
+  assert.equal(killedProcesses, 2);
 });
 
 test('adaptive concurrency is limited to supported NVENC sessions', () => {
@@ -31,4 +45,14 @@ test('a second encode requires 400 fps and 710 fps grows to three jobs', () => {
   assert.equal(canAddEncodeJob(710, 2, 12), true);
   assert.equal(canAddEncodeJob(710, 3, 12), false);
   assert.equal(canAddEncodeJob(710, 4, 12), false);
+});
+
+test('the first single-encode average permanently caps batch concurrency', () => {
+  assert.equal(initialThroughputConcurrencyLimit(290, 12), 1);
+  assert.equal(initialThroughputConcurrencyLimit(710, 12), 3);
+  assert.equal(initialThroughputConcurrencyLimit(900, 12), 4);
+  const fixedLimit = initialThroughputConcurrencyLimit(900, 12);
+  assert.equal(canAddEncodeJob(1_600, 4, fixedLimit), false);
+  assert.equal(lockThroughputConcurrencyLimit(null, 900, 12), 4);
+  assert.equal(lockThroughputConcurrencyLimit(4, 1_600, 12), 4);
 });

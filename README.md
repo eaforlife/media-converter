@@ -2,7 +2,7 @@
 
 EA Media Tools is a desktop video and audio converter powered by Jellyfin FFmpeg. It inspects video, audio, subtitle, chapter, HDR, and Dolby Vision metadata; selects hardware or CPU processing; and runs queued conversions with live progress information.
 
-Version 2.1.0, codename **jaguar**, is the current stable release. It supports video files, short music videos with attached artwork, and recursive audio libraries. Hardware acceleration is enabled by default but can be disabled for CPU video encoding and decoding.
+Version 2.2.0, codename **jaguar**, is the current stable release. It supports video files, short music videos with attached artwork, and recursive audio libraries. Hardware acceleration is enabled by default but can be disabled for CPU video encoding and decoding.
 
 ## Download
 
@@ -12,7 +12,7 @@ Choose the asset that matches your operating system and CPU:
 
 | System | Intel/AMD 64-bit | ARM 64-bit |
 | --- | --- | --- |
-| Windows | `EA-Media-Tools-2.1.0-x64-Setup.exe` | `EA-Media-Tools-2.1.0-arm64-Setup.exe` |
+| Windows | `EA-Media-Tools-2.2.0-x64-Setup.exe` | `EA-Media-Tools-2.2.0-arm64-Setup.exe` |
 | macOS | ZIP containing `darwin-x64` | ZIP containing `darwin-arm64` for Apple silicon |
 | Debian/Ubuntu | `.deb` containing `amd64` | `.deb` containing `arm64` |
 
@@ -41,7 +41,7 @@ The macOS app is not signed or notarized. To uninstall it, quit the app and move
 Install the downloaded package from a terminal. Replace the filename with the asset you downloaded:
 
 ```bash
-sudo apt install ./ea-media-tools_2.1.0_amd64.deb
+sudo apt install ./ea-media-tools_2.2.0_amd64.deb
 ```
 
 ARM64 systems use the package ending in `arm64.deb`. Launch **EA Media Tools** from the desktop application menu. Remove it with:
@@ -64,7 +64,7 @@ Videos shorter than eight minutes with attached cover artwork use the Music Vide
 
 The app then checks the GPU driving the primary physical display. Virtual and secondary display adapters are ignored and recorded in **View Logs**. An encoder appears only after the corresponding Jellyfin FFmpeg flag completes an actual test encode on the installed hardware.
 
-Folder analysis inspects up to two videos at a time. An NVENC-only batch begins with one encode, measures aggregate average speed for 10 seconds, and adds one job only when at least 200 FPS remains reserved for every current job and the new job. It repeats that measurement until the GPU no longer has enough headroom or reaches the supported NVENC session cap. A finished slot waits 10 seconds before taking another file. Other encoder families remain serial because the app does not yet have a reliable session-capability signal for them.
+Folder analysis inspects up to two videos at a time. An NVENC-only batch begins with one encode and measures its average speed for 10 seconds. That first result creates a fixed ceiling of `floor(average FPS / 200)`, also bounded by the supported NVENC session cap. Later 10-second samples can delay expansion when there is not enough current headroom, but can never raise the first measurement's ceiling. A finished slot waits 10 seconds before taking another file. Other encoder families remain serial because the app does not yet have a reliable session-capability signal for them.
 
 The encode window keeps a separate progress page for every queued video. Browse pages with **Previous** and **Next** to inspect pending, active, completed, cancelled, or failed jobs. **Live FFmpeg Output** opens one console-style session log containing every command as its encode starts; executable and media paths are displayed as `ffmpeg`, `<input>`, and `<output>`. **Start New** becomes available after the queue settles. **Done** appears only after every job has completed or cancelled, then waits for active workers and partial-output cleanup before closing the app.
 

@@ -4,6 +4,13 @@ All notable changes to EA Media Tools are documented here.
 
 ## [Unreleased]
 
+## [2.2.0] - 2026-08-26
+
+### Fixed
+
+- Lock adaptive NVENC batch concurrency to the capacity calculated from the first 10-second single-encode FPS average. Later aggregate samples can prevent another job from starting but can no longer raise that initial ceiling.
+- Make Cancel All interrupt active encoders, replacement cooldowns, and the adaptive sampler through one queue-wide cancellation path.
+
 ## [2.1.0] - 2026-08-26
 
 ### Added
@@ -207,6 +214,7 @@ All notable changes to EA Media Tools are documented here.
 - Convert crop offsets to CUVID edge values with division by two and floor rounding.
 - Cancel all active parallel encodes and interrupt pending cooldowns when the queue is stopped or a job fails.
 
+[2.2.0]: https://github.com/eaforlife/media-converter/compare/v2.1.0...v2.2.0
 [2.1.0]: https://github.com/eaforlife/media-converter/compare/v2.0.1...v2.1.0
 [2.0.1]: https://github.com/eaforlife/media-converter/compare/v2.0.0...v2.0.1
 [2.0.0]: https://github.com/eaforlife/media-converter/compare/v1.2.1...v2.0.0

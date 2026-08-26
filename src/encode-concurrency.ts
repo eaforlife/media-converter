@@ -1,5 +1,7 @@
 import type { EncodeJob } from './shared-types';
 
+type KillableProcess = { kill: () => unknown };
+
 export const ADAPTIVE_SAMPLE_MS = 10_000;
 export const MINIMUM_JOB_FPS = 200;
 export const NVENC_SESSION_LIMIT = 12;
@@ -22,6 +24,27 @@ export const averageAggregateFps = (windows: Iterable<readonly number[]>) => {
     measuredJobs += 1;
   }
   return measuredJobs ? total : null;
+};
+
+export const initialThroughputConcurrencyLimit = (averageFps: number, encoderLimit: number) => {
+  if (!Number.isFinite(averageFps) || averageFps <= 0) return 1;
+  return Math.max(1, Math.min(encoderLimit, Math.floor(averageFps / MINIMUM_JOB_FPS)));
+};
+
+export const lockThroughputConcurrencyLimit = (
+  currentLimit: number | null,
+  firstAverageFps: number | null,
+  encoderLimit: number,
+) => currentLimit ?? (firstAverageFps === null
+  ? null
+  : initialThroughputConcurrencyLimit(firstAverageFps, encoderLimit));
+
+export const cancelAdaptiveQueueActivity = (
+  pendingWaits: Iterable<() => void>,
+  activeProcesses: Iterable<KillableProcess>,
+) => {
+  for (const cancel of [...pendingWaits]) cancel();
+  for (const process of activeProcesses) process.kill();
 };
 
 export const canAddEncodeJob = (aggregateFps: number | null, activeJobs: number, limit: number) => {

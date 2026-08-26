@@ -7,7 +7,8 @@ import { BrowserWindow, type WebContents } from 'electron';
 import { logActivity } from './app-logger';
 import { ccextractorArguments, injectClosedCaptionInput } from './closed-caption';
 import {
-  ADAPTIVE_SAMPLE_MS, averageAggregateFps, canAddEncodeJob, encoderConcurrencyLimit,
+  ADAPTIVE_SAMPLE_MS, averageAggregateFps, canAddEncodeJob, cancelAdaptiveQueueActivity, encoderConcurrencyLimit,
+  lockThroughputConcurrencyLimit,
 } from './encode-concurrency';
 import { rsgainArguments, successfulNormalizationRoots } from './audio-workflow';
 import { replaceSourceWithMetadataOutput } from './metadata-replacement';
@@ -85,9 +86,7 @@ const waitForEncodeCooldown = () => new Promise<boolean>((resolve) => {
   cancelCooldowns.add(cancel);
 });
 
-const stopActiveProcesses = () => {
-  for (const process of activeProcesses.values()) process.kill();
-};
+const stopQueueActivity = () => cancelAdaptiveQueueActivity(cancelCooldowns, activeProcesses.values());
 
 class EncodeCancelledError extends Error {
   constructor(readonly wholeQueue: boolean) {
@@ -422,6 +421,7 @@ export const startEncodeQueue = async (
       let nextIndex = 0;
       let queueHadCancelledJob = false;
       let targetConcurrency = 1;
+      let throughputConcurrencyLimit: number | null = null;
       const fpsWindows = new Map<number, number[]>();
       const workers: Promise<void>[] = [];
       const runWorker = async () => {
@@ -484,8 +484,7 @@ export const startEncodeQueue = async (
             if (!cancellationRequested && !queueFailureRequested) {
               queueFailureRequested = true;
               queueFailureMessage = error instanceof Error ? error.message : 'Encoding failed.';
-              for (const cancel of [...cancelCooldowns]) cancel();
-              stopActiveProcesses();
+              stopQueueActivity();
             }
             return;
           } finally {
@@ -501,15 +500,29 @@ export const startEncodeQueue = async (
       launchWorker();
       while (
         concurrencyLimit > 1 && nextIndex < jobs.length
+        && targetConcurrency < (throughputConcurrencyLimit ?? concurrencyLimit)
         && !cancellationRequested && !queueFailureRequested
       ) {
         const elapsed = await waitForEncodeCooldown();
         if (!elapsed || cancellationRequested || queueFailureRequested) break;
         const aggregateFps = averageAggregateFps(fpsWindows.values());
+        const previousThroughputLimit = throughputConcurrencyLimit;
+        throughputConcurrencyLimit = lockThroughputConcurrencyLimit(
+          throughputConcurrencyLimit,
+          targetConcurrency === 1 ? aggregateFps : null,
+          concurrencyLimit,
+        );
+        if (previousThroughputLimit === null && throughputConcurrencyLimit !== null) {
+          logActivity('INFO', 'ffmpeg.queue.concurrency.baseline', {
+            averageFps: aggregateFps, throughputConcurrencyLimit, encoderConcurrencyLimit: concurrencyLimit,
+          });
+        }
+        const effectiveLimit = throughputConcurrencyLimit ?? 1;
         const expanded = nextIndex < jobs.length
-          && canAddEncodeJob(aggregateFps, targetConcurrency, concurrencyLimit);
+          && canAddEncodeJob(aggregateFps, targetConcurrency, effectiveLimit);
         logActivity('INFO', 'ffmpeg.queue.concurrency.sample', {
-          aggregateFps, activeTarget: targetConcurrency, concurrencyLimit, expanded,
+          aggregateFps, activeTarget: targetConcurrency, throughputConcurrencyLimit,
+          encoderConcurrencyLimit: concurrencyLimit, expanded,
         });
         for (const samples of fpsWindows.values()) samples.length = 0;
         if (expanded) {
@@ -587,8 +600,7 @@ export const cancelEncoding = (jobIndex?: number) => {
     return killed;
   }
   cancellationRequested = true;
-  for (const cancel of [...cancelCooldowns]) cancel();
-  stopActiveProcesses();
+  stopQueueActivity();
   return true;
 };
 
