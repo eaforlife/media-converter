@@ -85,6 +85,18 @@ export type MediaInfo = {
 
 export type ScaleMode = 'auto' | '1080p' | '720p' | '360p' | 'disabled';
 
+export type AdvancedVideoSettings = {
+  bFrames: boolean;
+  multipass: 0 | 1 | 2;
+  bRefMode: 'disabled' | 'each' | 'middle';
+  adaptiveBFrames: boolean;
+  sceneCutDetection: boolean;
+  rcLookahead: number;
+  nonReferenceP: boolean;
+  spatialAq: number;
+  temporalAq: boolean;
+};
+
 export type FilterSettings = {
   autoCrop: boolean;
   toneMapHdrToSdr: boolean;
@@ -126,15 +138,19 @@ export type HardwareCapabilities = {
 
 export type SavedPreset = {
   name: string;
+  description: string;
   workflow?: MediaWorkflow;
   format: OutputFormat;
   encoder: string;
+  encoderSpeed: number;
+  encoderTune: string;
   quality: string;
   videoBitrate: string;
   maxRate: string;
   bufferMultiplier: number;
   bufferSize: string;
   deliveryMode: boolean;
+  advancedVideo: AdvancedVideoSettings;
   audioCodec: 'libfdk_aac' | 'libopus' | 'copy';
   audioBitrate: string;
   filters: FilterSettings;

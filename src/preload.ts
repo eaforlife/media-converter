@@ -1,7 +1,8 @@
 import { contextBridge, ipcRenderer } from 'electron';
 import type {
-  AppSettings, EncodeJob, EncodeProgress, EncodeStartResult, HardwareCapabilities, RuntimeState, SourceFile,
+  AppSettings, EncodeJob, EncodeProgress, EncodeStartResult, HardwareCapabilities, RuntimeState, SavedPreset, SourceFile,
 } from './shared-types';
+import type { BuiltInPresetCatalog } from './presets';
 
 export type { AppSettings, RuntimeState, SourceFile } from './shared-types';
 
@@ -15,6 +16,13 @@ contextBridge.exposeInMainWorld('mediaAPI', {
   showInFolder: (targetPath: string): Promise<void> => ipcRenderer.invoke('path:show', targetPath),
   loadSettings: (): Promise<AppSettings> => ipcRenderer.invoke('settings:load'),
   saveSettings: (settings: AppSettings): Promise<void> => ipcRenderer.invoke('settings:save', settings),
+  loadBuiltInPresets: (): Promise<BuiltInPresetCatalog> => ipcRenderer.invoke('presets:load'),
+  readPresetFile: (): Promise<string> => ipcRenderer.invoke('presets:read'),
+  showPresetFile: (): Promise<void> => ipcRenderer.invoke('presets:show'),
+  loadCustomPresets: (): Promise<SavedPreset[]> => ipcRenderer.invoke('custom-presets:load'),
+  saveCustomPresets: (presets: SavedPreset[]): Promise<void> => ipcRenderer.invoke('custom-presets:save', presets),
+  readCustomPresetFile: (): Promise<string> => ipcRenderer.invoke('custom-presets:read'),
+  showCustomPresetFile: (): Promise<boolean> => ipcRenderer.invoke('custom-presets:show'),
   releasePreviews: (ids: string[]): Promise<void> => ipcRenderer.invoke('source:release-previews', ids),
   minimizeWindow: (): Promise<void> => ipcRenderer.invoke('window:minimize'),
   closeWindow: (): Promise<void> => ipcRenderer.invoke('window:close'),
@@ -53,6 +61,13 @@ declare global {
       showInFolder: (targetPath: string) => Promise<void>;
       loadSettings: () => Promise<AppSettings>;
       saveSettings: (settings: AppSettings) => Promise<void>;
+      loadBuiltInPresets: () => Promise<BuiltInPresetCatalog>;
+      readPresetFile: () => Promise<string>;
+      showPresetFile: () => Promise<void>;
+      loadCustomPresets: () => Promise<SavedPreset[]>;
+      saveCustomPresets: (presets: SavedPreset[]) => Promise<void>;
+      readCustomPresetFile: () => Promise<string>;
+      showCustomPresetFile: () => Promise<boolean>;
       releasePreviews: (ids: string[]) => Promise<void>;
       minimizeWindow: () => Promise<void>;
       closeWindow: () => Promise<void>;

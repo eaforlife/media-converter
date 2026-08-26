@@ -3,10 +3,18 @@ import { APP_CODENAME } from './config';
 import { AUDIO_PRESETS, AUDIO_PRESET_NAMES, MUSIC_VIDEO_AAC_BITRATE, audioBitrate, shouldResampleLossless } from './audio-workflow';
 import type { AudioPresetName } from './audio-workflow';
 import { parseEpisodeIdentity, preservedOutputBaseName, sanitizePathSegment, smartSeriesBaseName } from './output-naming';
-import { BUILT_IN_PRESETS, BUILT_IN_PRESET_NAMES } from './presets';
-import type { BuiltInPresetDefinition, BuiltInPresetName, PreferredVideoCodec, PresetAudioCodec, QualityFamily } from './presets';
-import { cuvidCrop, detectedCrop } from './video-crop';
-import { bufferSizeFor, deliveryPresetForOutput, deliveryQualityForOutput, nvencPresetForName, scaleDimensionsFor, videoOutputProfile } from './video-output-profile';
+import { BUILT_IN_PRESET_NAMES } from './presets';
+import type { BuiltInPresetCatalog, BuiltInPresetDefinition, BuiltInPresetName, PreferredVideoCodec, PresetAudioCodec, QualityFamily } from './presets';
+import { advancedVideoArguments, supportedAdvancedVideoFields } from './advanced-video-settings';
+import type { AdvancedVideoField } from './advanced-video-settings';
+import {
+  encoderSpeedArguments, encoderSpeedLabel, encoderTuneArguments, encoderTuneOptions,
+  normalizeEncoderSpeed, normalizeEncoderTune, supportsEncoderSpeed,
+} from './encoder-controls';
+import type { EncoderSpeed } from './encoder-controls';
+import { isValidCustomPresetName } from './custom-presets';
+import { aspectPreservingDimensions, cuvidCrop, detectedCrop, qsvCropOptions } from './video-crop';
+import { bufferSizeFor, deliveryPresetForOutput, deliveryQualityForOutput, scaleDimensionsFor, videoOutputProfile } from './video-output-profile';
 import { applyEncodeProgress, canFinishEncodeQueue, createEncodeQueueProgress, isQueueTerminal } from './encode-progress-state';
 import type { EncodeJobProgressState, EncodeQueueProgressState } from './encode-progress-state';
 import { formatSessionFfmpegCommand } from './ffmpeg-command-display';
@@ -15,7 +23,7 @@ import { metadataTemporaryPath, streamMetadataChanged } from './metadata-edit';
 import type { EditableStreamMetadata } from './metadata-edit';
 import { attachedCoverArtArguments, isH264HighSource, musicVideoEncoderProfile } from './media-workflow';
 import type {
-  AppSettings, AudioStreamInfo, EncodeJob, EncodeProgress, FilterSettings, HardwareCapabilities, RuntimeState, SavedPreset,
+  AdvancedVideoSettings, AppSettings, AudioStreamInfo, EncodeJob, EncodeProgress, FilterSettings, HardwareCapabilities, RuntimeState, SavedPreset,
   OutputFormat, ScaleMode, SourceFile, StreamFlags, SubtitleStreamInfo,
 } from './shared-types';
 
@@ -30,13 +38,14 @@ type ProcessingSection = 'video' | 'audio' | 'subtitles';
 type ProcessingSettings = Record<ProcessingSection, boolean>;
 type FolderSeriesLayout = { sourceRoot: string; showFolder: string; season: number };
 type JobSettings = {
-  preset: string; format: OutputFormat; encoder: string;
+  preset: string; format: OutputFormat; encoder: string; encoderSpeed: EncoderSpeed; encoderTune: string;
   resolution: string; quality: string; videoBitrate: string; maxRate: string; bufferMultiplier: number; bufferSize: string;
   audio: Record<number, AudioSetting>; subtitles: Record<number, SubtitleSetting>;
   processing: ProcessingSettings;
   videoMetadata: EditableStreamMetadata;
   filters: FilterSettings;
   deliveryMode: boolean;
+  advancedVideo: AdvancedVideoSettings;
 };
 
 const iconPaths: Record<IconName, string> = {
@@ -64,12 +73,10 @@ const icon = (name: IconName, size = 18) => `<svg class="icon" width="${size}" h
 const app = document.querySelector<HTMLDivElement>('#app');
 if (!app) throw new Error('App root was not found');
 
-const PRESET_DESCRIPTION = Object.fromEntries(
-  Object.values(BUILT_IN_PRESETS).map((preset) => [preset.name, preset.description]),
-) as Record<BuiltInPresetName, string>;
 const AAC_BITRATES = ['128k', '144k', '160k', '192k', '224k', '256k', '320k'];
 const OPUS_BITRATES = ['32k', '48k', '64k', '80k', '96k', '112k', '128k'];
 let sources: SourceFile[] = [];
+let builtInPresets: BuiltInPresetCatalog | null = null;
 let selectedIndex = 0;
 let activeTab = 'Summary';
 let outputDirectory = '';
@@ -83,6 +90,7 @@ let hardwareCapabilities: HardwareCapabilities = {
   qsvDecoders: [], vaapiAvailable: false, vaapiDevice: null, encoders: [],
 };
 let pickerBusy = false;
+let customPresetDraftName = '';
 let sourceMode: 'file' | 'folder' | null = null;
 let folderSeriesLayout: FolderSeriesLayout | null = null;
 let appSettings: AppSettings = { hardwareAcceleration: true, useStableFfmpeg: true, smartFileNaming: true, lastPreset: 'Streaming', lastSourceDirectory: '', customPresets: [], workingPreset: null, separateAudioDirectory: true };
@@ -96,6 +104,11 @@ const encodeCancellingJobs = new Set<number>();
 const escapeHtml = (value: string) => value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#039;');
 const selected = (condition: boolean) => condition ? ' selected' : '';
 const checked = (condition: boolean) => condition ? ' checked' : '';
+const emptyAdvancedVideo = (): AdvancedVideoSettings => ({
+  bFrames: false, multipass: 0, bRefMode: 'disabled', adaptiveBFrames: false,
+  sceneCutDetection: false, rcLookahead: 0, nonReferenceP: false, spatialAq: 0, temporalAq: false,
+});
+const copyAdvancedVideo = (settings: AdvancedVideoSettings) => ({ ...settings });
 const formatSize = (bytes: number) => {
   if (!bytes) return '0 B';
   const units = ['B', 'KB', 'MB', 'GB', 'TB'];
@@ -119,7 +132,12 @@ const isAudioWorkflow = (source: SourceFile) => workflowOf(source) === 'audio';
 const isMusicVideoWorkflow = (source: SourceFile) => workflowOf(source) === 'music-video';
 const isAudioPassthrough = (settings: JobSettings) => settings.format === 'source'
   || Object.values(settings.audio).some((track) => track.codec === 'copy');
-const builtInPreset = (name: string) => BUILT_IN_PRESETS[name as BuiltInPresetName];
+const builtInPreset = (name: string) => builtInPresets?.[name as BuiltInPresetName];
+const requiredBuiltInPreset = (name: BuiltInPresetName) => {
+  const preset = builtInPreset(name);
+  if (!preset) throw new Error(`The ${name} preset is unavailable`);
+  return preset;
+};
 const outputProfileFor = (source: SourceFile, scale: ScaleMode, preset: string) =>
   videoOutputProfile(source.media?.video?.height ?? 0, scale, preset === 'Cellular');
 const softwareEncoderFor = (codec: PreferredVideoCodec) => codec === 'H.264'
@@ -261,8 +279,9 @@ const initialAudioSettings = (source: SourceFile): JobSettings => {
   const track = source.media?.audio[0];
   const preset = AUDIO_PRESETS.Streaming;
   return {
-    preset: 'Streaming', format: 'opus', encoder: '', resolution: '', quality: '',
+    preset: 'Streaming', format: 'opus', encoder: '', encoderSpeed: 4, encoderTune: '', resolution: '', quality: '',
     videoBitrate: '0', maxRate: '0', bufferMultiplier: 0, bufferSize: '0', deliveryMode: false,
+    advancedVideo: emptyAdvancedVideo(),
     processing: { video: false, audio: true, subtitles: false },
     videoMetadata: copyMetadata('und', { default: false, forced: false, hearingImpaired: false }),
     audio: track ? { [track.index]: {
@@ -320,15 +339,16 @@ const applyAudioPreset = (source: SourceFile, presetName: string) => {
 };
 
 const applyMusicVideoPreset = (source: SourceFile) => {
-  const preset = BUILT_IN_PRESETS.Streaming;
+  const preset = requiredBuiltInPreset('Streaming');
   const settings = settingsByPath.get(source.path) ?? initialSettings(source);
   settingsByPath.set(source.path, settings);
   const encoder = hardwareEncoderFor(preset.preferredVideoCodec);
   Object.assign(settings, {
-    preset: 'Music Video', format: 'mp4' as const, encoder,
+    preset: 'Music Video', format: 'mp4' as const, encoder, encoderSpeed: 4, encoderTune: normalizeEncoderTune(encoder, 'hq'),
     quality: deliveryQualityForOutput('Streaming', videoOutputProfile(source.media?.video?.height ?? 0, 'auto').tier, '28'),
     videoBitrate: '0', maxRate: '7000', bufferMultiplier: 2, bufferSize: '14000',
-    deliveryMode: true, processing: { video: true, audio: true, subtitles: true },
+    deliveryMode: true, advancedVideo: copyAdvancedVideo(preset.advancedVideo),
+    processing: { video: true, audio: true, subtitles: true },
   });
   settings.filters = {
     ...defaultFilters(source), scale: 'auto', scaleLocked: true, stripMetadata: false,
@@ -345,19 +365,22 @@ const applyMusicVideoPreset = (source: SourceFile) => {
 
 const initialSettings = (source: SourceFile): JobSettings => {
   if (isAudioWorkflow(source)) return initialAudioSettings(source);
-  const preset = BUILT_IN_PRESETS.Streaming;
+  const preset = requiredBuiltInPreset('Streaming');
   const outputProfile = outputProfileFor(source, preset.scale, preset.name);
   const profilePreset = builtInPreset(deliveryPresetForOutput(preset.name, outputProfile.tier)) ?? preset;
   const maxRate = outputProfile.maxRate;
   const encoder = hardwareEncoderFor(preset.preferredVideoCodec);
   const selectedAudio = preferredAudioIndexes(source.media?.audio ?? []);
   const settings: JobSettings = {
-    preset: 'Streaming', format: preset.format, encoder, resolution: outputProfile.scale.join(':'), quality: deliveryQuality(preset, outputProfile.tier, encoder),
+    preset: 'Streaming', format: preset.format, encoder, encoderSpeed: normalizeEncoderSpeed(preset.encoderSpeed), encoderTune: normalizeEncoderTune(encoder, preset.encoderTune),
+    resolution: outputProfile.scale.join(':'), quality: deliveryQuality(preset, outputProfile.tier, encoder),
     videoBitrate: '0', maxRate: String(maxRate), bufferMultiplier: preset.bufferMultiplier, bufferSize: String(bufferSizeFor(maxRate, preset.bufferMultiplier)),
+    advancedVideo: copyAdvancedVideo(profilePreset.advancedVideo),
     processing: { video: true, audio: true, subtitles: true },
     videoMetadata: copyMetadata(source.media?.video?.language ?? 'und', source.media?.video?.flags ?? { default: false, forced: false, hearingImpaired: false }),
     audio: Object.fromEntries((source.media?.audio ?? []).map((track) => [track.index, {
-      enabled: selectedAudio.has(track.index), codec: 'libfdk_aac', bitrate: audioBitrateFor(profilePreset.name, 'libfdk_aac', track.isStereo),
+      enabled: selectedAudio.has(track.index), codec: preset.audioCodec === 'opus' ? 'libopus' : 'libfdk_aac',
+      bitrate: audioBitrateFor(profilePreset.name, preset.audioCodec === 'opus' ? 'libopus' : 'libfdk_aac', track.isStereo),
       flags: selectedAudio.has(track.index)
         ? preferredAudioFlags(track, source.media?.audio ?? [])
         : { default: false, forced: false, hearingImpaired: false },
@@ -416,18 +439,21 @@ const applyPreset = (source: SourceFile, preset: string, persist = true) => {
     preset,
     format: selectedPreset.format,
     encoder,
+    encoderSpeed: normalizeEncoderSpeed(defaults ? defaults.encoderSpeed : saved!.encoderSpeed),
+    encoderTune: normalizeEncoderTune(encoder, defaults ? defaults.encoderTune : saved!.encoderTune),
     quality: defaults ? deliveryQuality(defaults, outputProfile!.tier, encoder) : normalizeQuality(saved!.quality),
     videoBitrate: defaults ? '0' : saved!.videoBitrate,
     maxRate: defaults ? String(defaults.bitrateControl ? outputProfile!.maxRate : 0) : saved!.maxRate,
     bufferMultiplier: defaults ? defaults.bufferMultiplier : saved!.bufferMultiplier,
     bufferSize: defaults ? String(bufferSizeFor(outputProfile!.maxRate, defaults.bufferMultiplier)) : saved!.bufferSize,
     deliveryMode: selectedPreset.deliveryMode,
+    advancedVideo: copyAdvancedVideo(defaults ? profileDefaults!.advancedVideo : saved!.advancedVideo),
   });
   if (defaults) settings.resolution = defaults.scale === 'disabled' ? defaults.resolution : outputProfile!.scale.join(':');
   settings.filters = defaults
     ? { ...defaultFilters(source), scale: defaults.scale, scaleLocked: defaults.scaleLocked }
     : { ...saved!.filters };
-  const codec = defaults ? 'libfdk_aac' : saved!.audioCodec;
+  const codec = defaults ? defaults.audioCodec === 'opus' ? 'libopus' : 'libfdk_aac' : saved!.audioCodec;
   const selectedAudio = preferredAudioIndexes(source.media?.audio ?? []);
   for (const track of source.media?.audio ?? []) {
     const metadata = settings.audio[track.index]?.metadata ?? copyMetadata(track.language, track.flags);
@@ -471,6 +497,7 @@ const applyBuiltInScaleProfile = (
   settings.bufferMultiplier = defaults.bufferMultiplier;
   settings.bufferSize = String(bufferSizeFor(outputProfile.maxRate, defaults.bufferMultiplier));
   settings.deliveryMode = profileDefaults.deliveryMode;
+  settings.advancedVideo = copyAdvancedVideo(profileDefaults.advancedVideo);
   for (const track of source.media?.audio ?? []) {
     const audio = settings.audio[track.index];
     if (audio && audio.codec !== 'copy') {
@@ -533,6 +560,17 @@ const markCustom = (settings: JobSettings) => {
   settings.filters.scaleLocked = false;
   appSettings.lastPreset = 'Custom';
   appSettings.workingPreset = snapshotPreset(settings, 'Custom');
+  const presetSelect = document.querySelector<HTMLSelectElement>('#preset');
+  if (presetSelect) {
+    if (![...presetSelect.options].some((option) => option.value === 'Custom')) {
+      presetSelect.add(new Option('Custom', 'Custom'));
+    }
+    presetSelect.value = 'Custom';
+  }
+  const editor = document.querySelector<HTMLElement>('#custom-preset-editor');
+  if (editor) editor.hidden = false;
+  const description = document.querySelector<HTMLElement>('.preset-description');
+  if (description) description.textContent = 'Modified settings ready to save as a preset.';
   for (const source of sources) {
     const target = getSettings(source);
     if (target !== settings) {
@@ -548,15 +586,19 @@ const snapshotPreset = (settings: JobSettings, name: string): SavedPreset => {
     ?? { codec: 'libfdk_aac' as AudioCodec, bitrate: '192k' };
   return {
     name,
+    description: name,
     workflow: settings.format === 'opus' || settings.format === 'm4a' || settings.format === 'source' ? 'audio' : 'video',
     format: settings.format,
     encoder: settings.encoder,
+    encoderSpeed: settings.encoderSpeed,
+    encoderTune: settings.encoderTune,
     quality: settings.quality,
     videoBitrate: settings.videoBitrate,
     maxRate: settings.maxRate,
     bufferMultiplier: settings.bufferMultiplier,
     bufferSize: settings.bufferSize,
     deliveryMode: settings.deliveryMode,
+    advancedVideo: copyAdvancedVideo(settings.advancedVideo),
     audioCodec: firstAudio.codec,
     audioBitrate: firstAudio.bitrate,
     filters: { ...settings.filters, scaleLocked: false },
@@ -710,16 +752,36 @@ const hardwareInputArguments = (source: SourceFile, settings: JobSettings) => {
   }
   return { args: ['-hwaccel', 'auto'], cropHandledByDecoder: false, backend: 'software' as const };
 };
-const hardwareScaleDimensions = (source: SourceFile, settings: JobSettings): [string, string] | null => {
-  if (isMusicVideoWorkflow(source)) {
-    return (source.media?.video?.height ?? 0) >= 2160 ? ['2960', '-2'] : null;
+const decoderStatus = (source: SourceFile, settings: JobSettings) => {
+  if (isAudioWorkflow(source)) return 'Audio only Â· no video decoder';
+  if (!settings.processing.video) return 'Decoder Â· stream copy';
+  if (!appSettings.hardwareAcceleration) return 'Decoder Â· CPU software';
+  if (settings.encoder.endsWith('_nvenc') && hardwareCapabilities.cudaAvailable && hardwareCapabilities.nvdecAvailable) {
+    const decoder = hardwareDecoderName(source, 'cuvid');
+    return decoder && hardwareCapabilities.cuvidDecoders.includes(decoder) && !source.media?.hasCoverArt
+      ? `Decoder Â· NVIDIA NVDEC (${decoder})`
+      : 'Decoder Â· NVIDIA CUDA auto';
   }
-  const dimensions = scaleDimensionsFor(
-    source.media?.video?.height ?? 0,
-    settings.filters.scale,
-    settings.preset === 'Cellular',
-  );
-  return dimensions ? [dimensions[0], dimensions[1]] : null;
+  if (settings.encoder.endsWith('_amf') && hardwareCapabilities.amfDecodeAvailable) return 'Decoder Â· AMD AMF';
+  if (settings.encoder.endsWith('_qsv') && hardwareCapabilities.qsvDecodeAvailable) {
+    const decoder = hardwareDecoderName(source, 'qsv');
+    return decoder && hardwareCapabilities.qsvDecoders.includes(decoder)
+      ? `Decoder Â· Intel QSV (${decoder})`
+      : 'Decoder Â· Intel QSV auto';
+  }
+  if (settings.encoder.endsWith('_videotoolbox')) return 'Decoder Â· Apple VideoToolbox';
+  if (settings.encoder.endsWith('_vaapi')) return 'Decoder Â· CPU software; VA-API upload';
+  return 'Decoder Â· FFmpeg auto';
+};
+const hardwareScaleDimensions = (source: SourceFile, settings: JobSettings): [string, string] | null => {
+  const video = source.media?.video;
+  if (!video) return null;
+  const dimensions = isMusicVideoWorkflow(source)
+    ? video.height >= 2160 ? ['2960', '-2'] as const : null
+    : scaleDimensionsFor(video.height, settings.filters.scale, settings.preset === 'Cellular');
+  if (!dimensions) return null;
+  const crop = settings.filters.autoCrop ? detectedCropForSource(source) : null;
+  return aspectPreservingDimensions(dimensions, video.width, video.height, crop);
 };
 const softwareScaleFilter = (source: SourceFile, settings: JobSettings) => {
   const dimensions = hardwareScaleDimensions(source, settings);
@@ -730,27 +792,6 @@ const softwareToneMapFilters = (dolbyVision: boolean, format: 'nv12' | 'p010le')
   'zscale=t=linear:npl=100', 'format=gbrpf32le', 'zscale=p=bt709',
   'tonemap=tonemap=hable:desat=0', 'zscale=t=bt709:m=bt709:r=tv', `format=${format}`,
 ];
-const nvencDeliveryArguments = (settings: JobSettings) => settings.deliveryMode ? [
-  '-bf', '4', '-b_ref_mode', 'middle', '-b_adapt', '1', '-no-scenecut', '0',
-  '-rc-lookahead', '27', '-nonref_p', '1', '-spatial-aq', '1', '-temporal-aq', '1',
-  '-aq-strength', '10',
-] : [];
-const nvencFeatureStatuses = (source: SourceFile, settings: JobSettings) => {
-  const delivery = settings.deliveryMode;
-  const multipass = outputProfileFor(source, settings.filters.scale, settings.preset).nvencMultipass;
-  return [
-    { label: 'HQ Tune', active: true, detail: 'tune hq' },
-    { label: 'Multipass', active: multipass, detail: multipass ? 'Quarter-resolution pass' : 'Disabled above 1080p' },
-    { label: 'B-Frames', active: delivery, detail: delivery ? '4 frames' : 'Not explicitly enabled' },
-    { label: 'B-Frame References', active: delivery, detail: delivery ? 'Middle' : 'Not explicitly enabled' },
-    { label: 'Adaptive B-Frames', active: delivery, detail: delivery ? 'Enabled' : 'Not explicitly enabled' },
-    { label: 'Scene-cut Detection', active: delivery, detail: delivery ? 'Enabled' : 'Default encoder behavior' },
-    { label: 'RC Lookahead', active: delivery, detail: delivery ? '27 frames' : 'Disabled' },
-    { label: 'Non-reference P', active: delivery, detail: delivery ? 'Enabled' : 'Disabled' },
-    { label: 'Spatial AQ', active: delivery, detail: delivery ? 'Strength 10' : 'Disabled' },
-    { label: 'Temporal AQ', active: delivery, detail: delivery ? 'Enabled' : 'Disabled' },
-  ];
-};
 const hardwareAccelerationSummary = () => {
   const capabilities = [];
   if (hardwareCapabilities.cudaAvailable) capabilities.push('CUDA');
@@ -824,18 +865,15 @@ const getCommandArguments = (source: SourceFile, requestedOutputPath?: string) =
   args.push('-i', source.path);
   if (settings.processing.video) {
     args.push('-map', `0:${source.media?.video?.index ?? 0}`, '-c:v', settings.encoder);
-  if (settings.encoder.endsWith('_nvenc')) {
-    args.push(
-      '-preset', nvencPresetForName(settings.preset), '-tune', 'hq', '-rc:v', 'vbr', '-cq:v', settings.quality,
-      '-multipass', outputProfileFor(source, settings.filters.scale, settings.preset).nvencMultipass ? '1' : '0',
-    );
-    args.push(...nvencDeliveryArguments(settings));
-  }
+  args.push(...encoderSpeedArguments(settings.encoder, settings.encoderSpeed));
+  args.push(...encoderTuneArguments(settings.encoder, settings.encoderTune));
+  if (settings.encoder.endsWith('_nvenc')) args.push('-rc:v', 'vbr', '-cq:v', settings.quality);
   else if (settings.encoder.endsWith('_qsv')) args.push('-global_quality:v', settings.quality);
   else if (settings.encoder.endsWith('_amf')) args.push('-rc:v', 'qvbr', '-qvbr_quality_level:v', settings.quality);
   else if (settings.encoder.endsWith('_vaapi')) args.push('-qp:v', settings.quality);
   else if (settings.encoder.endsWith('_videotoolbox')) args.push('-q:v', settings.quality);
   else args.push('-crf', settings.quality);
+  args.push(...advancedVideoArguments(settings.encoder, settings.advancedVideo));
   const bitrateControl = builtInPreset(settings.preset)?.bitrateControl ?? true;
   if (bitrateControl) {
     args.push('-b:v', Number(settings.videoBitrate) > 0 ? `${settings.videoBitrate}k` : '0');
@@ -859,7 +897,9 @@ const getCommandArguments = (source: SourceFile, requestedOutputPath?: string) =
   const toneMapFormat: 'nv12' | 'p010le' = main10Output ? 'p010le' : 'nv12';
   const dimensions = hardwareScaleDimensions(source, settings);
   const crop = detectedCropForSource(source);
-  if (settings.filters.autoCrop && crop && !hardwareInput.cropHandledByDecoder) {
+  const qsvCrop = settings.filters.autoCrop && crop && hardwareInput.backend === 'qsv' && !hardwareInput.cropHandledByDecoder
+    ? crop : null;
+  if (settings.filters.autoCrop && crop && !hardwareInput.cropHandledByDecoder && !qsvCrop) {
     filters.push(`crop=${crop.filter}`);
   }
 
@@ -876,13 +916,15 @@ const getCommandArguments = (source: SourceFile, requestedOutputPath?: string) =
     } else if (main10Output && !dimensions) {
       filters.push('scale_cuda=iw:ih:format=p010le:passthrough=0');
     }
-  } else if (hardwareInput.backend === 'qsv' && (dimensions || toneMap || main10Output)) {
+  } else if (hardwareInput.backend === 'qsv' && (qsvCrop || dimensions || toneMap || main10Output)) {
     if (toneMap && video?.hasDolbyVision) {
       filters.push('setparams=color_primaries=bt2020:color_trc=smpte2084:colorspace=bt2020nc');
     }
     filters.push('hwupload=extra_hw_frames=64');
     const options = [
-      ...(dimensions ? [`w=${dimensions[0]}`, `h=${dimensions[1]}`] : []),
+      ...(qsvCrop ? qsvCropOptions(qsvCrop) : []),
+      ...(dimensions ? [`w=${dimensions[0]}`, `h=${dimensions[1]}`]
+        : qsvCrop ? [`w=${qsvCrop.width}`, `h=${qsvCrop.height}`] : []),
       ...(toneMap || main10Output ? [`format=${toneMapFormat}`] : []),
       ...(toneMap ? ['tonemap=1'] : []),
     ];
@@ -1360,7 +1402,7 @@ const showAppMenu = () => {
   const runtimeSelector = sources.length === 0 && Boolean(document.querySelector('.welcome-shell'))
     ? `<label class="menu-check runtime-channel-toggle"><input id="stable-ffmpeg" type="checkbox"${checked(appSettings.useStableFfmpeg)}/><span><strong>Stable</strong><small>Use the stable Jellyfin FFmpeg runtime</small></span></label>`
     : '';
-  menu.innerHTML = `<div class="menu-identity"><strong>EA Media Tools</strong><span>Version ${escapeHtml(runtimeState?.appVersion ?? '1.2.1')} · ${APP_CODENAME}</span></div>${runtimeSelector}<label class="menu-check"><input id="hardware-acceleration" type="checkbox"${checked(appSettings.hardwareAcceleration)}/><span>Hardware Acceleration</span></label><button id="view-logs">View Logs</button><button id="view-config">View Running Config</button><button id="view-changelog">View Change Log</button><button id="check-update">Check for update</button><button class="danger" id="exit-app">Exit</button>`;
+  menu.innerHTML = `<div class="menu-identity"><strong>EA Media Tools</strong><span>Version ${escapeHtml(runtimeState?.appVersion ?? '2.0.0')} · ${APP_CODENAME}</span></div>${runtimeSelector}<label class="menu-check"><input id="hardware-acceleration" type="checkbox"${checked(appSettings.hardwareAcceleration)}/><span>Hardware Acceleration</span></label><button id="view-logs">View Logs</button><button id="view-config">View Running Config</button><button id="view-presets">View Built-in Presets INI</button><button id="show-presets">Show Built-in Presets in Folder</button><button id="view-custom-presets">View Custom Presets INI</button><button id="show-custom-presets">Show Custom Presets in Folder</button><button id="view-changelog">View Change Log</button><button id="check-update">Check for update</button><button class="danger" id="exit-app">Exit</button>`;
   document.body.appendChild(menu);
   menu.addEventListener('click', (event) => event.stopPropagation());
   menu.querySelector<HTMLInputElement>('#stable-ffmpeg')?.addEventListener('change', async (event) => {
@@ -1410,6 +1452,7 @@ const showAppMenu = () => {
       itemSettings.encoder = appSettings.hardwareAcceleration
         ? hardwareEncoderFor(preferredCodecForEncoder(itemSettings.encoder))
         : softwareEncoderFor(preferredCodecForEncoder(itemSettings.encoder));
+      itemSettings.encoderTune = normalizeEncoderTune(itemSettings.encoder, itemSettings.encoderTune);
     }
     void persistAppSettings();
     updateCommand();
@@ -1419,10 +1462,20 @@ const showAppMenu = () => {
     'EA Media Tools activity log', 'app.log · newest entries at bottom', () => window.mediaAPI.readLog(),
   ));
   menu.querySelector('#view-config')?.addEventListener('click', () => void showTextReader(
-    'EA Media Tools running config', 'config · fixed and user presets', () => window.mediaAPI.readConfig(appSettings),
+    'EA Media Tools running config', 'config · user settings and active custom working state', () => window.mediaAPI.readConfig(appSettings),
   ));
+  menu.querySelector('#view-presets')?.addEventListener('click', () => void showTextReader(
+    'EA Media Tools built-in presets', 'presets.ini · loaded from the install resources directory', () => window.mediaAPI.readPresetFile(),
+  ));
+  menu.querySelector('#show-presets')?.addEventListener('click', () => void window.mediaAPI.showPresetFile());
+  menu.querySelector('#view-custom-presets')?.addEventListener('click', () => void showTextReader(
+    'EA Media Tools custom presets', 'custom_preset.ini · created after the first named custom preset', () => window.mediaAPI.readCustomPresetFile(),
+  ));
+  menu.querySelector('#show-custom-presets')?.addEventListener('click', async () => {
+    if (!await window.mediaAPI.showCustomPresetFile()) showToast('No custom_preset.ini exists yet');
+  });
   menu.querySelector('#view-changelog')?.addEventListener('click', () => void showTextReader(
-    `EA Media Tools ${runtimeState?.appVersion ?? '1.2.1'} change log`,
+    `EA Media Tools ${runtimeState?.appVersion ?? '2.0.0'} change log`,
     `${APP_CODENAME} · installed release notes from GitHub`,
     () => window.mediaAPI.readChangelog(),
   ));
@@ -1518,6 +1571,7 @@ const subtitleSummary = (source: SourceFile) => {
 };
 
 const renderWorkspace = () => {
+  const previousScrollTop = document.querySelector<HTMLElement>('.work-area')?.scrollTop ?? 0;
   const source = sources[selectedIndex];
   if (!source) return renderWelcome();
   const settings = getSettings(source);
@@ -1543,7 +1597,7 @@ const renderWorkspace = () => {
         : settings.preset === 'Passthrough' ? 'Retain source audio and optionally normalize the selected library.'
           : 'Modified audio settings ready to save as a preset.'
     : musicVideo ? 'Short-form music video with preserved metadata, protected cover art, automatic captions, and 4K-only scaling.'
-      : PRESET_DESCRIPTION[settings.preset as BuiltInPresetName] ?? (settings.preset === 'Custom' ? 'Modified settings ready to save as a preset.' : 'Saved user preset.');
+      : builtInPreset(settings.preset)?.description ?? (settings.preset === 'Custom' ? 'Modified settings ready to save as a preset.' : appSettings.customPresets.find((preset) => preset.name === settings.preset)?.description ?? 'Saved user preset.');
   const workflowLabel = audioWorkflow ? 'audio' : musicVideo ? 'music video' : 'video';
   const destinationToggle = audioWorkflow
     ? `<label class="smart-naming ${passthrough ? 'disabled' : ''}"><input id="separate-audio-directory" type="checkbox"${checked(!passthrough && appSettings.separateAudioDirectory)}${encodingActive || passthrough ? ' disabled' : ''}/><span>Separate encode directory</span></label>`
@@ -1553,10 +1607,12 @@ const renderWorkspace = () => {
     <section class="work-area"><div class="source-hero"><div class="media-preview">${source.previewDataUrl ? `<img src="${source.previewDataUrl}" alt="35 percent source preview"/>` : `<div class="preview-grid"></div><div class="preview-play">${icon(audioWorkflow ? 'audio' : 'play', 23)}</div>`}<span>${escapeHtml(source.extension)}</span></div><div class="source-info"><div class="section-label">CURRENT ${workflowLabel.toUpperCase()} SOURCE${audioWorkflow ? '' : ' · PREVIEW AT 35%'}</div><h2>${escapeHtml(source.name)}</h2><p title="${escapeHtml(source.path)}">${escapeHtml(source.path)}</p>
       <div class="metadata">${audioWorkflow ? `<span><b>Audio</b>${escapeHtml(audioSummary(source))}</span><span><b>Sample rate</b>${source.media?.audio[0]?.sampleRate ? `${source.media.audio[0].sampleRate / 1000} kHz` : 'Unknown'}</span><span><b>Channels</b>${source.media?.audio[0]?.channels ?? 'Unknown'}</span><span><b>Duration</b>${formatDuration(source.media?.duration ?? null)}</span>` : `<span><b>Video</b>${video ? `${escapeHtml(video.codec)} · ${video.width}×${video.height}` : 'Unknown'}</span><span><b>Dynamic range</b>${escapeHtml(hdrLabel(source))}</span><span><b>Audio</b>${escapeHtml(audioSummary(source))}</span><span><b>Chapters</b>${source.media?.chapterCount ?? 'Unknown'}</span><span><b>Subtitles</b>${escapeHtml(subtitleSummary(source))}</span>`}</div></div></div>
       ${source.probeError ? `<div class="probe-warning">${icon('x', 16)} ${escapeHtml(source.probeError)}</div>` : ''}
-      <div class="preset-bar ${metadataOnly ? 'processing-disabled' : ''}"><div class="preset-icon">${icon('gauge', 22)}</div><label class="preset-control"><span>PRESET</span><select id="preset"${metadataOnly || musicVideo ? ' disabled' : ''}>${visiblePresets.map((preset) => `<option${selected(settings.preset === preset)}>${preset}</option>`).join('')}${savedPresets.length ? `<optgroup label="Saved presets">${savedPresets.map((preset) => `<option${selected(settings.preset === preset.name)}>${escapeHtml(preset.name)}</option>`).join('')}</optgroup>` : ''}</select><small class="preset-description">${metadataOnly ? 'Metadata-only mode copies every stream and preserves the source container.' : escapeHtml(presetDescription)}</small></label>${settings.preset === 'Custom' && !metadataOnly ? '<button class="save-preset" id="save-preset">Save preset</button>' : ''}</div>
+      <div class="preset-bar ${metadataOnly ? 'processing-disabled' : ''}"><div class="preset-icon">${icon('gauge', 22)}</div><label class="preset-control"><span>PRESET</span><select id="preset"${metadataOnly || musicVideo ? ' disabled' : ''}>${visiblePresets.map((preset) => `<option${selected(settings.preset === preset)}>${preset}</option>`).join('')}${savedPresets.length ? `<optgroup label="Saved presets">${savedPresets.map((preset) => `<option${selected(settings.preset === preset.name)}>${escapeHtml(preset.name)}</option>`).join('')}</optgroup>` : ''}</select><small class="preset-description">${metadataOnly ? 'Metadata-only mode copies every stream and preserves the source container.' : escapeHtml(presetDescription)}</small></label><div class="custom-preset-editor" id="custom-preset-editor"${settings.preset === 'Custom' && !metadataOnly ? '' : ' hidden'}><label><span>PRESET NAME</span><input id="custom-preset-name" value="${escapeHtml(customPresetDraftName)}" placeholder="My preset" maxlength="80"/></label><button class="save-preset" id="save-preset">Save</button></div></div>
       <nav class="tabs">${tabs.map(([label, tabIcon]) => `<button class="tab ${activeTab === label ? 'active' : ''}" data-tab="${label}">${icon(tabIcon, 17)}${label}${label === 'Audio' ? `<i>${source.media?.audio.length ?? 0}</i>` : label === 'Subtitles' ? `<i>${source.media?.subtitles.length ?? 0}</i>` : ''}</button>`).join('')}</nav><div class="tab-content" id="tab-content">${renderTabContent(activeTab, source, settings)}</div></section>
-    <footer class="encode-footer"><div class="destination"><div class="destination-heading"><span>${metadataOnly ? 'SOURCE REPLACEMENT' : passthrough ? 'SOURCE LIBRARY' : 'DESTINATION'}</span></div><div class="destination-controls"><div class="destination-row"><div class="destination-path" title="${escapeHtml(outputDirectoryFor(source))}">${icon('folder', 16)}<span>${escapeHtml(outputDirectoryFor(source))}</span></div><button id="browse-output"${encodingActive || metadataOnly || passthrough ? ' disabled' : ''}>Browse</button></div>${destinationToggle}</div><small class="destination-output" title="${escapeHtml(makeOutputPath(source))}">${metadataOnly ? 'The original file will be replaced after a verified stream-copy update.' : passthrough ? 'Source audio is retained; enabled normalization runs in place.' : `Output: ${escapeHtml(outputFileName)}`}</small></div><button class="encode-button ${metadataOnly ? 'metadata-update-button' : ''}" id="start-encode"${encodingActive || metadataOnly && metadataEditCount === 0 ? ' disabled' : ''}>${icon(metadataOnly ? 'check' : 'play', 17)} ${metadataOnly ? metadataEditCount ? `Update metadata (${metadataEditCount})` : 'No metadata changes' : `${passthrough ? 'Process' : 'Encode'} ${sources.length} ${workflowLabel}${sources.length === 1 ? '' : ' files'}`}</button></footer></main>`;
+    <footer class="encode-footer"><div class="destination"><div class="destination-heading"><span>${metadataOnly ? 'SOURCE REPLACEMENT' : passthrough ? 'SOURCE LIBRARY' : 'DESTINATION'}</span></div><div class="destination-controls"><div class="destination-row"><div class="destination-path" title="${escapeHtml(outputDirectoryFor(source))}">${icon('folder', 16)}<span>${escapeHtml(outputDirectoryFor(source))}</span></div><button id="browse-output"${encodingActive || metadataOnly || passthrough ? ' disabled' : ''}>Browse</button></div>${destinationToggle}</div><small class="destination-output" title="${escapeHtml(makeOutputPath(source))}">${metadataOnly ? 'The original file will be replaced after a verified stream-copy update.' : passthrough ? 'Source audio is retained; enabled normalization runs in place.' : `Output: ${escapeHtml(outputFileName)}`}</small></div><div class="decoder-status" title="Decoder selected for this source">${icon('video', 15)}<span>${escapeHtml(decoderStatus(source, settings))}</span></div><button class="encode-button ${metadataOnly ? 'metadata-update-button' : ''}" id="start-encode"${encodingActive || metadataOnly && metadataEditCount === 0 ? ' disabled' : ''}>${icon(metadataOnly ? 'check' : 'play', 17)} ${metadataOnly ? metadataEditCount ? `Update metadata (${metadataEditCount})` : 'No metadata changes' : `${passthrough ? 'Process' : 'Encode'} ${sources.length} ${workflowLabel}${sources.length === 1 ? '' : ' files'}`}</button></footer></main>`;
   bindWorkspaceEvents();
+  const workArea = document.querySelector<HTMLElement>('.work-area');
+  if (workArea) workArea.scrollTop = previousScrollTop;
 };
 
 const renderTabContent = (tab: string, source: SourceFile, settings: JobSettings) => {
@@ -1605,10 +1661,39 @@ const renderMetadataEditor = (
   enabled: boolean,
 ) => `<div class="stream-metadata-editor ${enabled ? '' : 'disabled'}"><label>Language<select data-metadata-language data-stream-kind="${kind}" data-stream-index="${index}"${enabled ? '' : ' disabled'}>${mediaLanguageOptions(metadata.language).map(([code, label]) => `<option value="${code}"${selected(code === metadata.language)}>${escapeHtml(label)} (${code})</option>`).join('')}</select></label>${renderDispositionControls(kind, index, metadata.flags, !enabled, false, true)}</div>`;
 
-const renderNvencFeaturePanel = (source: SourceFile, settings: JobSettings) => {
-  if (!settings.encoder.endsWith('_nvenc')) return '';
-  const features = nvencFeatureStatuses(source, settings);
-  return `<section class="settings-card nvenc-feature-panel"><div class="card-title"><div><span>NVENC PARAMETERS</span><h3>Active encoder features</h3></div><span class="read-only-badge">READ ONLY</span></div><p>These values reflect flags included in the generated FFmpeg command and are not editable filters.</p><div class="nvenc-feature-grid">${features.map((feature) => `<div class="nvenc-feature ${feature.active ? 'active' : 'inactive'}"><div><strong>${escapeHtml(feature.label)}</strong><small>${escapeHtml(feature.detail)}</small></div><span>${feature.active ? 'Active' : 'Inactive'}</span></div>`).join('')}</div></section>`;
+const renderAdvancedToggle = (
+  field: AdvancedVideoField,
+  title: string,
+  help: string,
+  value: boolean,
+) => `<label class="toggle-row advanced-toggle"><span><strong>${title}</strong><small>${help}</small></span><input type="checkbox" data-advanced-toggle="${field}"${checked(value)}/><i></i></label>`;
+
+const renderAdvancedRange = (
+  field: 'rcLookahead' | 'spatialAq',
+  title: string,
+  help: string,
+  value: number,
+  maximum: number,
+) => `<label class="advanced-range"><span><strong>${title}</strong><small>${help}</small></span><span class="advanced-range-inputs"><input type="range" min="0" max="${maximum}" value="${value}" data-advanced-range="${field}"/><input type="number" min="0" max="${maximum}" value="${value}" data-advanced-number="${field}" aria-label="${title}"/></span></label>`;
+
+const renderAdvancedVideoPanel = (settings: JobSettings) => {
+  const supported = new Set(supportedAdvancedVideoFields(settings.encoder));
+  if (!supported.size) return '';
+  const advanced = settings.advancedVideo;
+  const controls: string[] = [];
+  if (supported.has('bFrames')) controls.push(renderAdvancedToggle('bFrames', 'B-frames', 'Use four B-frames; disabling sets the count to zero.', advanced.bFrames));
+  if (supported.has('multipass')) controls.push(`<label class="advanced-select"><span><strong>Multipass</strong><small>Choose the encoder analysis pass.</small></span><select data-advanced-select="multipass"><option value="0"${selected(advanced.multipass === 0)}>None</option><option value="1"${selected(advanced.multipass === 1)}>Quarter resolution</option><option value="2"${selected(advanced.multipass === 2)}>Full resolution</option></select></label>`);
+  if (supported.has('bRefMode')) {
+    const eachAvailable = settings.encoder.endsWith('_nvenc') || settings.encoder === 'libx264';
+    controls.push(`<label class="advanced-select"><span><strong>B-frame references</strong><small>Reference structure supported by this encoder.</small></span><select data-advanced-select="bRefMode"><option value="disabled"${selected(advanced.bRefMode === 'disabled')}>Disabled</option>${eachAvailable ? `<option value="each"${selected(advanced.bRefMode === 'each')}>Each</option>` : ''}<option value="middle"${selected(advanced.bRefMode !== 'disabled' && (!eachAvailable || advanced.bRefMode === 'middle'))}>Middle</option></select></label>`);
+  }
+  if (supported.has('adaptiveBFrames')) controls.push(renderAdvancedToggle('adaptiveBFrames', 'Adaptive B-frames', 'Allow adaptive B-frame placement.', advanced.adaptiveBFrames));
+  if (supported.has('sceneCutDetection')) controls.push(renderAdvancedToggle('sceneCutDetection', 'Scene-cut detection', 'Allow automatic I-frames at scene changes.', advanced.sceneCutDetection));
+  if (supported.has('rcLookahead')) controls.push(renderAdvancedRange('rcLookahead', 'RC lookahead', '0 disables lookahead; maximum 42 frames.', advanced.rcLookahead, 42));
+  if (supported.has('nonReferenceP')) controls.push(renderAdvancedToggle('nonReferenceP', 'Non-reference P', 'Allow automatic non-reference P-frames.', advanced.nonReferenceP));
+  if (supported.has('spatialAq')) controls.push(renderAdvancedRange('spatialAq', 'Spatial AQ', '0 disables spatial AQ; maximum strength 15.', advanced.spatialAq, 15));
+  if (supported.has('temporalAq')) controls.push(renderAdvancedToggle('temporalAq', 'Temporal AQ', 'Enable temporal adaptive quantization.', advanced.temporalAq));
+  return `<section class="settings-card advanced-video-panel"><div class="card-title"><div><span>ADVANCED ENCODER SETTINGS</span><h3>${escapeHtml(settings.encoder)}</h3></div><span class="quality-badge">EDITABLE</span></div><p>Only options supported by the selected encoder are shown. Preset defaults come from presets.ini.</p><div class="advanced-video-grid">${controls.join('')}</div></section>`;
 };
 
 const renderVideoSettings = (source: SourceFile, settings: JobSettings) => {
@@ -1619,18 +1704,23 @@ const renderVideoSettings = (source: SourceFile, settings: JobSettings) => {
   const mode = qualityLabel(settings.encoder);
   const metadataOnly = isMetadataOnly(settings);
   const processing = settings.processing.video;
+  const speedSupported = supportsEncoderSpeed(settings.encoder);
+  const tuneOptions = encoderTuneOptions(settings.encoder);
+  const encoderControls = speedSupported || tuneOptions.length
+    ? `<div class="encoder-controls">${speedSupported ? `<div class="quality-control encoder-speed-control"><div><label for="encoder-speed">Encoding speed</label><span>Encoder-specific mapping: ${escapeHtml(encoderSpeedLabel(settings.encoder, settings.encoderSpeed))}</span></div><output id="encoder-speed-value">P${settings.encoderSpeed} Â· ${escapeHtml(encoderSpeedLabel(settings.encoder, settings.encoderSpeed))}</output><input id="encoder-speed" type="range" min="1" max="7" step="1" value="${settings.encoderSpeed}"/><div class="range-labels"><span>P1 Fast</span><span>P7 Ultra slow</span></div></div>` : ''}${tuneOptions.length ? `<label class="encoder-tune-control">Tune<select id="encoder-tune">${tuneOptions.map((option) => `<option value="${option.value}"${selected(option.value === settings.encoderTune)}>${escapeHtml(option.label)}</option>`).join('')}</select><small class="field-help">Options are limited to the selected encoder.</small></label>` : ''}</div>`
+    : '';
   const formatTip = delivery ? '<span class="field-tooltip" title="MP4 is recommended for direct web playback and avoids a later remux.">i</span>' : '';
   return `<div class="settings-layout video-settings-layout">${renderProcessingToggle('video', processing, 'Encode video streams')}<fieldset class="settings-card processing-fieldset ${processing ? '' : 'processing-disabled'}"${processing ? '' : ' disabled'}><div class="card-title"><div><span>OUTPUT SETTINGS</span><h3>Container & dimensions</h3></div><span class="quality-badge">${escapeHtml(settings.preset.toUpperCase())}</span></div>
     <div class="form-grid"><label><span class="label-row">Format ${formatTip}</span><select id="format"><option value="mp4"${selected(settings.format === 'mp4')}>MP4</option><option value="mkv"${selected(settings.format === 'mkv')}>MKV</option><option value="webm"${selected(settings.format === 'webm')}>WebM</option></select>${delivery ? '<small class="field-help">MP4 recommended for direct web playback; other formats may require remuxing.</small>' : ''}</label>
     <label>Scale<select disabled><option>${settings.filters.scale === 'disabled' ? 'Disabled' : settings.filters.scale === 'auto' ? 'Auto Scale' : settings.filters.scale}</option></select><small class="field-help">Configure scaling in the Filters tab.</small></label>
     <label>Video encoder<select id="encoder"${appSettings.hardwareAcceleration && hardwareCapabilities.encoders.length ? '' : ' disabled'}>${encoderOptions(settings)}</select><small class="field-help">${!appSettings.hardwareAcceleration ? 'CPU software encode and decode are active.' : hardwareCapabilities.encoders.length ? `${hardwareCapabilities.adapters.join(', ') || 'Hardware'} · ${hardwareAccelerationSummary()}` : 'No hardware encoder passed the device test.'}</small></label>
-    <label>Source duration<select disabled><option>${formatDuration(source.media?.duration ?? null)}</option></select></label></div>
+    <label>Source duration<select disabled><option>${formatDuration(source.media?.duration ?? null)}</option></select></label></div>${encoderControls}
     <div class="quality-control"><div><label for="quality">Constant quality</label><span>Lower values produce higher quality</span></div><output id="quality-value">${mode} ${settings.quality}</output><input id="quality" type="range" min="12" max="38" value="${settings.quality}"/><div class="range-labels"><span>Higher quality</span><span>Smaller file</span></div></div>
     <div class="video-bitrate-control ${archive ? 'disabled' : ''}"><div class="bitrate-heading"><div><strong>Bitrate control</strong><small>${archive ? 'Archive preset active — CQ/RF only.' : 'Bitrate 0 uses variable bitrate with a quality target.'}</small></div></div><div class="form-grid three-fields">
       <label>Bitrate (kbps)<input type="number" min="0" step="100" data-video-rate="videoBitrate" value="${settings.videoBitrate}"${archive ? ' disabled' : ''}/><small class="field-help">0 = VBR</small></label>
       <label>Max Rate (kbps)<input type="number" min="0" step="100" data-video-rate="maxRate" value="${settings.maxRate}"${archive ? ' disabled' : ''}/></label>
       <label>Buffer size (kbps)<input type="number" min="0" step="100" data-video-rate="bufferSize" value="${settings.bufferSize}"${bufferEditable ? '' : ' disabled'}/><small class="field-help">${archive ? 'Disabled for Archive' : bufferEditable ? 'Editable for Regular and Custom presets' : `${settings.bufferMultiplier}× Max Rate, calculated automatically`}</small></label>
-    </div></div></fieldset><section class="settings-card metadata-card"><div class="card-title"><div><span>VIDEO METADATA</span><h3>Language and dispositions</h3></div><span class="read-only-badge">${metadataOnly ? 'EDITING' : 'METADATA MODE ONLY'}</span></div>${renderMetadataEditor('video', 0, settings.videoMetadata, metadataOnly)}</section><div class="${processing ? '' : 'processing-disabled'}">${renderNvencFeaturePanel(source, settings)}</div>
+    </div></div></fieldset><section class="settings-card metadata-card"><div class="card-title"><div><span>VIDEO METADATA</span><h3>Language and dispositions</h3></div><span class="read-only-badge">${metadataOnly ? 'EDITING' : 'METADATA MODE ONLY'}</span></div>${renderMetadataEditor('video', 0, settings.videoMetadata, metadataOnly)}</section><div class="${processing ? '' : 'processing-disabled'}">${renderAdvancedVideoPanel(settings)}</div>
     <section class="command-card"><div class="command-heading"><div><span>COMMAND PREVIEW</span><strong>Metadata cleaned</strong></div><button id="copy-command">${icon('copy', 15)} Copy command</button></div><code id="command-preview">${escapeHtml(getCommand())}</code></section></div>`;
 };
 
@@ -1758,6 +1848,47 @@ const bindContentEvents = () => {
     renderWorkspace();
   }));
   document.querySelector<HTMLInputElement>('#quality')?.addEventListener('input', (event) => { settings.quality = (event.currentTarget as HTMLInputElement).value; markCustom(settings); updateCommand(); });
+  document.querySelector<HTMLInputElement>('#encoder-speed')?.addEventListener('input', (event) => {
+    settings.encoderSpeed = normalizeEncoderSpeed(Number((event.currentTarget as HTMLInputElement).value));
+    const value = document.querySelector<HTMLOutputElement>('#encoder-speed-value');
+    if (value) value.textContent = `P${settings.encoderSpeed} Â· ${encoderSpeedLabel(settings.encoder, settings.encoderSpeed)}`;
+    markCustom(settings);
+    updateCommand();
+  });
+  document.querySelector<HTMLSelectElement>('#encoder-tune')?.addEventListener('input', (event) => {
+    settings.encoderTune = normalizeEncoderTune(settings.encoder, (event.currentTarget as HTMLSelectElement).value);
+    markCustom(settings);
+    updateCommand();
+  });
+  document.querySelectorAll<HTMLInputElement>('[data-advanced-toggle]').forEach((control) => control.addEventListener('change', () => {
+    const field = control.dataset.advancedToggle as keyof Pick<AdvancedVideoSettings, 'bFrames' | 'adaptiveBFrames' | 'sceneCutDetection' | 'nonReferenceP' | 'temporalAq'>;
+    settings.advancedVideo[field] = control.checked;
+    markCustom(settings);
+    updateCommand();
+  }));
+  document.querySelectorAll<HTMLSelectElement>('[data-advanced-select]').forEach((control) => control.addEventListener('input', () => {
+    if (control.dataset.advancedSelect === 'multipass') {
+      settings.advancedVideo.multipass = Number(control.value) as AdvancedVideoSettings['multipass'];
+    } else {
+      settings.advancedVideo.bRefMode = control.value as AdvancedVideoSettings['bRefMode'];
+    }
+    markCustom(settings);
+    updateCommand();
+  }));
+  const updateAdvancedNumber = (control: HTMLInputElement) => {
+    const field = (control.dataset.advancedRange ?? control.dataset.advancedNumber) as 'rcLookahead' | 'spatialAq';
+    const maximum = field === 'rcLookahead' ? 42 : 15;
+    const value = Math.min(maximum, Math.max(0, Math.round(Number(control.value) || 0)));
+    settings.advancedVideo[field] = value;
+    document.querySelectorAll<HTMLInputElement>(`[data-advanced-range="${field}"], [data-advanced-number="${field}"]`)
+      .forEach((peer) => { if (peer !== control) peer.value = String(value); });
+    markCustom(settings);
+    updateCommand();
+  };
+  document.querySelectorAll<HTMLInputElement>('[data-advanced-range], [data-advanced-number]').forEach((control) => {
+    control.addEventListener('input', () => updateAdvancedNumber(control));
+    control.addEventListener('change', () => { control.value = String(settings.advancedVideo[(control.dataset.advancedRange ?? control.dataset.advancedNumber) as 'rcLookahead' | 'spatialAq']); });
+  });
   const updateVideoRate = (control: HTMLInputElement) => {
     const field = control.dataset.videoRate as 'videoBitrate' | 'maxRate' | 'bufferSize';
     settings[field] = String(Math.max(0, Number(control.value) || 0));
@@ -1789,7 +1920,12 @@ const bindContentEvents = () => {
       }
       markCustom(settings);
       renderWorkspace();
-    } else { settings[field] = value; markCustom(settings); renderWorkspace(); }
+    } else {
+      settings[field] = value;
+      settings.encoderTune = normalizeEncoderTune(value, settings.encoderTune);
+      markCustom(settings);
+      renderWorkspace();
+    }
   }));
   document.querySelector('#copy-command')?.addEventListener('click', async () => { await navigator.clipboard.writeText(getCommand()); showToast('FFmpeg command copied'); });
   document.querySelectorAll<HTMLSelectElement>('[data-audio-codec]').forEach((control) => control.addEventListener('change', () => {
@@ -1915,11 +2051,17 @@ const bindContentEvents = () => {
     renderWorkspace();
   });
 };
-const saveCurrentPreset = (source: SourceFile) => {
+const saveCurrentPreset = async (source: SourceFile) => {
   const settings = getSettings(source);
-  const requested = window.prompt('Name this preset', settings.preset === 'Custom' ? 'My Preset' : settings.preset);
-  const name = requested?.trim();
-  if (!name) return;
+  const name = document.querySelector<HTMLInputElement>('#custom-preset-name')?.value.trim() ?? '';
+  if (!name) {
+    showToast('Enter a name for the custom preset');
+    return;
+  }
+  if (!isValidCustomPresetName(name)) {
+    showToast('Preset names cannot contain ], carriage returns, or line breaks');
+    return;
+  }
   if ([...BUILT_IN_PRESET_NAMES, ...AUDIO_PRESET_NAMES, 'Music Video', 'Custom'].includes(name as BuiltInPresetName | AudioPresetName | 'Music Video' | 'Custom')) {
     showToast('Choose a name different from the built-in presets');
     return;
@@ -1928,9 +2070,15 @@ const saveCurrentPreset = (source: SourceFile) => {
   appSettings.customPresets = [...appSettings.customPresets.filter((item) => item.name !== name), preset];
   appSettings.lastPreset = name;
   for (const item of sources) getSettings(item).preset = name;
-  void persistAppSettings();
-  showToast(`Saved preset: ${name}`);
-  renderWorkspace();
+  customPresetDraftName = '';
+  try {
+    await window.mediaAPI.saveCustomPresets(appSettings.customPresets);
+    await window.mediaAPI.saveSettings(appSettings);
+    showToast(`Saved preset: ${name}`);
+    renderWorkspace();
+  } catch (error) {
+    showToast(error instanceof Error ? error.message : 'Unable to save custom_preset.ini');
+  }
 };
 const bindWorkspaceEvents = () => {
   const source = sources[selectedIndex];
@@ -1943,7 +2091,10 @@ const bindWorkspaceEvents = () => {
     void persistAppSettings();
     renderWorkspace();
   });
-  document.querySelector('#save-preset')?.addEventListener('click', () => saveCurrentPreset(source));
+  document.querySelector<HTMLInputElement>('#custom-preset-name')?.addEventListener('input', (event) => {
+    customPresetDraftName = (event.currentTarget as HTMLInputElement).value;
+  });
+  document.querySelector('#save-preset')?.addEventListener('click', () => void saveCurrentPreset(source));
   document.querySelectorAll<HTMLElement>('[data-source-index]').forEach((row) => row.addEventListener('click', () => {
     selectedIndex = Number(row.dataset.sourceIndex);
     if (!outputDirectoryIsCustom) outputDirectory = makeDefaultOutputDirectory(sources[selectedIndex]);
@@ -2002,7 +2153,9 @@ const startApplication = async () => {
   const removeProgressListener = window.mediaAPI.onRuntimeProgress((state) => { runtimeState = state; renderBootstrap(state); });
   try {
     await window.mediaAPI.initializeAppUpdate();
+    builtInPresets = await window.mediaAPI.loadBuiltInPresets();
     try { appSettings = await window.mediaAPI.loadSettings(); } catch { /* defaults remain active */ }
+    appSettings.customPresets = await window.mediaAPI.loadCustomPresets();
     runtimeState = await window.mediaAPI.initializeRuntime(appSettings.useStableFfmpeg); renderBootstrap(runtimeState);
     if (runtimeState.ffmpegAvailable && appSettings.hardwareAcceleration) {
       renderBootstrap({ ...runtimeState, message: 'Testing GPU encoding capabilities', progress: null });
@@ -2010,9 +2163,10 @@ const startApplication = async () => {
     }
     await new Promise((resolve) => window.setTimeout(resolve, runtimeState?.phase === 'error' ? 900 : 350));
   } catch (error) {
-    runtimeState = { phase: 'error', message: error instanceof Error ? error.message : 'Unable to initialize FFmpeg', progress: null, appVersion: '1.2.1', isPackaged: false, updateEnabled: false, ffmpegAvailable: false, ffmpegPath: '', ffprobePath: '', ffmpegVersion: null, releaseTag: null, ffmpegChannel: appSettings.useStableFfmpeg ? 'stable' : 'unstable', rsgainAvailable: false, rsgainPath: '', rsgainVersion: null, ccextractorAvailable: false, ccextractorPath: '', ccextractorVersion: null };
+    runtimeState = { phase: 'error', message: error instanceof Error ? error.message : 'Unable to initialize FFmpeg', progress: null, appVersion: '2.0.0', isPackaged: false, updateEnabled: false, ffmpegAvailable: false, ffmpegPath: '', ffprobePath: '', ffmpegVersion: null, releaseTag: null, ffmpegChannel: appSettings.useStableFfmpeg ? 'stable' : 'unstable', rsgainAvailable: false, rsgainPath: '', rsgainVersion: null, ccextractorAvailable: false, ccextractorPath: '', ccextractorVersion: null };
     renderBootstrap(runtimeState); await new Promise((resolve) => window.setTimeout(resolve, 900));
   } finally { removeProgressListener(); }
+  if (!builtInPresets) return;
   renderWelcome();
 };
 

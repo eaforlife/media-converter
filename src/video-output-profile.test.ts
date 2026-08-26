@@ -4,17 +4,16 @@ import {
   bufferSizeFor,
   deliveryQualityForOutput,
   deliveryPresetForOutput,
-  nvencPresetForName,
   scaleDimensionsFor,
   videoOutputProfile,
 } from './video-output-profile.ts';
 
 test('auto scaling classifies each source into the strict output tiers', () => {
   const cases = [
-    { height: 2160, tier: '4k', scale: ['2720', '-2'], maxRate: 9500, multipass: false },
-    { height: 1080, tier: '1080p', scale: ['1760', '-2'], maxRate: 7000, multipass: true },
-    { height: 720, tier: '720p', scale: ['1320', '-2'], maxRate: 2500, multipass: true },
-    { height: 360, tier: '360p', scale: ['720', '-2'], maxRate: 2500, multipass: true },
+    { height: 2160, tier: '4k', scale: ['2720', '-2'], maxRate: 9500 },
+    { height: 1080, tier: '1080p', scale: ['1760', '-2'], maxRate: 7000 },
+    { height: 720, tier: '720p', scale: ['1320', '-2'], maxRate: 2500 },
+    { height: 360, tier: '360p', scale: ['720', '-2'], maxRate: 2500 },
   ] as const;
 
   for (const expected of cases) {
@@ -22,7 +21,6 @@ test('auto scaling classifies each source into the strict output tiers', () => {
     equal(profile.tier, expected.tier);
     deepStrictEqual(profile.scale, expected.scale);
     equal(profile.maxRate, expected.maxRate);
-    equal(profile.nvencMultipass, expected.multipass);
   }
 });
 
@@ -33,7 +31,6 @@ test('explicit scaling uses the selected output profile instead of the source ti
   deepStrictEqual(scaleDimensionsFor(sourceHeight, '360p'), ['720', '-2']);
   equal(videoOutputProfile(sourceHeight, '1080p').maxRate, 7000);
   equal(videoOutputProfile(sourceHeight, '720p').maxRate, 2500);
-  equal(videoOutputProfile(sourceHeight, '1080p').nvencMultipass, true);
 });
 
 test('streaming uses CQ 27 for 1080p source and scaled output profiles', () => {
@@ -41,12 +38,6 @@ test('streaming uses CQ 27 for 1080p source and scaled output profiles', () => {
   equal(deliveryQualityForOutput('Streaming', videoOutputProfile(2160, '1080p').tier, '29'), '27');
   equal(deliveryQualityForOutput('Streaming', videoOutputProfile(2160, 'auto').tier, '29'), '29');
   equal(deliveryQualityForOutput('Archive', videoOutputProfile(1080, 'auto').tier, '18'), '18');
-});
-
-test('music video always uses the NVENC p4 preset', () => {
-  equal(nvencPresetForName('Music Video'), 'p4');
-  equal(nvencPresetForName('Streaming'), 'p2');
-  equal(nvencPresetForName('Archive'), 'p6');
 });
 
 test('cellular and 360p resolve to the same output and delivery profiles', () => {

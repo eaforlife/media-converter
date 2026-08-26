@@ -17,6 +17,8 @@ import { probeMedia } from './media-probe';
 import { classifyMediaWorkflow } from './media-workflow';
 import { initializeRuntime, selectRuntimeChannel } from './runtime-manager';
 import { loadSettings, readConfig, saveSettings } from './settings-store';
+import { loadBuiltInPresets, presetFilePath, readPresetFile } from './preset-store';
+import { customPresetFilePath, loadCustomPresets, readCustomPresetFile, saveCustomPresets } from './custom-preset-store';
 import type { AppSettings, EncodeJob, HardwareCapabilities, RuntimeState, SourceFile } from './shared-types';
 
 const runSquirrel = (args: string[]) => {
@@ -449,6 +451,18 @@ const registerIpc = () => {
 
   ipcMain.handle('settings:load', () => loadSettings());
   ipcMain.handle('settings:save', (_event, settings: AppSettings) => saveSettings(settings));
+  ipcMain.handle('presets:load', () => loadBuiltInPresets());
+  ipcMain.handle('presets:read', () => readPresetFile());
+  ipcMain.handle('presets:show', () => shell.showItemInFolder(presetFilePath()));
+  ipcMain.handle('custom-presets:load', () => loadCustomPresets());
+  ipcMain.handle('custom-presets:save', (_event, presets) => saveCustomPresets(presets));
+  ipcMain.handle('custom-presets:read', () => readCustomPresetFile());
+  ipcMain.handle('custom-presets:show', () => {
+    const destination = customPresetFilePath();
+    if (!fs.existsSync(destination)) return false;
+    shell.showItemInFolder(destination);
+    return true;
+  });
   ipcMain.handle('source:release-previews', (_event, ids: string[]) => releasePreviews(ids));
   ipcMain.handle('hardware:detect', () => {
     const ffmpegPath = activeFfmpeg();

@@ -7,10 +7,13 @@ import { VitePlugin } from '@electron-forge/plugin-vite';
 import { FusesPlugin } from '@electron-forge/plugin-fuses';
 import { PublisherGithub } from '@electron-forge/publisher-github';
 import { FuseV1Options, FuseVersion } from '@electron/fuses';
+import path from 'node:path';
+import fs from 'node:fs';
 
 const certificateFile = process.env.WINDOWS_CERTIFICATE_FILE;
 const certificatePassword = process.env.WINDOWS_CERTIFICATE_PASSWORD;
 const releaseArch = process.env.EA_RELEASE_ARCH;
+const appVersion = JSON.parse(fs.readFileSync(path.resolve('package.json'), 'utf8')).version as string;
 const windowsSign = certificateFile && certificatePassword
   ? { certificateFile, certificatePassword }
   : undefined;
@@ -19,6 +22,7 @@ const config: ForgeConfig = {
   packagerConfig: {
     asar: true,
     executableName: 'ea-media-tools',
+    extraResource: [path.resolve('presets.ini')],
     windowsSign,
   },
   rebuildConfig: {},
@@ -37,8 +41,8 @@ const config: ForgeConfig = {
     new MakerSquirrel({
       name: releaseArch ? `ea_media_tools_${releaseArch}` : 'ea_media_tools',
       setupExe: releaseArch
-        ? `EA-Media-Tools-${releaseArch}-Setup.exe`
-        : 'EA-Media-Tools-Setup.exe',
+        ? `EA-Media-Tools-${appVersion}-${releaseArch}-Setup.exe`
+        : `EA-Media-Tools-${appVersion}-Setup.exe`,
       noMsi: true,
       windowsSign,
     }),

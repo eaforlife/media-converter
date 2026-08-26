@@ -22,9 +22,28 @@ export const detectedCrop = (
 };
 
 export const cuvidCrop = (crop: DetectedCrop, sourceWidth: number, sourceHeight: number) => {
-  const top = Math.floor(crop.y / 2);
-  const bottom = Math.floor((sourceHeight - crop.height - crop.y) / 2);
-  const left = Math.floor(crop.x / 2);
-  const right = Math.floor((sourceWidth - crop.width - crop.x) / 2);
+  const top = crop.y;
+  const bottom = sourceHeight - crop.height - crop.y;
+  const left = crop.x;
+  const right = sourceWidth - crop.width - crop.x;
   return top || bottom || left || right ? `${top}x${bottom}x${left}x${right}` : null;
+};
+
+export const qsvCropOptions = (crop: DetectedCrop) => [
+  `cw=${crop.width}`, `ch=${crop.height}`, `cx=${crop.x}`, `cy=${crop.y}`,
+];
+
+export const aspectPreservingDimensions = (
+  target: readonly [string, string],
+  sourceWidth: number,
+  sourceHeight: number,
+  crop?: DetectedCrop | null,
+): [string, string] => {
+  if (target[1] !== '-2') return [target[0], target[1]];
+  const width = Number(target[0]);
+  const aspectWidth = crop?.width ?? sourceWidth;
+  const aspectHeight = crop?.height ?? sourceHeight;
+  if (!Number.isFinite(width) || width <= 0 || aspectWidth <= 0 || aspectHeight <= 0) return [target[0], '-2'];
+  const height = Math.max(2, Math.round((width * aspectHeight / aspectWidth) / 2) * 2);
+  return [String(width), String(height)];
 };

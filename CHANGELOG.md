@@ -4,6 +4,23 @@ All notable changes to EA Media Tools are documented here.
 
 ## [Unreleased]
 
+## [2.0.0] - 2026-08-26
+
+### Added
+
+- Add encoder-aware P1–P7 speed controls and tune choices that map to native NVENC, QSV, AMF, VideoToolbox, x264, x265, and SVT-AV1 options where supported.
+- Add encoder-specific B-frame, multipass, B-frame reference, adaptive B-frame, scene-cut, RC-lookahead, non-reference P-frame, spatial AQ, and temporal AQ controls.
+- Show the selected software or hardware decoder path in the workspace status footer.
+- Add editable built-in `presets.ini` and a separate per-user `custom_preset.ini` for named custom presets.
+
+### Changed
+
+- Use integer `0` and `1` for configuration booleans and keep configuration files free of comments.
+- Update the Streaming video preset to use Opus at 96 kbit/s for stereo and 128 kbit/s for a surround downmix.
+- Apply native auto-crop paths for CUDA/CUVID and QSV, with aspect-preserving software crop and hardware upload for AMF, VA-API, VideoToolbox, and CPU encoding.
+- Refresh command previews immediately while controls are edited and retain the workspace scroll position across rendered changes.
+- Include version 2.0.0 in Windows installer filenames.
+
 ## [1.2.1] - 2026-08-25
 
 ### Changed
@@ -160,6 +177,7 @@ All notable changes to EA Media Tools are documented here.
 - Convert crop offsets to CUVID edge values with division by two and floor rounding.
 - Cancel all active parallel encodes and interrupt pending cooldowns when the queue is stopped or a job fails.
 
+[2.0.0]: https://github.com/eaforlife/media-converter/compare/v1.2.1...v2.0.0
 [1.2.1]: https://github.com/eaforlife/media-converter/compare/v1.2.0...v1.2.1
 [1.2.0]: https://github.com/eaforlife/media-converter/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/eaforlife/media-converter/compare/v1.0.0...v1.1.0

@@ -6,14 +6,13 @@ export type VideoOutputProfile = {
   tier: OutputTier;
   scale: readonly [string, string];
   maxRate: number;
-  nvencMultipass: boolean;
 };
 
 export const VIDEO_OUTPUT_PROFILES: Readonly<Record<OutputTier, VideoOutputProfile>> = Object.freeze({
-  '4k': Object.freeze({ tier: '4k', scale: ['2720', '-2'] as const, maxRate: 9500, nvencMultipass: false }),
-  '1080p': Object.freeze({ tier: '1080p', scale: ['1760', '-2'] as const, maxRate: 7000, nvencMultipass: true }),
-  '720p': Object.freeze({ tier: '720p', scale: ['1320', '-2'] as const, maxRate: 2500, nvencMultipass: true }),
-  '360p': Object.freeze({ tier: '360p', scale: ['720', '-2'] as const, maxRate: 2500, nvencMultipass: true }),
+  '4k': Object.freeze({ tier: '4k', scale: ['2720', '-2'] as const, maxRate: 9500 }),
+  '1080p': Object.freeze({ tier: '1080p', scale: ['1760', '-2'] as const, maxRate: 7000 }),
+  '720p': Object.freeze({ tier: '720p', scale: ['1320', '-2'] as const, maxRate: 2500 }),
+  '360p': Object.freeze({ tier: '360p', scale: ['720', '-2'] as const, maxRate: 2500 }),
 });
 
 export const sourceOutputTier = (height: number): OutputTier => {
@@ -45,9 +44,6 @@ export const deliveryPresetForOutput = (preset: string, tier: OutputTier) =>
 
 export const deliveryQualityForOutput = (preset: string, tier: OutputTier, fallback: string) =>
   preset === 'Streaming' && tier === '1080p' ? '27' : fallback;
-
-export const nvencPresetForName = (preset: string) =>
-  preset === 'Archive' ? 'p6' : preset === 'Regular' || preset === 'Music Video' ? 'p4' : 'p2';
 
 export const bufferSizeFor = (maxRate: number, multiplier: number) =>
   Math.max(0, maxRate) * Math.max(0, multiplier);
