@@ -21,31 +21,6 @@ export const detectedCrop = (
   return { width, height, x, y, filter: `${width}:${height}:${x}:${y}` };
 };
 
-export const cuvidCrop = (crop: DetectedCrop, sourceWidth: number, sourceHeight: number) => {
-  const top = crop.y;
-  const bottom = sourceHeight - crop.height - crop.y;
-  const left = crop.x;
-  const right = sourceWidth - crop.width - crop.x;
-  return top || bottom || left || right ? `${top}x${bottom}x${left}x${right}` : null;
-};
-
-export const cuvidDecoderArguments = (
-  decoder: string,
-  streamIndex: number,
-  crop: DetectedCrop | null,
-  sourceWidth: number,
-  sourceHeight: number,
-) => {
-  const args = [`-c:${streamIndex}`, decoder];
-  const decoderCrop = crop ? cuvidCrop(crop, sourceWidth, sourceHeight) : null;
-  if (decoderCrop) args.push('-crop', decoderCrop);
-  return args;
-};
-
-export const qsvCropOptions = (crop: DetectedCrop) => [
-  `cw=${crop.width}`, `ch=${crop.height}`, `cx=${crop.x}`, `cy=${crop.y}`,
-];
-
 export const aspectPreservingDimensions = (
   target: readonly [string, string],
   sourceWidth: number,

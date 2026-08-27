@@ -4,6 +4,21 @@ All notable changes to EA Media Tools are documented here.
 
 ## [Unreleased]
 
+## [2.3.0] - 2026-08-27
+
+### Added
+
+- Add protected 64-frame hardware decode and upload pools for NVIDIA NVDEC, AMD AMF, Intel QSV, Apple VideoToolbox, and VA-API paths where applicable.
+- Retry a failed hardware-decoded encode once with software decoding and the originally selected encoder, and stop adaptive concurrency from expanding after a fallback.
+- Fail video jobs on any logged decode-frame failure, empty output stream, or zero-byte staged output before the result can replace the destination.
+
+### Changed
+
+- Use generic NVIDIA NVDEC instead of selecting codec-specific CUVID decoders.
+- Apply detected crops through the common `-filter:v:0` graph with software decoding, then calculate an even scaled height from the cropped dimensions so every encoder retains the cropped aspect ratio.
+- Restore FFmpeg's protected hardware-frame ownership by removing unsafe direct decoder output and add a CUDA copy stage when no other CUDA video filter allocates a separate frame pool.
+- Keep Streaming CQ tiers, target bitrate, maximum bitrate, and the 2x buffer rule unchanged: NVENC remains CQ 29 for 4K and 720p, CQ 28 for 1080p, and CQ 32 for Cellular.
+
 ## [2.2.1] - 2026-08-27
 
 ### Added
@@ -224,6 +239,7 @@ All notable changes to EA Media Tools are documented here.
 - Convert crop offsets to CUVID edge values with division by two and floor rounding.
 - Cancel all active parallel encodes and interrupt pending cooldowns when the queue is stopped or a job fails.
 
+[2.3.0]: https://github.com/eaforlife/media-converter/compare/v2.2.1...v2.3.0
 [2.2.1]: https://github.com/eaforlife/media-converter/compare/v2.2.0...v2.2.1
 [2.2.0]: https://github.com/eaforlife/media-converter/compare/v2.1.0...v2.2.0
 [2.1.0]: https://github.com/eaforlife/media-converter/compare/v2.0.1...v2.1.0

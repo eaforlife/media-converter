@@ -1,7 +1,7 @@
 {
   "name": "ea-media-tools",
   "productName": "EA Media Tools",
-  "version": "2.2.1",
+  "version": "2.3.0",
   "codename": "jaguar",
   "description": "A sleek desktop FFmpeg command builder and media transcoder.",
   "repository": {
@@ -22,7 +22,7 @@
     "lint": "eslint \"**/*.{ts,mts}\"",
     "typecheck": "tsc --noEmit",
     "typecheck:compat": "tsc6 --noEmit",
-    "test": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test src/video-output-profile.test.ts src/video-crop.test.ts src/presets.test.ts src/preset-sync.test.ts src/advanced-video-settings.test.ts src/encoder-controls.test.ts src/custom-presets.test.ts src/output-naming.test.ts src/audio-workflow.test.ts src/media-workflow.test.ts src/app-update.test.ts src/closed-caption.test.ts src/install-cleanup.test.ts src/encode-progress-state.test.ts src/encode-concurrency.test.ts src/ffmpeg-command-display.test.ts src/metadata-edit.test.ts src/metadata-replacement.test.ts",
+    "test": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test src/video-output-profile.test.ts src/video-crop.test.ts src/video-safety.test.ts src/presets.test.ts src/preset-sync.test.ts src/advanced-video-settings.test.ts src/encoder-controls.test.ts src/custom-presets.test.ts src/output-naming.test.ts src/audio-workflow.test.ts src/media-workflow.test.ts src/app-update.test.ts src/closed-caption.test.ts src/install-cleanup.test.ts src/encode-progress-state.test.ts src/encode-concurrency.test.ts src/ffmpeg-command-display.test.ts src/metadata-edit.test.ts src/metadata-replacement.test.ts",
     "check": "npm run lint && npm run typecheck && npm test",
     "version:patch": "npm version patch --no-git-tag-version",
     "version:minor": "npm version minor --no-git-tag-version",

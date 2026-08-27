@@ -13,7 +13,10 @@ import {
 } from './encoder-controls';
 import type { EncoderSpeed } from './encoder-controls';
 import { isValidCustomPresetName } from './custom-presets';
-import { aspectPreservingDimensions, cuvidDecoderArguments, detectedCrop, qsvCropOptions } from './video-crop';
+import { aspectPreservingDimensions, detectedCrop } from './video-crop';
+import {
+  hardwareUploadFilter, protectedHardwareDecodeArguments, strictVideoTranscodeArguments,
+} from './video-safety';
 import { bufferSizeFor, deliveryPresetForOutput, deliveryQualityForOutput, scaleDimensionsFor, videoOutputProfile } from './video-output-profile';
 import { applyEncodeProgress, canFinishEncodeQueue, createEncodeQueueProgress, isQueueTerminal } from './encode-progress-state';
 import type { EncodeJobProgressState, EncodeQueueProgressState } from './encode-progress-state';
@@ -86,7 +89,7 @@ let toastTimer: number | undefined;
 let runtimeState: RuntimeState | null = null;
 let hardwareCapabilities: HardwareCapabilities = {
   checkedAt: '', adapters: [], ignoredAdapters: [], cudaAvailable: false, nvdecAvailable: false,
-  cuvidDecoders: [], amfDecodeAvailable: false, qsvDecodeAvailable: false,
+  amfDecodeAvailable: false, qsvDecodeAvailable: false,
   qsvDecoders: [], vaapiAvailable: false, vaapiDevice: null, encoders: [],
 };
 let pickerBusy = false;
@@ -730,61 +733,62 @@ const addDownmixArguments = (args: string[], outputIndex: number, track: AudioSt
 const encoderCanOutput10Bit = (encoder: string) => encoder === 'libx265'
   || Boolean(hardwareCapabilities.encoders.find((item) => item.id === encoder)?.tenBit);
 
-const hardwareDecoderName = (source: SourceFile, suffix: 'cuvid' | 'qsv') => {
+const hardwareDecoderName = (source: SourceFile) => {
   const codecNames: Record<string, string> = {
     H264: 'h264', AVC: 'h264', HEVC: 'hevc', H265: 'hevc', AV1: 'av1',
     VP9: 'vp9', VP8: 'vp8', MPEG2VIDEO: 'mpeg2', MPEG4: 'mpeg4', VC1: 'vc1', MJPEG: 'mjpeg',
   };
   const base = codecNames[source.media?.video?.codec.toUpperCase() ?? ''];
-  return base ? `${base}_${suffix}` : null;
+  return base ? `${base}_qsv` : null;
 };
 const detectedCropForSource = (source: SourceFile) => {
   const video = source.media?.video;
   return video ? detectedCrop(source.media?.suggestedCrop, video.width, video.height) : null;
 };
-const hardwareInputArguments = (source: SourceFile, settings: JobSettings) => {
+const hardwareInputArguments = (source: SourceFile, settings: JobSettings, forceSoftwareDecode = false) => {
   if (settings.encoder.endsWith('_vaapi') && hardwareCapabilities.vaapiAvailable && hardwareCapabilities.vaapiDevice) {
     return {
       args: ['-vaapi_device', hardwareCapabilities.vaapiDevice],
       cropHandledByDecoder: false, backend: 'vaapi' as const,
     };
   }
+  const requiresUniversalCrop = settings.filters.autoCrop && Boolean(detectedCropForSource(source));
+  if (forceSoftwareDecode || requiresUniversalCrop) {
+    return { args: [] as string[], cropHandledByDecoder: false, backend: 'software' as const };
+  }
   if (!appSettings.hardwareAcceleration) return { args: [] as string[], cropHandledByDecoder: false, backend: 'software' as const };
   if (settings.encoder.endsWith('_nvenc') && hardwareCapabilities.cudaAvailable && hardwareCapabilities.nvdecAvailable) {
-    const decoder = hardwareDecoderName(source, 'cuvid');
-    if (decoder && hardwareCapabilities.cuvidDecoders.includes(decoder)) {
-      const video = source.media?.video;
-      const args = [
-        '-init_hw_device', 'cuda=cu:0', '-filter_hw_device', 'cu', '-hwaccel', 'cuda',
-        '-hwaccel_output_format', 'cuda', '-hwaccel_flags', '+unsafe_output',
-      ];
-      const crop = detectedCropForSource(source);
-      if (video) args.push(...cuvidDecoderArguments(
-        decoder, video.index, settings.filters.autoCrop ? crop : null, video.width, video.height,
-      ));
-      return {
-        args, cropHandledByDecoder: Boolean(settings.filters.autoCrop && crop && video), backend: 'cuda' as const,
-      };
-    }
     return {
-      args: ['-init_hw_device', 'cuda=cu:0', '-filter_hw_device', 'cu', '-hwaccel', 'cuda', '-hwaccel_output_format', 'cuda'],
+      args: [
+        '-init_hw_device', 'cuda=cu:0', '-filter_hw_device', 'cu', '-hwaccel', 'cuda',
+        '-hwaccel_output_format', 'cuda', ...protectedHardwareDecodeArguments(),
+      ],
       cropHandledByDecoder: false, backend: 'cuda' as const,
     };
   }
   if (settings.encoder.endsWith('_amf') && hardwareCapabilities.amfDecodeAvailable) {
     return {
-      args: ['-init_hw_device', 'amf=am:0', '-filter_hw_device', 'am', '-hwaccel', 'amf', '-hwaccel_flags', '+unsafe_output'],
+      args: [
+        '-init_hw_device', 'amf=am:0', '-filter_hw_device', 'am', '-hwaccel', 'amf',
+        ...protectedHardwareDecodeArguments(),
+      ],
       cropHandledByDecoder: false, backend: 'amf' as const,
     };
   }
   if (settings.encoder.endsWith('_qsv') && hardwareCapabilities.qsvDecodeAvailable) {
-    const decoder = hardwareDecoderName(source, 'qsv');
-    const args = ['-init_hw_device', 'qsv=qs:hw', '-filter_hw_device', 'qs', '-hwaccel', 'qsv', '-hwaccel_flags', '+unsafe_output'];
+    const decoder = hardwareDecoderName(source);
+    const args = [
+      '-init_hw_device', 'qsv=qs:hw', '-filter_hw_device', 'qs', '-hwaccel', 'qsv',
+      ...protectedHardwareDecodeArguments(),
+    ];
     if (decoder && hardwareCapabilities.qsvDecoders.includes(decoder)) args.push('-c:v:0', decoder);
     return { args, cropHandledByDecoder: false, backend: 'qsv' as const };
   }
   if (settings.encoder.endsWith('_videotoolbox')) {
-    return { args: ['-hwaccel', 'videotoolbox'], cropHandledByDecoder: false, backend: 'software' as const };
+    return {
+      args: ['-hwaccel', 'videotoolbox', ...protectedHardwareDecodeArguments()],
+      cropHandledByDecoder: false, backend: 'software' as const,
+    };
   }
   return { args: ['-hwaccel', 'auto'], cropHandledByDecoder: false, backend: 'software' as const };
 };
@@ -792,11 +796,11 @@ const decoderStatus = (source: SourceFile, settings: JobSettings) => {
   if (isAudioWorkflow(source) || !settings.processing.video || !appSettings.hardwareAcceleration) {
     return { label: 'SOFTWARE', hardware: false };
   }
+  if (settings.filters.autoCrop && detectedCropForSource(source)) {
+    return { label: 'SOFTWARE', hardware: false };
+  }
   if (settings.encoder.endsWith('_nvenc') && hardwareCapabilities.cudaAvailable && hardwareCapabilities.nvdecAvailable) {
-    const decoder = hardwareDecoderName(source, 'cuvid');
-    return decoder && hardwareCapabilities.cuvidDecoders.includes(decoder)
-      ? { label: 'NVIDIA CUVID', hardware: true }
-      : { label: 'NVIDIA NVDEC', hardware: true };
+    return { label: 'NVIDIA NVDEC', hardware: true };
   }
   if (settings.encoder.endsWith('_amf') && hardwareCapabilities.amfDecodeAvailable) {
     return { label: 'AMD AMF', hardware: true };
@@ -880,7 +884,7 @@ const audioCommandArguments = (source: SourceFile, settings: JobSettings, output
   return args;
 };
 
-const getCommandArguments = (source: SourceFile, requestedOutputPath?: string) => {
+const getCommandArguments = (source: SourceFile, requestedOutputPath?: string, forceSoftwareDecode = false) => {
   const settings = getSettings(source);
   const outputPath = requestedOutputPath ?? (isMetadataOnly(settings)
     ? metadataTemporaryPath(source.path, 0)
@@ -893,9 +897,11 @@ const getCommandArguments = (source: SourceFile, requestedOutputPath?: string) =
   }
   if (settings.processing.video && !settings.encoder) return null;
   const hardwareInput = settings.processing.video
-    ? hardwareInputArguments(source, settings)
+    ? hardwareInputArguments(source, settings, forceSoftwareDecode)
     : { args: [] as string[], cropHandledByDecoder: false, backend: 'software' as const };
-  const args = [...hardwareInput.args];
+  const args = settings.processing.video
+    ? [...strictVideoTranscodeArguments(), ...hardwareInput.args]
+    : [...hardwareInput.args];
   args.push('-i', source.path);
   if (settings.processing.video) {
     args.push('-map', `0:${source.media?.video?.index ?? 0}`, '-c:v', settings.encoder);
@@ -931,9 +937,7 @@ const getCommandArguments = (source: SourceFile, requestedOutputPath?: string) =
   const toneMapFormat: 'nv12' | 'p010le' = main10Output ? 'p010le' : 'nv12';
   const dimensions = hardwareScaleDimensions(source, settings);
   const crop = detectedCropForSource(source);
-  const qsvCrop = settings.filters.autoCrop && crop && hardwareInput.backend === 'qsv' && !hardwareInput.cropHandledByDecoder
-    ? crop : null;
-  if (settings.filters.autoCrop && crop && !hardwareInput.cropHandledByDecoder && !qsvCrop) {
+  if (settings.filters.autoCrop && crop && !hardwareInput.cropHandledByDecoder) {
     filters.push(`crop=${crop.filter}`);
   }
 
@@ -949,22 +953,22 @@ const getCommandArguments = (source: SourceFile, requestedOutputPath?: string) =
       filters.push(`tonemap_cuda=format=${toneMapFormat}:p=bt709:t=bt709:m=bt709:tonemap=bt2390:peak=100:desat=0`);
     } else if (main10Output && !dimensions) {
       filters.push('scale_cuda=iw:ih:format=p010le:passthrough=0');
+    } else if (!dimensions && !toneMap) {
+      filters.push('scale_cuda=iw:ih:passthrough=0');
     }
-  } else if (hardwareInput.backend === 'qsv' && (qsvCrop || dimensions || toneMap || main10Output)) {
+  } else if (hardwareInput.backend === 'qsv' && (dimensions || toneMap || main10Output)) {
     if (toneMap && video?.hasDolbyVision) {
       filters.push('setparams=color_primaries=bt2020:color_trc=smpte2084:colorspace=bt2020nc');
     }
-    filters.push('hwupload=extra_hw_frames=64');
+    filters.push(hardwareUploadFilter());
     const options = [
-      ...(qsvCrop ? qsvCropOptions(qsvCrop) : []),
-      ...(dimensions ? [`w=${dimensions[0]}`, `h=${dimensions[1]}`]
-        : qsvCrop ? [`w=${qsvCrop.width}`, `h=${qsvCrop.height}`] : []),
+      ...(dimensions ? [`w=${dimensions[0]}`, `h=${dimensions[1]}`] : []),
       ...(toneMap || main10Output ? [`format=${toneMapFormat}`] : []),
       ...(toneMap ? ['tonemap=1'] : []),
     ];
     filters.push(`vpp_qsv=${options.join(':')}`);
   } else if (hardwareInput.backend === 'amf' && dimensions) {
-    filters.push('hwupload=extra_hw_frames=64');
+    filters.push(hardwareUploadFilter());
     const outputFormat = !toneMap && main10Output ? ':format=p010le' : '';
     filters.push(`vpp_amf=w=${dimensions[0]}:h=${dimensions[1]}${outputFormat}`);
     if (toneMap) {
@@ -975,7 +979,7 @@ const getCommandArguments = (source: SourceFile, requestedOutputPath?: string) =
     const scale = softwareScaleFilter(source, settings);
     if (scale) filters.push(scale);
     if (toneMap) filters.push(...softwareToneMapFilters(Boolean(video?.hasDolbyVision), toneMapFormat));
-    filters.push(`format=${main10Output ? 'p010le' : 'nv12'}`, 'hwupload');
+    filters.push(`format=${main10Output ? 'p010le' : 'nv12'}`, hardwareUploadFilter());
   } else {
     const scale = softwareScaleFilter(source, settings);
     if (scale) filters.push(scale);
@@ -1078,6 +1082,9 @@ const createEncodeJob = (source: SourceFile, queueIndex: number): EncodeJob | nu
   const passthrough = isAudioWorkflow(source) && isAudioPassthrough(getSettings(source));
   if (!args.length && !passthrough) return null;
   const settings = getSettings(source);
+  const softwareDecodeFallbackArgs = settings.processing.video && args.includes('-hwaccel')
+    ? getCommandArguments(source, outputPath, true) ?? undefined
+    : undefined;
   const audioNormalizeRoot = isAudioWorkflow(source) && settings.filters.normalizeAudio
     ? passthrough || !appSettings.separateAudioDirectory
       ? source.sourceRoot ?? parentPath(source.path)
@@ -1096,6 +1103,7 @@ const createEncodeJob = (source: SourceFile, queueIndex: number): EncodeJob | nu
     outputPath,
     duration: source.media?.duration ?? null,
     args,
+    ...(softwareDecodeFallbackArgs ? { softwareDecodeFallbackArgs } : {}),
     ...(isMusicVideoWorkflow(source) && runtimeState?.ccextractorAvailable
       ? {
         closedCaptionFormat: settings.format === 'mp4'
@@ -1436,7 +1444,7 @@ const showAppMenu = () => {
   const runtimeSelector = sources.length === 0 && Boolean(document.querySelector('.welcome-shell'))
     ? `<label class="menu-check runtime-channel-toggle"><input id="stable-ffmpeg" type="checkbox"${checked(appSettings.useStableFfmpeg)}/><span><strong>Stable</strong><small>Use the stable Jellyfin FFmpeg runtime</small></span></label>`
     : '';
-  menu.innerHTML = `<div class="menu-identity"><strong>EA Media Tools</strong><span>Version ${escapeHtml(runtimeState?.appVersion ?? '2.2.1')} · ${APP_CODENAME}</span></div>${runtimeSelector}<label class="menu-check"><input id="hardware-acceleration" type="checkbox"${checked(appSettings.hardwareAcceleration)}/><span>Hardware Acceleration</span></label><button id="view-logs">View Logs</button><button id="view-config">View Running Config</button><button id="view-changelog">View Change Log</button><button id="check-update">Check for update</button><button class="danger" id="exit-app">Exit</button>`;
+  menu.innerHTML = `<div class="menu-identity"><strong>EA Media Tools</strong><span>Version ${escapeHtml(runtimeState?.appVersion ?? '2.3.0')} · ${APP_CODENAME}</span></div>${runtimeSelector}<label class="menu-check"><input id="hardware-acceleration" type="checkbox"${checked(appSettings.hardwareAcceleration)}/><span>Hardware Acceleration</span></label><button id="view-logs">View Logs</button><button id="view-config">View Running Config</button><button id="view-changelog">View Change Log</button><button id="check-update">Check for update</button><button class="danger" id="exit-app">Exit</button>`;
   document.body.appendChild(menu);
   menu.addEventListener('click', (event) => event.stopPropagation());
   menu.querySelector<HTMLInputElement>('#stable-ffmpeg')?.addEventListener('change', async (event) => {
@@ -1450,7 +1458,7 @@ const showAppMenu = () => {
       appSettings.useStableFfmpeg = useStable;
       hardwareCapabilities = {
         checkedAt: '', adapters: [], ignoredAdapters: [], cudaAvailable: false, nvdecAvailable: false,
-        cuvidDecoders: [], amfDecodeAvailable: false, qsvDecodeAvailable: false,
+        amfDecodeAvailable: false, qsvDecodeAvailable: false,
         qsvDecoders: [], vaapiAvailable: false, vaapiDevice: null, encoders: [],
       };
       if (selectedRuntime.ffmpegAvailable) {
@@ -1506,7 +1514,7 @@ const showAppMenu = () => {
     'EA Media Tools running config', 'config · user settings and active custom working state', () => window.mediaAPI.readConfig(appSettings),
   ));
   menu.querySelector('#view-changelog')?.addEventListener('click', () => void showTextReader(
-    `EA Media Tools ${runtimeState?.appVersion ?? '2.2.1'} change log`,
+    `EA Media Tools ${runtimeState?.appVersion ?? '2.3.0'} change log`,
     `${APP_CODENAME} · installed release notes from GitHub`,
     () => window.mediaAPI.readChangelog(),
   ));
@@ -2209,7 +2217,7 @@ const startApplication = async () => {
     }
     await new Promise((resolve) => window.setTimeout(resolve, runtimeState?.phase === 'error' ? 900 : 350));
   } catch (error) {
-    runtimeState = { phase: 'error', message: error instanceof Error ? error.message : 'Unable to initialize FFmpeg', progress: null, appVersion: '2.2.1', isPackaged: false, updateEnabled: false, ffmpegAvailable: false, ffmpegPath: '', ffprobePath: '', ffmpegVersion: null, releaseTag: null, ffmpegChannel: appSettings.useStableFfmpeg ? 'stable' : 'unstable', rsgainAvailable: false, rsgainPath: '', rsgainVersion: null, ccextractorAvailable: false, ccextractorPath: '', ccextractorVersion: null };
+    runtimeState = { phase: 'error', message: error instanceof Error ? error.message : 'Unable to initialize FFmpeg', progress: null, appVersion: '2.3.0', isPackaged: false, updateEnabled: false, ffmpegAvailable: false, ffmpegPath: '', ffprobePath: '', ffmpegVersion: null, releaseTag: null, ffmpegChannel: appSettings.useStableFfmpeg ? 'stable' : 'unstable', rsgainAvailable: false, rsgainPath: '', rsgainVersion: null, ccextractorAvailable: false, ccextractorPath: '', ccextractorVersion: null };
     renderBootstrap(runtimeState); await new Promise((resolve) => window.setTimeout(resolve, 900));
   } finally { removeProgressListener(); }
   if (!builtInPresets) return;

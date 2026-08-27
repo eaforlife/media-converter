@@ -127,7 +127,6 @@ export type HardwareCapabilities = {
   ignoredAdapters: string[];
   cudaAvailable: boolean;
   nvdecAvailable: boolean;
-  cuvidDecoders: string[];
   amfDecodeAvailable: boolean;
   qsvDecodeAvailable: boolean;
   qsvDecoders: string[];
@@ -204,6 +203,7 @@ export type EncodeJob = {
   outputPath: string;
   duration: number | null;
   args: string[];
+  softwareDecodeFallbackArgs?: string[];
   replaceSourcePath?: string;
   closedCaptionFormat?: 'mov_text' | 'subrip' | 'webvtt';
   optionalClosedCaptions?: boolean;

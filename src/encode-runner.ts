@@ -215,6 +215,8 @@ const runJob = (
   totalJobs: number,
   webContents: WebContents,
   onFps?: (fps: number) => void,
+  startingMessage?: string,
+  deferFailure = false,
 ) => new Promise<void>((resolve, reject) => {
   const startedAt = Date.now();
   const outputParts = path.parse(job.outputPath);
@@ -256,7 +258,7 @@ const runJob = (
     };
   };
 
-  emit(webContents, status('starting'));
+  emit(webContents, status('starting', startingMessage));
   logActivity('INFO', 'ffmpeg.encode.started', {
     job: jobIndex,
     totalJobs,
@@ -300,8 +302,10 @@ const runJob = (
     settled = true;
     activeProcesses.delete(jobIndex);
     void removePartialOutput(temporaryOutput);
-    logActivity('ERROR', 'ffmpeg.encode.failed', { job: jobIndex, error: error.message });
-    emit(webContents, status('failed', error.message));
+    logActivity(deferFailure ? 'WARN' : 'ERROR', deferFailure ? 'ffmpeg.encode.retry-pending' : 'ffmpeg.encode.failed', {
+      job: jobIndex, error: error.message,
+    });
+    if (!deferFailure) emit(webContents, status('failed', error.message));
     reject(error);
   });
   child.on('close', async (code) => {
@@ -323,6 +327,8 @@ const runJob = (
     if (code === 0) {
       try {
         if (fs.existsSync(job.outputPath)) throw new Error(`Output already exists: ${job.outputPath}`);
+        const output = await fs.promises.stat(temporaryOutput);
+        if (!output.isFile() || output.size === 0) throw new Error('FFmpeg produced an empty output file.');
         await fs.promises.rename(temporaryOutput, job.outputPath);
         activePartialOutputs.delete(temporaryOutput);
         if (job.replaceSourcePath) {
@@ -353,8 +359,10 @@ const runJob = (
     }
     const message = stderr.trim().split(/\r?\n/).slice(-8).join('\n') || `FFmpeg exited with code ${code ?? 'unknown'}.`;
     await removePartialOutput(temporaryOutput);
-    logActivity('ERROR', 'ffmpeg.encode.failed', { job: jobIndex, code, output: stderr.trim() });
-    emit(webContents, status('failed', message));
+    logActivity(deferFailure ? 'WARN' : 'ERROR', deferFailure ? 'ffmpeg.encode.retry-pending' : 'ffmpeg.encode.failed', {
+      job: jobIndex, code, output: stderr.trim(),
+    });
+    if (!deferFailure) emit(webContents, status('failed', message));
     reject(new Error(message));
   });
 });
@@ -422,6 +430,7 @@ export const startEncodeQueue = async (
       let queueHadCancelledJob = false;
       let targetConcurrency = 1;
       let throughputConcurrencyLimit: number | null = null;
+      let hardwareDecodeFallbackRequested = false;
       const fpsWindows = new Map<number, number[]>();
       const workers: Promise<void>[] = [];
       const runWorker = async () => {
@@ -466,13 +475,49 @@ export const startEncodeQueue = async (
                     captionOutput,
                     preparedJob.closedCaptionFormat,
                   ),
+                  ...(preparedJob.softwareDecodeFallbackArgs
+                    ? {
+                      softwareDecodeFallbackArgs: injectClosedCaptionInput(
+                        preparedJob.softwareDecodeFallbackArgs,
+                        preparedJob.sourcePath,
+                        captionOutput,
+                        preparedJob.closedCaptionFormat,
+                      ),
+                    }
+                    : {}),
                 };
               }
             }
             fpsWindows.set(index, []);
-            await runJob(ffmpegPath, preparedJob, index + 1, jobs.length, webContents, (fps) => {
-              fpsWindows.get(index)?.push(fps);
-            });
+            const collectFps = (fps: number) => { fpsWindows.get(index)?.push(fps); };
+            try {
+              await runJob(
+                ffmpegPath, preparedJob, index + 1, jobs.length, webContents, collectFps,
+                undefined, Boolean(preparedJob.softwareDecodeFallbackArgs),
+              );
+            } catch (error) {
+              if (
+                !preparedJob.softwareDecodeFallbackArgs
+                || error instanceof EncodeCancelledError
+                || cancellationRequested
+                || queueFailureRequested
+              ) throw error;
+              hardwareDecodeFallbackRequested = true;
+              logActivity('WARN', 'ffmpeg.decode.software-fallback', {
+                job: index + 1,
+                source: preparedJob.sourcePath,
+                reason: error instanceof Error ? error.message : String(error),
+              });
+              await runJob(
+                ffmpegPath,
+                { ...preparedJob, args: preparedJob.softwareDecodeFallbackArgs, softwareDecodeFallbackArgs: undefined },
+                index + 1,
+                jobs.length,
+                webContents,
+                collectFps,
+                'Hardware decoding failed; retrying once with protected software decoding.',
+              );
+            }
             await copySidecars(preparedJob);
             completedAJob = true;
           } catch (error) {
@@ -501,10 +546,10 @@ export const startEncodeQueue = async (
       while (
         concurrencyLimit > 1 && nextIndex < jobs.length
         && targetConcurrency < (throughputConcurrencyLimit ?? concurrencyLimit)
-        && !cancellationRequested && !queueFailureRequested
+        && !hardwareDecodeFallbackRequested && !cancellationRequested && !queueFailureRequested
       ) {
         const elapsed = await waitForEncodeCooldown();
-        if (!elapsed || cancellationRequested || queueFailureRequested) break;
+        if (!elapsed || hardwareDecodeFallbackRequested || cancellationRequested || queueFailureRequested) break;
         const aggregateFps = averageAggregateFps(fpsWindows.values());
         const previousThroughputLimit = throughputConcurrencyLimit;
         throughputConcurrencyLimit = lockThroughputConcurrencyLimit(
