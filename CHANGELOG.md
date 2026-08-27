@@ -4,6 +4,10 @@ All notable changes to EA Media Tools are documented here.
 
 ## [Unreleased]
 
+### Changed
+
+- Tune Streaming NVENC output for quality-efficient HEVC with five B-frames, full-resolution multipass, the compatible 26-frame lookahead limit, temporal AQ, and no non-reference P-frames. Streaming at 1080p now uses CQ 28 while the existing 4K, 720p, and Cellular quality tiers remain unchanged.
+
 ## [2.2.0] - 2026-08-26
 
 ### Fixed

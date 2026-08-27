@@ -1716,7 +1716,7 @@ const renderAdvancedVideoPanel = (settings: JobSettings) => {
   if (!supported.size) return '';
   const advanced = settings.advancedVideo;
   const controls: string[] = [];
-  if (supported.has('bFrames')) controls.push(renderAdvancedToggle('bFrames', 'B-frames', 'Use four B-frames; disabling sets the count to zero.', advanced.bFrames));
+  if (supported.has('bFrames')) controls.push(renderAdvancedToggle('bFrames', 'B-frames', settings.encoder === 'hevc_nvenc' ? 'Use five B-frames; disabling sets the count to zero.' : 'Use four B-frames; disabling sets the count to zero.', advanced.bFrames));
   if (supported.has('multipass')) controls.push(`<label class="advanced-select"><span><strong>Multipass</strong><small>Choose the encoder analysis pass.</small></span><select data-advanced-select="multipass"><option value="0"${selected(advanced.multipass === 0)}>None</option><option value="1"${selected(advanced.multipass === 1)}>Quarter resolution</option><option value="2"${selected(advanced.multipass === 2)}>Full resolution</option></select></label>`);
   if (supported.has('bRefMode')) {
     const eachAvailable = settings.encoder.endsWith('_nvenc') || settings.encoder === 'libx264';

@@ -33,11 +33,13 @@ test('explicit scaling uses the selected output profile instead of the source ti
   equal(videoOutputProfile(sourceHeight, '720p').maxRate, 2500);
 });
 
-test('streaming uses CQ 27 for 1080p source and scaled output profiles', () => {
-  equal(deliveryQualityForOutput('Streaming', videoOutputProfile(1080, 'auto').tier, '29'), '27');
-  equal(deliveryQualityForOutput('Streaming', videoOutputProfile(1080, 'auto').tier, '27'), '25');
-  equal(deliveryQualityForOutput('Streaming', videoOutputProfile(2160, '1080p').tier, '29'), '27');
+test('streaming retains tiered quality and uses CQ 28 at 1080p', () => {
   equal(deliveryQualityForOutput('Streaming', videoOutputProfile(2160, 'auto').tier, '29'), '29');
+  equal(deliveryQualityForOutput('Streaming', videoOutputProfile(1080, 'auto').tier, '29'), '28');
+  equal(deliveryQualityForOutput('Streaming', videoOutputProfile(1080, 'auto').tier, '27'), '26');
+  equal(deliveryQualityForOutput('Streaming', videoOutputProfile(2160, '1080p').tier, '29'), '28');
+  equal(deliveryQualityForOutput('Streaming', videoOutputProfile(720, 'auto').tier, '29'), '29');
+  equal(deliveryQualityForOutput('Cellular', videoOutputProfile(2160, 'auto', true).tier, '32'), '32');
   equal(deliveryQualityForOutput('Archive', videoOutputProfile(1080, 'auto').tier, '18'), '18');
 });
 

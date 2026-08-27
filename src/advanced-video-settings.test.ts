@@ -10,10 +10,11 @@ const settings: AdvancedVideoSettings = {
 
 test('maps every requested advanced setting to NVENC options', () => {
   assert.deepEqual(advancedVideoArguments('hevc_nvenc', settings), [
-    '-multipass', '2', '-bf', '4', '-b_ref_mode', 'middle', '-b_adapt', '1',
+    '-multipass', '2', '-bf', '5', '-b_ref_mode', 'middle', '-b_adapt', '1',
     '-no-scenecut', '0', '-rc-lookahead', '27', '-nonref_p', '1',
     '-spatial-aq', '1', '-temporal-aq', '1', '-aq-strength', '10',
   ]);
+  assert.equal(advancedVideoArguments('h264_nvenc', settings)[3], '4');
 });
 
 test('maps only supported semantic settings to QSV options', () => {

@@ -97,7 +97,7 @@ Auto Scale chooses an output profile from the source resolution. Selecting a sca
 | Output profile | FFmpeg scale | Maximum video rate | Streaming NVENC quality |
 | --- | --- | --- | --- |
 | 4K | `2720:-2` | 8000 kbps | CQ 29 |
-| 1080p | `1760:-2` | 5000 kbps | CQ 27 |
+| 1080p | `1760:-2` | 5000 kbps | CQ 28 |
 | 720p | `1320:-2` | 2500 kbps | CQ 29 |
 | 360p / Cellular | `720:-2` | 2500 kbps | CQ 32 |
 

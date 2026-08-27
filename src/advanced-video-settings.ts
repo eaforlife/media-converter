@@ -24,8 +24,9 @@ export const supportedAdvancedVideoFields = (encoder: string): readonly Advanced
 
 export const advancedVideoArguments = (encoder: string, settings: AdvancedVideoSettings) => {
   if (encoder.endsWith('_nvenc')) {
+    const bFrames = settings.bFrames ? encoder === 'hevc_nvenc' ? '5' : '4' : '0';
     const args = [
-      '-multipass', String(settings.multipass), '-bf', settings.bFrames ? '4' : '0',
+      '-multipass', String(settings.multipass), '-bf', bFrames,
       '-b_ref_mode', settings.bRefMode, '-b_adapt', settings.adaptiveBFrames ? '1' : '0',
       '-no-scenecut', settings.sceneCutDetection ? '0' : '1', '-rc-lookahead', String(settings.rcLookahead),
       '-nonref_p', settings.nonReferenceP ? '1' : '0', '-spatial-aq', settings.spatialAq > 0 ? '1' : '0',

@@ -14,18 +14,20 @@ test('loads ordered built-in preset values from presets.ini', () => {
   assert.equal(presets.Streaming.encoderSpeed, 2);
   assert.equal(presets.Streaming.encoderTune.nvenc, 'hq');
   assert.equal(presets.Streaming.encoderTune.amf, 'high_quality');
+  assert.equal(presets.Streaming.quality.nvenc, '29');
   assert.equal(presets.Regular.quality.nvenc, '24');
   assert.equal(presets.Regular.quality.amf, '22');
   assert.equal(presets.Regular.quality.software, '25');
   assert.deepEqual(presets.Streaming.advancedVideo, {
-    bFrames: true, multipass: 1, bRefMode: 'middle', adaptiveBFrames: true,
-    sceneCutDetection: true, rcLookahead: 27, nonReferenceP: true, spatialAq: 10, temporalAq: true,
+    bFrames: true, multipass: 2, bRefMode: 'middle', adaptiveBFrames: true,
+    sceneCutDetection: true, rcLookahead: 26, nonReferenceP: false, spatialAq: 0, temporalAq: true,
   });
+  assert.deepEqual(presets.Cellular.advancedVideo, presets.Streaming.advancedVideo);
 });
 
 test('rejects out-of-range editable preset values', () => {
   assert.throws(
-    () => parseBuiltInPresets(presetFile.replace('rc_lookahead=27', 'rc_lookahead=43')),
+    () => parseBuiltInPresets(presetFile.replace('rc_lookahead=26', 'rc_lookahead=43')),
     /rc_lookahead must be an integer from 0 to 42/,
   );
 });

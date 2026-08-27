@@ -44,7 +44,7 @@ export const deliveryPresetForOutput = (preset: string, tier: OutputTier) =>
 
 export const deliveryQualityForOutput = (preset: string, tier: OutputTier, fallback: string) =>
   preset === 'Streaming' && tier === '1080p'
-    ? String(Math.max(12, Number(fallback) - 2))
+    ? String(Math.max(12, Number(fallback) - 1))
     : fallback;
 
 export const bufferSizeFor = (maxRate: number, multiplier: number) =>
