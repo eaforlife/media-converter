@@ -1,6 +1,7 @@
 import type { AdvancedVideoSettings, ScaleMode } from './shared-types';
 
-export type BuiltInPresetName = 'Archive' | 'Regular' | 'Streaming' | 'Cellular';
+export type StandardVideoPresetName = 'Archive' | 'Regular' | 'Streaming' | 'Cellular';
+export type BuiltInPresetName = StandardVideoPresetName | 'Music Video';
 export type PreferredVideoCodec = 'H.264' | 'HEVC' | 'AV1';
 export type PresetAudioCodec = 'aac' | 'opus';
 export type EncoderFamily = 'nvenc' | 'amf' | 'qsv' | 'vaapi' | 'videotoolbox' | 'software';
@@ -28,7 +29,8 @@ export type BuiltInPresetDefinition = {
 
 export type BuiltInPresetCatalog = Readonly<Record<BuiltInPresetName, BuiltInPresetDefinition>>;
 
-export const BUILT_IN_PRESET_NAMES: readonly BuiltInPresetName[] = ['Archive', 'Regular', 'Streaming', 'Cellular'];
+export const STANDARD_VIDEO_PRESET_NAMES: readonly StandardVideoPresetName[] = ['Archive', 'Regular', 'Streaming', 'Cellular'];
+export const BUILT_IN_PRESET_NAMES: readonly BuiltInPresetName[] = [...STANDARD_VIDEO_PRESET_NAMES, 'Music Video'];
 
 export const booleanValue = (value: string, label: string) => {
   if (value === '1' || value === 'true') return true;

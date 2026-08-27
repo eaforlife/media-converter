@@ -1,12 +1,12 @@
 import './index.css';
 import { APP_CODENAME } from './config';
-import { AUDIO_PRESETS, AUDIO_PRESET_NAMES, MUSIC_VIDEO_AAC_BITRATE, audioBitrate, shouldResampleLossless } from './audio-workflow';
+import { AUDIO_PRESETS, AUDIO_PRESET_NAMES, audioBitrate, shouldResampleLossless } from './audio-workflow';
 import type { AudioPresetName } from './audio-workflow';
 import {
   commonSeriesFolderName, parseEpisodeIdentity, preservedOutputBaseName, sanitizePathSegment,
   smartMovieFolderName, smartSeriesBaseName,
 } from './output-naming';
-import { BUILT_IN_PRESET_NAMES } from './presets';
+import { BUILT_IN_PRESET_NAMES, STANDARD_VIDEO_PRESET_NAMES } from './presets';
 import type { BuiltInPresetCatalog, BuiltInPresetDefinition, BuiltInPresetName, EncoderFamily, PreferredVideoCodec, PresetAudioCodec } from './presets';
 import { advancedVideoArguments, supportedAdvancedVideoFields } from './advanced-video-settings';
 import type { AdvancedVideoField } from './advanced-video-settings';
@@ -387,26 +387,28 @@ const applyAudioPreset = (source: SourceFile, presetName: string) => {
 };
 
 const applyMusicVideoPreset = (source: SourceFile) => {
-  const preset = requiredBuiltInPreset('Streaming');
+  const preset = requiredBuiltInPreset('Music Video');
   const outputProfile = videoOutputProfile(source.media?.video?.height ?? 0, 'auto');
   const settings = settingsByPath.get(source.path) ?? initialSettings(source);
   settingsByPath.set(source.path, settings);
   const encoder = hardwareEncoderFor(preset.preferredVideoCodec);
   Object.assign(settings, {
-    preset: 'Music Video', format: 'mp4' as const, encoder, encoderSpeed: 4, encoderTune: normalizeEncoderTune(encoder, 'hq'),
-    quality: deliveryQualityForOutput('Streaming', outputProfile.tier, '28'),
-    videoBitrate: '0', maxRate: String(outputProfile.maxRate), bufferMultiplier: 2,
-    bufferSize: String(bufferSizeFor(outputProfile.maxRate, 2)),
-    deliveryMode: true, advancedVideo: copyAdvancedVideo(preset.advancedVideo),
+    preset: 'Music Video', format: preset.format, encoder,
+    encoderSpeed: normalizeEncoderSpeed(preset.encoderSpeed),
+    encoderTune: normalizeEncoderTune(encoder, presetTune(preset, encoder)),
+    quality: presetQuality(preset, encoder),
+    videoBitrate: '0', maxRate: String(outputProfile.maxRate), bufferMultiplier: preset.bufferMultiplier,
+    bufferSize: String(bufferSizeFor(outputProfile.maxRate, preset.bufferMultiplier)),
+    deliveryMode: preset.deliveryMode, advancedVideo: copyAdvancedVideo(preset.advancedVideo),
     processing: { video: true, audio: true, subtitles: true },
   });
   settings.filters = {
-    ...defaultFilters(source), scale: 'auto', scaleLocked: true, stripMetadata: false,
+    ...defaultFilters(source), scale: preset.scale, scaleLocked: preset.scaleLocked, stripMetadata: false,
     extractClosedCaptions: true, pixelFormat10Bit: isH264HighSource(source.media?.video),
   };
   for (const track of source.media?.audio ?? []) {
     settings.audio[track.index] = {
-      enabled: true, codec: 'libfdk_aac', bitrate: MUSIC_VIDEO_AAC_BITRATE,
+      enabled: true, codec: 'libfdk_aac', bitrate: audioBitrateFor(preset.name, 'libfdk_aac', track.isStereo),
       flags: { ...track.flags },
       metadata: settings.audio[track.index]?.metadata ?? copyMetadata(track.language, track.flags),
     };
@@ -1645,7 +1647,7 @@ const renderWorkspace = () => {
   const fileRows = sources.map((file, index) => `<button class="source-row ${index === selectedIndex ? 'active' : ''}" data-source-index="${index}"><span class="file-type">${escapeHtml(file.extension.slice(0, 4))}</span><span class="source-row-copy"><strong>${escapeHtml(file.name)}</strong><small>${formatSize(file.size)}</small></span>${index === selectedIndex ? '<span class="active-pip"></span>' : ''}</button>`).join('');
   const video = source.media?.video;
   const showWorkingCustom = settings.preset === 'Custom';
-  const basePresets = audioWorkflow ? [...AUDIO_PRESET_NAMES] : musicVideo ? ['Music Video'] : [...BUILT_IN_PRESET_NAMES];
+  const basePresets = audioWorkflow ? [...AUDIO_PRESET_NAMES] : musicVideo ? ['Music Video'] : [...STANDARD_VIDEO_PRESET_NAMES];
   const visiblePresets = [...basePresets, ...(showWorkingCustom ? ['Custom'] : [])];
   const savedPresets = musicVideo ? [] : appSettings.customPresets.filter((preset) =>
     audioWorkflow ? preset.workflow === 'audio' : preset.workflow !== 'audio');
@@ -2127,7 +2129,7 @@ const saveCurrentPreset = async (source: SourceFile) => {
     showToast('Preset names cannot contain ], carriage returns, or line breaks');
     return;
   }
-  if ([...BUILT_IN_PRESET_NAMES, ...AUDIO_PRESET_NAMES, 'Music Video', 'Custom'].includes(name as BuiltInPresetName | AudioPresetName | 'Music Video' | 'Custom')) {
+  if ([...BUILT_IN_PRESET_NAMES, ...AUDIO_PRESET_NAMES, 'Custom'].includes(name as BuiltInPresetName | AudioPresetName | 'Custom')) {
     showToast('Choose a name different from the built-in presets');
     return;
   }
