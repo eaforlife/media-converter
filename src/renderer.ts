@@ -26,10 +26,11 @@ import { bufferSizeFor, deliveryPresetForOutput, deliveryQualityForOutput, scale
 import { applyEncodeProgress, canFinishEncodeQueue, createEncodeQueueProgress, isQueueTerminal } from './encode-progress-state';
 import type { EncodeJobProgressState, EncodeQueueProgressState } from './encode-progress-state';
 import { formatSessionFfmpegCommand } from './ffmpeg-command-display';
-import { mediaLanguageOptions } from './media-language';
+import { mediaLanguageName, mediaLanguageOptions } from './media-language';
 import { applyStreamMetadataPatch, metadataTemporaryPath, streamMetadataChanged, streamMetadataPatch } from './metadata-edit';
 import type { EditableStreamMetadata } from './metadata-edit';
 import { attachedCoverArtArguments, isH264HighSource, musicVideoEncoderProfile } from './media-workflow';
+import { consolidatePrimaryDispositions, setPrimaryDisposition } from './stream-dispositions';
 import type {
   AdvancedVideoSettings, AppSettings, AudioStreamInfo, EncodeJob, EncodeProgress, FilterSettings, HardwareCapabilities, RuntimeState, SavedPreset,
   OutputFormat, ScaleMode, SourceFile, StreamFlags, SubtitleStreamInfo,
@@ -256,19 +257,13 @@ const defaultFilters = (source: SourceFile): FilterSettings => ({
   resampleLosslessTo48k: true,
   normalizeAudio: true,
 });
-const normalizeUniqueFlags = <T extends { flags: StreamFlags }>(record: Record<number, T>) => {
-  for (const flag of ['default', 'forced'] as const) {
-    let found = false;
-    for (const setting of Object.values(record)) {
-      if ('enabled' in setting && setting.enabled === false) {
-        setting.flags[flag] = false;
-        continue;
-      }
-      if (!setting.flags[flag]) continue;
-      if (found) setting.flags[flag] = false;
-      found = true;
-    }
-  }
+const metadataDispositionRecord = (record: Record<number, { metadata: EditableStreamMetadata }>) =>
+  Object.fromEntries(Object.entries(record).map(([index, setting]) => [index, { flags: setting.metadata.flags }]));
+const normalizeStreamDispositions = (settings: JobSettings) => {
+  consolidatePrimaryDispositions(settings.audio);
+  consolidatePrimaryDispositions(settings.subtitles);
+  consolidatePrimaryDispositions(metadataDispositionRecord(settings.audio));
+  consolidatePrimaryDispositions(metadataDispositionRecord(settings.subtitles));
 };
 const copyMetadata = (language: string, flags: StreamFlags): EditableStreamMetadata => ({
   language,
@@ -278,6 +273,7 @@ const isMetadataOnly = (settings: JobSettings) =>
   settings.format !== 'source'
   && !settings.processing.video && !settings.processing.audio && !settings.processing.subtitles;
 const sourceHasMetadataChanges = (source: SourceFile, settings = getSettings(source)) => {
+  if ((source.media?.subtitles ?? []).some((track) => track.externalPath)) return true;
   const video = source.media?.video;
   if (video && streamMetadataChanged(video, settings.videoMetadata)) return true;
   if ((source.media?.audio ?? []).some((track) =>
@@ -290,7 +286,7 @@ const matchingMetadataQueueSources = (origin: SourceFile) => sources.filter((sou
 const applyMetadataChangesToQueue = (originSource: SourceFile) => {
   const originSettings = getSettings(originSource);
   const originAudio = originSource.media?.audio ?? [];
-  const originSubtitles = originSource.media?.subtitles ?? [];
+  const originSubtitles = (originSource.media?.subtitles ?? []).filter((track) => !track.externalPath);
   let updatedSources = 0;
   for (const targetSource of matchingMetadataQueueSources(originSource)) {
     if (targetSource === originSource) continue;
@@ -311,7 +307,7 @@ const applyMetadataChangesToQueue = (originSource: SourceFile) => {
         updated = applyStreamMetadataPatch(targetMetadata, streamMetadataPatch(track, originMetadata)) || updated;
       }
     });
-    const targetSubtitles = targetSource.media?.subtitles ?? [];
+    const targetSubtitles = (targetSource.media?.subtitles ?? []).filter((track) => !track.externalPath);
     originSubtitles.forEach((track, position) => {
       const targetTrack = targetSubtitles[position];
       const originMetadata = originSettings.subtitles[track.index]?.metadata;
@@ -414,6 +410,7 @@ const applyMusicVideoPreset = (source: SourceFile) => {
       metadata: settings.audio[track.index]?.metadata ?? copyMetadata(track.language, track.flags),
     };
   }
+  normalizeStreamDispositions(settings);
 };
 
 const initialSettings = (source: SourceFile): JobSettings => {
@@ -445,8 +442,7 @@ const initialSettings = (source: SourceFile): JobSettings => {
     }])),
     filters: { ...defaultFilters(source), scale: preset.scale, scaleLocked: preset.scaleLocked }, deliveryMode: preset.deliveryMode,
   };
-  normalizeUniqueFlags(settings.audio);
-  normalizeUniqueFlags(settings.subtitles);
+  normalizeStreamDispositions(settings);
   return settings;
 };
 const getSettings = (source: SourceFile) => {
@@ -523,10 +519,10 @@ const applyPreset = (source: SourceFile, preset: string, persist = true) => {
     const subtitle = settings.subtitles[track.index];
     if (!subtitle) continue;
     if (settings.format === 'mp4') { subtitle.enabled = track.kind === 'text'; subtitle.codec = track.kind === 'text' ? 'mov_text' : 'copy'; }
-    else if (track.kind === 'text' && subtitle.codec === 'mov_text') subtitle.codec = 'subrip';
+    else if (settings.format === 'webm') { subtitle.enabled = track.kind === 'text'; subtitle.codec = track.kind === 'text' ? 'webvtt' : 'copy'; }
+    else if (track.kind === 'text' && (subtitle.codec === 'mov_text' || subtitle.codec === 'webvtt')) subtitle.codec = 'subrip';
   }
-  normalizeUniqueFlags(settings.audio);
-  normalizeUniqueFlags(settings.subtitles);
+  normalizeStreamDispositions(settings);
   if (persist) {
     appSettings.lastPreset = preset;
     void persistAppSettings();
@@ -597,10 +593,12 @@ const syncBatchTrackSettings = (
     if (target.format === 'mp4') {
       target.subtitles[track.index].enabled = track.kind === 'text' && sourceSetting.enabled;
       target.subtitles[track.index].codec = track.kind === 'text' ? 'mov_text' : 'copy';
+    } else if (target.format === 'webm') {
+      target.subtitles[track.index].enabled = track.kind === 'text' && sourceSetting.enabled;
+      target.subtitles[track.index].codec = track.kind === 'text' ? 'webvtt' : 'copy';
     }
   }
-  normalizeUniqueFlags(target.audio);
-  normalizeUniqueFlags(target.subtitles);
+  normalizeStreamDispositions(target);
 };
 const markCustom = (settings: JobSettings) => {
   const originSource = sources.find((source) => settingsByPath.get(source.path) === settings);
@@ -870,7 +868,12 @@ const addStreamMetadataArguments = (
 };
 
 const metadataOnlyArguments = (source: SourceFile, settings: JobSettings, outputPath: string) => {
-  const args = ['-i', source.path, '-map', '0', '-c', 'copy', '-map_metadata', '0', '-map_chapters', '0'];
+  const subtitleTracks = source.media?.subtitles ?? [];
+  const externalTracks = subtitleTracks.filter((track) => track.externalPath);
+  const embeddedTracks = subtitleTracks.filter((track) => !track.externalPath);
+  const args = ['-i', source.path, ...externalSubtitleInputArguments(externalTracks), '-map', '0'];
+  externalTracks.forEach((track) => args.push('-map', subtitleInputSpecifier(track, subtitleTracks)));
+  args.push('-c', 'copy', '-map_metadata', '0', '-map_chapters', '0');
   if (source.media?.video && streamMetadataChanged(source.media.video, settings.videoMetadata)) {
     addStreamMetadataArguments(args, 'v', 0, settings.videoMetadata);
   }
@@ -878,9 +881,17 @@ const metadataOnlyArguments = (source: SourceFile, settings: JobSettings, output
     const metadata = settings.audio[track.index].metadata;
     if (streamMetadataChanged(track, metadata)) addStreamMetadataArguments(args, 'a', index, metadata);
   });
-  (source.media?.subtitles ?? []).filter((track) => !track.externalPath).forEach((track, index) => {
+  embeddedTracks.forEach((track, index) => {
     const metadata = settings.subtitles[track.index].metadata;
     if (streamMetadataChanged(track, metadata)) addStreamMetadataArguments(args, 's', index, metadata);
+  });
+  const externalCodec = /\.(?:mp4|m4v|mov)$/i.test(source.path)
+    ? 'mov_text'
+    : /\.webm$/i.test(source.path) ? 'webvtt' : 'subrip';
+  externalTracks.forEach((track, index) => {
+    const outputIndex = embeddedTracks.length + index;
+    args.push(`-c:s:${outputIndex}`, externalCodec);
+    addStreamMetadataArguments(args, 's', outputIndex, settings.subtitles[track.index].metadata);
   });
   if (/\.(?:mp4|m4v|mov)$/i.test(source.path)) args.push('-movflags', '+faststart');
   args.push(outputPath);
@@ -896,6 +907,7 @@ const audioCommandArguments = (source: SourceFile, settings: JobSettings, output
   if (audio.bitrate) args.push('-b:a:0', audio.bitrate);
   if (settings.filters.downmixToStereo && !track.isStereo) addDownmixArguments(args, 0, track);
   if (shouldResampleLossless(track, settings.filters.resampleLosslessTo48k)) args.push('-ar:a:0', '48000');
+  addStreamMetadataArguments(args, 'a', 0, audio.metadata);
   if (settings.filters.stripMetadata) args.push('-map_metadata', '-1');
   else args.push('-map_metadata', '0');
   if (settings.format === 'm4a') args.push('-movflags', '+faststart');
@@ -1470,7 +1482,7 @@ const showAppMenu = () => {
   const runtimeSelector = sources.length === 0 && Boolean(document.querySelector('.welcome-shell'))
     ? `<label class="menu-check runtime-channel-toggle"><input id="stable-ffmpeg" type="checkbox"${checked(appSettings.useStableFfmpeg)}/><span><strong>Stable</strong><small>Use the stable Jellyfin FFmpeg runtime</small></span></label>`
     : '';
-  menu.innerHTML = `<div class="menu-identity"><strong>EA Media Tools</strong><span>Version ${escapeHtml(runtimeState?.appVersion ?? '2.3.1')} · ${APP_CODENAME}</span></div>${runtimeSelector}<label class="menu-check"><input id="hardware-acceleration" type="checkbox"${checked(appSettings.hardwareAcceleration)}/><span>Hardware Acceleration</span></label><button id="view-logs">View Logs</button><button id="view-config">View Running Config</button><button id="view-changelog">View Change Log</button><button id="check-update">Check for update</button><button class="danger" id="exit-app">Exit</button>`;
+  menu.innerHTML = `<div class="menu-identity"><strong>EA Media Tools</strong><span>Version ${escapeHtml(runtimeState?.appVersion ?? '2.4.0')} · ${APP_CODENAME}</span></div>${runtimeSelector}<label class="menu-check"><input id="hardware-acceleration" type="checkbox"${checked(appSettings.hardwareAcceleration)}/><span>Hardware Acceleration</span></label><button id="view-logs">View Logs</button><button id="view-config">View Running Config</button><button id="view-changelog">View Change Log</button><button id="check-update">Check for update</button><button class="danger" id="exit-app">Exit</button>`;
   document.body.appendChild(menu);
   menu.addEventListener('click', (event) => event.stopPropagation());
   menu.querySelector<HTMLInputElement>('#stable-ffmpeg')?.addEventListener('change', async (event) => {
@@ -1540,7 +1552,7 @@ const showAppMenu = () => {
     'EA Media Tools running config', 'config · user settings and active custom working state', () => window.mediaAPI.readConfig(appSettings),
   ));
   menu.querySelector('#view-changelog')?.addEventListener('click', () => void showTextReader(
-    `EA Media Tools ${runtimeState?.appVersion ?? '2.3.1'} change log`,
+    `EA Media Tools ${runtimeState?.appVersion ?? '2.4.0'} change log`,
     `${APP_CODENAME} · installed release notes from GitHub`,
     () => window.mediaAPI.readChangelog(),
   ));
@@ -1619,8 +1631,6 @@ const pickSource = async (type: 'file' | 'folder') => {
   sources = newSources; selectedIndex = 0; activeTab = 'Summary'; outputDirectoryIsCustom = false;
   sources.forEach((item) => applyPreset(item, appSettings.lastPreset, false));
   outputDirectory = makeDefaultOutputDirectory(sources[0]);
-  const outputDirectories = [...new Set(sources.map(makeDefaultOutputDirectory))];
-  void Promise.all(outputDirectories.map((directory) => window.mediaAPI.prepareOutputDirectory(directory)));
   renderWorkspace();
 };
 const audioSummary = (source: SourceFile) => {
@@ -1729,8 +1739,9 @@ const renderMetadataEditor = (
   kind: 'video' | 'audio' | 'subtitle',
   index: number,
   metadata: EditableStreamMetadata,
-  enabled: boolean,
-) => `<div class="stream-metadata-editor ${enabled ? '' : 'disabled'}"><label>Language<select data-metadata-language data-stream-kind="${kind}" data-stream-index="${index}"${enabled ? '' : ' disabled'}>${mediaLanguageOptions(metadata.language).map(([code, label]) => `<option value="${code}"${selected(code === metadata.language)}>${escapeHtml(label)} (${code})</option>`).join('')}</select></label>${renderDispositionControls(kind, index, metadata.flags, !enabled, false, true)}</div>`;
+  languageEnabled: boolean,
+  flagsEnabled = languageEnabled,
+) => `<div class="stream-metadata-editor ${languageEnabled || flagsEnabled ? '' : 'disabled'}"><label>Language<select data-metadata-language data-stream-kind="${kind}" data-stream-index="${index}"${languageEnabled ? '' : ' disabled'}>${mediaLanguageOptions(metadata.language).map(([code, label]) => `<option value="${code}"${selected(code === metadata.language)}>${escapeHtml(label)} (${code})</option>`).join('')}</select></label>${renderDispositionControls(kind, index, metadata.flags, !flagsEnabled, false, true)}</div>`;
 
 const renderAdvancedToggle = (
   field: AdvancedVideoField,
@@ -1797,17 +1808,6 @@ const renderVideoSettings = (source: SourceFile, settings: JobSettings) => {
 
 const bitrateOptions = (codec: AudioCodec, bitrate: string) => (codec === 'libopus' ? OPUS_BITRATES : AAC_BITRATES)
   .map((rate) => `<option value="${rate}"${selected(rate === bitrate)}>${rate.replace('k', ' kbps')}</option>`).join('');
-const dispositionWarning = (
-  record: Record<number, { flags: StreamFlags; enabled?: boolean }>,
-  noun: 'audio' | 'subtitle',
-) => {
-  const entries = Object.entries(record).filter(([, setting]) => setting.enabled !== false);
-  const defaultTrack = entries.find(([, setting]) => setting.flags.default)?.[0];
-  const forcedTrack = entries.find(([, setting]) => setting.flags.forced)?.[0];
-  return defaultTrack && forcedTrack && defaultTrack !== forcedTrack
-    ? `It is recommended for the forced flag to be on the same ${noun} track as the default flag.`
-    : '';
-};
 const renderDispositionControls = (
   kind: 'video' | 'audio' | 'subtitle',
   index: number,
@@ -1829,20 +1829,19 @@ const renderAudioSettings = (source: SourceFile, settings: JobSettings) => {
     const setting = settings.audio[track.index];
     const passthrough = isAudioPassthrough(settings);
     const codecOptions = `<option value="libfdk_aac"${selected(setting.codec === 'libfdk_aac')}>AAC (libfdk_aac)</option><option value="libopus"${selected(setting.codec === 'libopus')}>Opus</option><option value="copy"${selected(setting.codec === 'copy')}>Passthrough</option>`;
-    return `<div class="track-stack"><section class="track-card ${passthrough ? 'track-disabled' : ''}"><div class="track-heading"><div><span>AUDIO OUTPUT</span><h3>${escapeHtml(track.codecLabel)}</h3></div><span class="track-badge">${escapeHtml(track.channelLayout)}</span></div><div class="track-meta"><span>${track.channels} channel${track.channels === 1 ? '' : 's'}</span><span>${track.sampleRate ? `${track.sampleRate / 1000} kHz` : 'Unknown sample rate'}</span><span>${track.isLossless ? 'Lossless source' : 'Lossy source'}</span></div><fieldset class="processing-fieldset"${passthrough ? ' disabled' : ''}><div class="form-grid"><label>Output codec<select data-audio-codec="${track.index}">${codecOptions}</select></label><label>Bitrate<select data-audio-bitrate="${track.index}">${bitrateOptions(setting.codec, setting.bitrate)}</select></label></div>${!track.isStereo && settings.filters.downmixToStereo ? `<div class="downmix-notice">${icon('audio', 16)} ${escapeHtml(track.channelLayout)} will be downmixed to stereo.</div>` : ''}</fieldset></section><section class="command-card"><div class="command-heading"><div><span>COMMAND PREVIEW</span><strong>${passthrough ? 'No conversion' : 'Audio workflow'}</strong></div><button id="copy-command">${icon('copy', 15)} Copy command</button></div><code id="command-preview">${escapeHtml(getCommand())}</code></section></div>`;
+    return `<div class="track-stack"><section class="track-card ${passthrough ? 'track-disabled' : ''}"><div class="track-heading"><div><span>AUDIO OUTPUT</span><h3>${escapeHtml(track.codecLabel)}</h3></div><span class="track-badge">${escapeHtml(track.channelLayout)}</span></div><div class="track-meta"><span>${track.channels} channel${track.channels === 1 ? '' : 's'}</span><span>${track.sampleRate ? `${track.sampleRate / 1000} kHz` : 'Unknown sample rate'}</span><span>${track.isLossless ? 'Lossless source' : 'Lossy source'}</span></div><fieldset class="processing-fieldset"${passthrough ? ' disabled' : ''}><div class="form-grid"><label>Output codec<select data-audio-codec="${track.index}">${codecOptions}</select></label><label>Bitrate<select data-audio-bitrate="${track.index}">${bitrateOptions(setting.codec, setting.bitrate)}</select></label></div>${!track.isStereo && settings.filters.downmixToStereo ? `<div class="downmix-notice">${icon('audio', 16)} ${escapeHtml(track.channelLayout)} will be downmixed to stereo.</div>` : ''}</fieldset>${renderMetadataEditor('audio', track.index, setting.metadata, !passthrough, false)}</section><section class="command-card"><div class="command-heading"><div><span>COMMAND PREVIEW</span><strong>${passthrough ? 'No conversion' : 'Audio workflow'}</strong></div><button id="copy-command">${icon('copy', 15)} Copy command</button></div><code id="command-preview">${escapeHtml(getCommand())}</code></section></div>`;
   }
   const constrained = isDeliveryPreset(settings);
   const metadataOnly = isMetadataOnly(settings);
   const processing = settings.processing.audio;
-  const warning = settings.filters.doNotReplaceAudio ? '' : dispositionWarning(settings.audio, 'audio');
-  return `<div class="track-stack">${renderProcessingToggle('audio', processing, 'Encode selected audio streams')}<div class="track-intro"><div><span>AUDIO OUTPUT</span><h3>One setting group per source track</h3></div><p>${metadataOnly ? 'All tracks will be copied; only language and disposition metadata can be changed.' : processing ? constrained ? 'Streaming and Cellular allow AAC or Opus only.' : 'Configure the selected output tracks.' : 'All source audio streams will be copied unchanged.'}</p></div>${processing && warning ? `<div class="flag-warning">${escapeHtml(warning)}</div>` : ''}${processing && settings.filters.doNotReplaceAudio ? '<div class="downmix-notice">Surround tracks are retained. The first generated stereo downmix becomes default; existing default and forced flags are removed.</div>' : ''}${tracks.map((track, position) => renderAudioTrack(track, position, settings.audio[track.index], constrained, settings.filters.doNotReplaceAudio, processing, metadataOnly)).join('')}</div>`;
+  return `<div class="track-stack">${renderProcessingToggle('audio', processing, 'Encode selected audio streams')}<div class="track-intro"><div><span>AUDIO OUTPUT</span><h3>One setting group per source track</h3></div><p>${metadataOnly ? 'All tracks will be copied; language and disposition metadata can be changed.' : processing ? constrained ? 'Streaming and Cellular allow AAC or Opus only.' : 'Configure the selected output tracks and their languages.' : 'All source audio streams will be copied unchanged.'}</p></div>${processing && settings.filters.doNotReplaceAudio ? '<div class="downmix-notice">Surround tracks are retained. The first generated stereo downmix becomes default; existing default and forced flags are removed.</div>' : ''}${tracks.map((track, position) => renderAudioTrack(track, position, settings.audio[track.index], constrained, settings.filters.doNotReplaceAudio, processing, metadataOnly)).join('')}</div>`;
 };
 const renderAudioTrack = (track: AudioStreamInfo, position: number, setting: AudioSetting, constrained: boolean, replaceAudio: boolean, processing: boolean, metadataOnly: boolean) => {
   const codecOptions = `<option value="libfdk_aac"${selected(setting.codec === 'libfdk_aac')}>AAC</option><option value="libopus"${selected(setting.codec === 'libopus')}>Opus</option>${constrained ? '' : `<option value="copy"${selected(setting.codec === 'copy')}>Passthrough</option>`}`;
-  return `<section class="track-card ${processing && setting.enabled || metadataOnly ? '' : 'track-disabled'}"><div class="track-heading"><div><span>TRACK ${position + 1}</span><h3>${position + 1}. Track ${position + 1}: ${escapeHtml(track.languageLabel)}</h3></div><span class="track-badge">${escapeHtml(track.codecLabel)}</span></div><div class="track-meta"><span>${track.channels} channel${track.channels === 1 ? '' : 's'}</span><span>${escapeHtml(track.channelLayout)}</span><span>${escapeHtml(flagsLabel(track.flags))}</span></div>
+  return `<section class="track-card ${processing && setting.enabled || metadataOnly ? '' : 'track-disabled'}"><div class="track-heading"><div><span>TRACK ${position + 1}</span><h3>${position + 1}. Track ${position + 1}: ${escapeHtml(mediaLanguageName(setting.metadata.language))}</h3></div><span class="track-badge">${escapeHtml(track.codecLabel)}</span></div><div class="track-meta"><span>${track.channels} channel${track.channels === 1 ? '' : 's'}</span><span>${escapeHtml(track.channelLayout)}</span><span>${escapeHtml(flagsLabel(setting.flags))}</span></div>
     <fieldset class="processing-fieldset"${processing ? '' : ' disabled'}><label class="check-label"><input type="checkbox" data-audio-enabled="${track.index}"${checked(setting.enabled)}/> Include track${setting.enabled ? '' : ' (lower-quality duplicate language track excluded)'}</label>
     ${processing && setting.enabled && !track.isStereo ? `<div class="downmix-notice">${icon('audio', 16)} Source is ${escapeHtml(track.channelLayout)}; this preset will downmix the track to stereo.</div>` : ''}
-    <div class="form-grid"><label>Output codec<select data-audio-codec="${track.index}"${setting.enabled ? '' : ' disabled'}>${codecOptions}</select></label><label>Bitrate<select data-audio-bitrate="${track.index}"${setting.enabled && setting.codec !== 'copy' ? '' : ' disabled'}>${bitrateOptions(setting.codec, setting.bitrate)}</select><small class="field-help">${setting.codec === 'libopus' ? 'Opus: 32–128 kbps' : setting.codec === 'libfdk_aac' ? 'AAC: 128–320 kbps' : 'Copied without re-encoding'}</small></label></div>${renderDispositionControls('audio', track.index, setting.flags, !setting.enabled, replaceAudio)}</fieldset>${renderMetadataEditor('audio', track.index, setting.metadata, metadataOnly)}</section>`;
+    <div class="form-grid"><label>Output codec<select data-audio-codec="${track.index}"${setting.enabled ? '' : ' disabled'}>${codecOptions}</select></label><label>Bitrate<select data-audio-bitrate="${track.index}"${setting.enabled && setting.codec !== 'copy' ? '' : ' disabled'}>${bitrateOptions(setting.codec, setting.bitrate)}</select><small class="field-help">${setting.codec === 'libopus' ? 'Opus: 32–128 kbps' : setting.codec === 'libfdk_aac' ? 'AAC: 128–320 kbps' : 'Copied without re-encoding'}</small></label></div>${renderDispositionControls('audio', track.index, setting.flags, !setting.enabled, replaceAudio)}</fieldset>${renderMetadataEditor('audio', track.index, setting.metadata, metadataOnly || processing && setting.enabled, metadataOnly)}</section>`;
 };
 
 const renderFilterSettings = (source: SourceFile, settings: JobSettings) => {
@@ -1880,6 +1879,38 @@ const renderFilterSettings = (source: SourceFile, settings: JobSettings) => {
       <label class="locked-check ${hasSurround ? '' : 'disabled'}"><input type="checkbox" data-job-behavior="doNotReplaceAudio"${checked(settings.filters.doNotReplaceAudio)}${hasSurround ? '' : ' disabled'}/> Do not replace audio track <small>Keep surround and add a default stereo downmix.</small></label></div></section></fieldset>`;
 };
 
+const importSubtitlesForSource = async (source: SourceFile, settings: JobSettings) => {
+  if (!source.media?.video) return;
+  const nextIndex = Math.max(-1, ...source.media.subtitles.map((track) => track.index)) + 1;
+  const result = await window.mediaAPI.importSubtitles(source.path, nextIndex).catch(() => null);
+  if (!result) {
+    showToast('Unable to import subtitle files');
+    return;
+  }
+  const existing = new Set(source.media.subtitles.flatMap((track) => track.externalPath
+    ? [track.externalPath.toLocaleLowerCase()] : []));
+  const imported = result.tracks.filter((track) => track.externalPath
+    && !existing.has(track.externalPath.toLocaleLowerCase()));
+  for (const track of imported) {
+    source.media.subtitles.push(track);
+    settings.subtitles[track.index] = {
+      enabled: true,
+      codec: settings.format === 'mp4' ? 'mov_text' : settings.format === 'webm' ? 'webvtt' : 'subrip',
+      flags: { ...track.flags },
+      metadata: copyMetadata(track.language, track.flags),
+    };
+  }
+  normalizeStreamDispositions(settings);
+  if (result.rejectedPaths.length) {
+    showToast(`${result.rejectedPaths.length} subtitle file${result.rejectedPaths.length === 1 ? '' : 's'} rejected: UTF-8 required`);
+  } else if (imported.length) {
+    showToast(`Imported ${imported.length} subtitle file${imported.length === 1 ? '' : 's'}`);
+  } else if (result.tracks.length) {
+    showToast('Those subtitle files are already imported');
+  }
+  renderWorkspace();
+};
+
 const renderSubtitleSettings = (source: SourceFile, settings: JobSettings) => {
   const tracks = orderByFlags(source.media?.subtitles ?? [], (track) => settings.subtitles[track.index]?.flags ?? track.flags);
   const metadataOnly = isMetadataOnly(settings);
@@ -1887,9 +1918,9 @@ const renderSubtitleSettings = (source: SourceFile, settings: JobSettings) => {
   const captionExtraction = isMusicVideoWorkflow(source)
     ? `<section class="settings-card closed-caption-card"><div class="card-title"><div><span>EMBEDDED CLOSED CAPTIONS</span><h3>Automatic CEA-608 / CEA-708 extraction</h3></div><span class="track-badge text">CCExtractor ${escapeHtml(runtimeState?.ccextractorVersion?.replace(/^v/i, '') ?? '')}</span></div><p>${runtimeState?.ccextractorAvailable ? 'Music Video automatically checks for embedded captions and remuxes any extracted SRT track.' : 'CCExtractor is unavailable, so embedded captions cannot be checked.'}</p></section>`
     : '';
-  if (!tracks.length) return `<div class="track-stack">${renderProcessingToggle('subtitles', processing, 'Encode selected subtitle streams')}${captionExtraction}<section class="empty-panel"><div class="empty-panel-icon">CC</div><span>SUBTITLES</span><h3>No separate subtitle tracks detected</h3><p>${isMusicVideoWorkflow(source) ? 'Embedded CEA-608/708 captions are checked automatically.' : 'No subtitle streams were reported by FFprobe.'}</p></section></div>`;
-  const warning = dispositionWarning(settings.subtitles, 'subtitle');
-  return `<div class="track-stack">${renderProcessingToggle('subtitles', processing, 'Encode selected subtitle streams')}${captionExtraction}<div class="track-intro"><div><span>SUBTITLE OUTPUT</span><h3>${tracks.length} detected track${tracks.length === 1 ? '' : 's'}</h3></div><div class="track-guidance"><p>${metadataOnly ? 'All tracks will be copied; only language and disposition metadata can be changed.' : processing ? settings.format === 'mp4' ? 'MP4 requires mov_text. Other subtitle formats are disabled.' : 'Text subtitles can be converted to SRT or WebVTT.' : 'All source subtitle streams will be copied unchanged.'}</p>${processing && warning ? `<span class="flag-warning inline">${escapeHtml(warning)}</span>` : ''}</div></div>${tracks.map((track, position) => renderSubtitleTrack(track, position, settings, processing, metadataOnly)).join('')}</div>`;
+  const importButton = `<button class="secondary-button import-subtitles" id="import-subtitles">${icon('captions', 16)} Import UTF-8 subtitles</button>`;
+  if (!tracks.length) return `<div class="track-stack">${renderProcessingToggle('subtitles', processing, 'Encode selected subtitle streams')}${captionExtraction}<section class="empty-panel"><div class="empty-panel-icon">CC</div><span>SUBTITLES</span><h3>No separate subtitle tracks detected</h3><p>${isMusicVideoWorkflow(source) ? 'Embedded captions are checked automatically. You can also import UTF-8 subtitle files.' : 'No subtitle streams were reported by FFprobe. Import SRT, ASS, SSA, or WebVTT files here.'}</p>${importButton}</section></div>`;
+  return `<div class="track-stack">${renderProcessingToggle('subtitles', processing, 'Encode selected subtitle streams')}${captionExtraction}<div class="track-intro"><div><span>SUBTITLE OUTPUT</span><h3>${tracks.length} detected track${tracks.length === 1 ? '' : 's'}</h3></div><div class="track-guidance"><p>${metadataOnly ? 'Embedded tracks are copied and imported UTF-8 files are added during source replacement.' : processing ? settings.format === 'mp4' ? 'MP4 converts text subtitles to mov_text.' : 'Text subtitles can be converted to SRT or WebVTT.' : 'Enable subtitle processing to include imported files.'}</p>${importButton}</div></div>${tracks.map((track, position) => renderSubtitleTrack(track, position, settings, processing, metadataOnly)).join('')}</div>`;
 };
 const renderSubtitleTrack = (track: SubtitleStreamInfo, position: number, settings: JobSettings, processing: boolean, metadataOnly: boolean) => {
   const setting = settings.subtitles[track.index], mp4 = settings.format === 'mp4', imageBlocked = track.kind === 'image' && mp4;
@@ -1898,9 +1929,9 @@ const renderSubtitleTrack = (track: SubtitleStreamInfo, position: number, settin
     : mp4
       ? '<option value="mov_text">MOV text (required by MP4)</option>'
       : `<option value="subrip"${selected(setting.codec === 'subrip')}>SRT (SubRip)</option><option value="webvtt"${selected(setting.codec === 'webvtt')}>WebVTT</option>`;
-  return `<section class="track-card ${processing && !imageBlocked || metadataOnly ? '' : 'track-disabled'}"><div class="track-heading"><div><span>TRACK ${position + 1}</span><h3>${position + 1}. Track ${position + 1}: ${escapeHtml(track.languageLabel)}</h3></div><span class="track-badge ${track.kind}">${escapeHtml(track.codecLabel)}</span></div>
-    <div class="track-meta"><span>${track.kind === 'text' ? 'Text-based' : 'Image-based'}</span><span>${track.isUtf8 ? 'UTF-8' : 'Binary image'}</span><span>${escapeHtml(flagsLabel(track.flags))}</span></div>${processing && imageBlocked ? '<div class="downmix-notice warning">Image subtitles cannot be converted to mov_text and will be excluded from MP4.</div>' : ''}
-    <fieldset class="processing-fieldset"${processing ? '' : ' disabled'}><div class="subtitle-controls"><label class="check-label"><input type="checkbox" data-subtitle-enabled="${track.index}"${checked(setting.enabled && !imageBlocked)}${imageBlocked ? ' disabled' : ''}/> Include track</label><label>Output format<select data-subtitle-codec="${track.index}"${mp4 || track.kind === 'image' ? ' disabled' : ''}>${options}</select></label></div>${renderDispositionControls('subtitle', track.index, setting.flags, imageBlocked || !setting.enabled)}</fieldset>${renderMetadataEditor('subtitle', track.index, setting.metadata, metadataOnly)}</section>`;
+  return `<section class="track-card ${processing && !imageBlocked || metadataOnly ? '' : 'track-disabled'}"><div class="track-heading"><div><span>TRACK ${position + 1}</span><h3>${position + 1}. Track ${position + 1}: ${escapeHtml(mediaLanguageName(setting.metadata.language))}</h3></div><span class="track-badge ${track.kind}">${escapeHtml(track.codecLabel)}</span></div>
+    <div class="track-meta"><span>${track.kind === 'text' ? 'Text-based' : 'Image-based'}</span><span>${track.isUtf8 ? 'UTF-8' : 'Binary image'}</span><span>${escapeHtml(flagsLabel(setting.flags))}</span></div>${processing && imageBlocked ? '<div class="downmix-notice warning">Image subtitles cannot be converted to mov_text and will be excluded from MP4.</div>' : ''}
+    <fieldset class="processing-fieldset"${processing ? '' : ' disabled'}><div class="subtitle-controls"><label class="check-label"><input type="checkbox" data-subtitle-enabled="${track.index}"${checked(setting.enabled && !imageBlocked)}${imageBlocked ? ' disabled' : ''}/> Include track</label><label>Output format<select data-subtitle-codec="${track.index}"${mp4 || track.kind === 'image' ? ' disabled' : ''}>${options}</select></label></div>${renderDispositionControls('subtitle', track.index, setting.flags, imageBlocked || !setting.enabled)}</fieldset>${renderMetadataEditor('subtitle', track.index, setting.metadata, metadataOnly || processing && setting.enabled && !imageBlocked, metadataOnly)}</section>`;
 };
 
 const updateCommand = () => {
@@ -1987,7 +2018,8 @@ const bindContentEvents = () => {
       for (const track of source.media?.subtitles ?? []) {
         const subtitle = settings.subtitles[track.index];
         if (settings.format === 'mp4') { subtitle.enabled = track.kind === 'text' && subtitle.enabled; subtitle.codec = track.kind === 'text' ? 'mov_text' : 'copy'; }
-        else if (track.kind === 'text' && subtitle.codec === 'mov_text') subtitle.codec = 'subrip';
+        else if (settings.format === 'webm') { subtitle.enabled = track.kind === 'text' && subtitle.enabled; subtitle.codec = track.kind === 'text' ? 'webvtt' : 'copy'; }
+        else if (track.kind === 'text' && (subtitle.codec === 'mov_text' || subtitle.codec === 'webvtt')) subtitle.codec = 'subrip';
       }
       markCustom(settings);
       renderWorkspace();
@@ -2033,12 +2065,24 @@ const bindContentEvents = () => {
         settings.audio[other.index].flags = { default: false, forced: false, hearingImpaired: false };
       }
     }
-    normalizeUniqueFlags(settings.audio);
+    consolidatePrimaryDispositions(settings.audio);
     markCustom(settings);
     renderWorkspace();
   }));
   document.querySelectorAll<HTMLSelectElement>('[data-audio-bitrate]').forEach((control) => control.addEventListener('change', () => { settings.audio[Number(control.dataset.audioBitrate)].bitrate = control.value; markCustom(settings); updateCommand(); }));
-  document.querySelectorAll<HTMLInputElement>('[data-subtitle-enabled]').forEach((control) => control.addEventListener('change', () => { settings.subtitles[Number(control.dataset.subtitleEnabled)].enabled = control.checked; markCustom(settings); renderWorkspace(); }));
+  document.querySelectorAll<HTMLInputElement>('[data-subtitle-enabled]').forEach((control) => control.addEventListener('change', () => {
+    const setting = settings.subtitles[Number(control.dataset.subtitleEnabled)];
+    setting.enabled = control.checked;
+    if (!control.checked) {
+      setting.flags.default = false;
+      setting.flags.forced = false;
+    }
+    consolidatePrimaryDispositions(settings.subtitles);
+    markCustom(settings);
+    renderWorkspace();
+  }));
+  document.querySelector<HTMLButtonElement>('#import-subtitles')?.addEventListener('click', () =>
+    void importSubtitlesForSource(source, settings));
   document.querySelector<HTMLInputElement>('[data-extract-closed-captions]')?.addEventListener('change', (event) => {
     settings.filters.extractClosedCaptions = (event.currentTarget as HTMLInputElement).checked;
     markCustom(settings);
@@ -2050,10 +2094,7 @@ const bindContentEvents = () => {
     const index = Number(control.dataset.streamIndex);
     const flag = control.dataset.streamFlag as keyof StreamFlags;
     const record = kind === 'audio' ? settings.audio : settings.subtitles;
-    if (control.checked && (flag === 'default' || flag === 'forced')) {
-      Object.values(record).forEach((setting) => { setting.flags[flag] = false; });
-    }
-    record[index].flags[flag] = control.checked;
+    setPrimaryDisposition(record, index, flag, control.checked);
     markCustom(settings);
     renderWorkspace();
   }));
@@ -2077,11 +2118,11 @@ const bindContentEvents = () => {
       : kind === 'audio'
         ? settings.audio[index].metadata
         : settings.subtitles[index].metadata;
-    if (control.checked && (flag === 'default' || flag === 'forced') && kind !== 'video') {
+    if (kind === 'video') metadata.flags[flag] = control.checked;
+    else {
       const record = kind === 'audio' ? settings.audio : settings.subtitles;
-      Object.values(record).forEach((setting) => { setting.metadata.flags[flag] = false; });
+      setPrimaryDisposition(metadataDispositionRecord(record), index, flag, control.checked);
     }
-    metadata.flags[flag] = control.checked;
     renderWorkspace();
   }));
   document.querySelectorAll<HTMLInputElement>('[data-filter]').forEach((control) => control.addEventListener('change', () => {
@@ -2174,7 +2215,6 @@ const bindWorkspaceEvents = () => {
   document.querySelectorAll<HTMLElement>('[data-source-index]').forEach((row) => row.addEventListener('click', () => {
     selectedIndex = Number(row.dataset.sourceIndex);
     if (!outputDirectoryIsCustom) outputDirectory = makeDefaultOutputDirectory(sources[selectedIndex]);
-    void window.mediaAPI.prepareOutputDirectory(outputDirectoryFor(sources[selectedIndex]));
     renderWorkspace();
   }));
   document.querySelectorAll<HTMLElement>('[data-tab]').forEach((tab) => tab.addEventListener('click', () => { activeTab = tab.dataset.tab || 'Summary'; renderWorkspace(); }));
@@ -2246,7 +2286,7 @@ const startApplication = async () => {
     }
     await new Promise((resolve) => window.setTimeout(resolve, runtimeState?.phase === 'error' ? 900 : 350));
   } catch (error) {
-    runtimeState = { phase: 'error', message: error instanceof Error ? error.message : 'Unable to initialize FFmpeg', progress: null, appVersion: '2.3.1', isPackaged: false, updateEnabled: false, ffmpegAvailable: false, ffmpegPath: '', ffprobePath: '', ffmpegVersion: null, releaseTag: null, ffmpegChannel: appSettings.useStableFfmpeg ? 'stable' : 'unstable', rsgainAvailable: false, rsgainPath: '', rsgainVersion: null, ccextractorAvailable: false, ccextractorPath: '', ccextractorVersion: null };
+    runtimeState = { phase: 'error', message: error instanceof Error ? error.message : 'Unable to initialize FFmpeg', progress: null, appVersion: '2.4.0', isPackaged: false, updateEnabled: false, ffmpegAvailable: false, ffmpegPath: '', ffprobePath: '', ffmpegVersion: null, releaseTag: null, ffmpegChannel: appSettings.useStableFfmpeg ? 'stable' : 'unstable', rsgainAvailable: false, rsgainPath: '', rsgainVersion: null, ccextractorAvailable: false, ccextractorPath: '', ccextractorVersion: null };
     renderBootstrap(runtimeState); await new Promise((resolve) => window.setTimeout(resolve, 900));
   } finally { removeProgressListener(); }
   if (!builtInPresets) return;

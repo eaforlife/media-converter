@@ -11,17 +11,22 @@ export const MEDIA_LANGUAGES = [
   ['ukr', 'Ukrainian'], ['vie', 'Vietnamese'],
 ] as const;
 
-const LANGUAGE_NAMES = new Map<string, string>([
-  ...MEDIA_LANGUAGES,
-  ['en', 'English'], ['es', 'Spanish'], ['fre', 'French'], ['fr', 'French'],
-  ['ger', 'German'], ['de', 'German'], ['it', 'Italian'], ['pt', 'Portuguese'],
-  ['ja', 'Japanese'], ['ko', 'Korean'], ['chi', 'Chinese'], ['zh', 'Chinese'],
-  ['ru', 'Russian'], ['ar', 'Arabic'], ['hi', 'Hindi'], ['cze', 'Czech'],
-  ['dut', 'Dutch'], ['gre', 'Greek'], ['may', 'Malay'], ['slo', 'Slovak'],
+const LANGUAGE_NAMES = new Map<string, string>(MEDIA_LANGUAGES);
+const LANGUAGE_ALIASES = new Map<string, string>([
+  ['ar', 'ara'], ['bg', 'bul'], ['chi', 'zho'], ['zh', 'zho'], ['cze', 'ces'], ['cs', 'ces'],
+  ['da', 'dan'], ['dut', 'nld'], ['nl', 'nld'], ['en', 'eng'], ['et', 'est'], ['fi', 'fin'],
+  ['fr', 'fra'], ['fre', 'fra'], ['de', 'deu'], ['ger', 'deu'], ['el', 'ell'], ['gre', 'ell'],
+  ['he', 'heb'], ['hi', 'hin'], ['hu', 'hun'], ['id', 'ind'], ['it', 'ita'], ['ja', 'jpn'],
+  ['ko', 'kor'], ['lv', 'lav'], ['lt', 'lit'], ['may', 'msa'], ['ms', 'msa'], ['no', 'nor'],
+  ['pl', 'pol'], ['pt', 'por'], ['ro', 'ron'], ['ru', 'rus'], ['sk', 'slk'], ['slo', 'slk'],
+  ['sl', 'slv'], ['es', 'spa'], ['sv', 'swe'], ['ta', 'tam'], ['te', 'tel'], ['th', 'tha'],
+  ['tr', 'tur'], ['uk', 'ukr'], ['vi', 'vie'],
 ]);
 
-export const normalizeMediaLanguage = (language?: string) =>
-  (language || 'und').trim().toLowerCase() || 'und';
+export const normalizeMediaLanguage = (language?: string) => {
+  const normalized = (language || 'und').trim().toLowerCase() || 'und';
+  return LANGUAGE_ALIASES.get(normalized) ?? normalized;
+};
 
 export const mediaLanguageName = (language?: string) => {
   const normalized = normalizeMediaLanguage(language);

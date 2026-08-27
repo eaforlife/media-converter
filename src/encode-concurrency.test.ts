@@ -5,6 +5,7 @@ import {
   cancelAdaptiveQueueActivity,
   canAddEncodeJob,
   encoderConcurrencyLimit,
+  forceCloseOwnedProcesses,
   initialThroughputConcurrencyLimit,
   lockThroughputConcurrencyLimit,
   NVENC_SESSION_LIMIT,
@@ -25,6 +26,20 @@ test('cancel all interrupts every adaptive wait and active encode', () => {
   );
   assert.equal(cancelledWaits, 2);
   assert.equal(killedProcesses, 2);
+});
+
+test('queue cleanup force-closes only the child processes owned by the app', () => {
+  const signals: Array<string | number | undefined> = [];
+  const owned = [
+    { exitCode: null, signalCode: null, kill: (signal?: string | number) => { signals.push(signal); return true; } },
+    { exitCode: 0, signalCode: null, kill: (signal?: string | number) => { signals.push(signal); return true; } },
+  ];
+  let unrelatedKills = 0;
+  const unrelated = { exitCode: null, signalCode: null, kill: () => { unrelatedKills += 1; return true; } };
+  assert.equal(forceCloseOwnedProcesses(owned), 1);
+  assert.deepEqual(signals, ['SIGKILL']);
+  assert.equal(unrelatedKills, 0);
+  assert.equal(unrelated.exitCode, null);
 });
 
 test('adaptive concurrency is limited to supported NVENC sessions', () => {

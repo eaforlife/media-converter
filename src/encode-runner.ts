@@ -8,7 +8,7 @@ import { logActivity } from './app-logger';
 import { ccextractorArguments, injectClosedCaptionInput } from './closed-caption';
 import {
   ADAPTIVE_SAMPLE_MS, averageAggregateFps, canAddEncodeJob, cancelAdaptiveQueueActivity, encoderConcurrencyLimit,
-  lockThroughputConcurrencyLimit,
+  forceCloseOwnedProcesses, lockThroughputConcurrencyLimit,
 } from './encode-concurrency';
 import { rsgainArguments, successfulNormalizationRoots } from './audio-workflow';
 import { replaceSourceWithMetadataOutput } from './metadata-replacement';
@@ -616,6 +616,8 @@ export const startEncodeQueue = async (
         });
       }
     } finally {
+      const forceClosed = forceCloseOwnedProcesses(activeProcesses.values());
+      if (forceClosed) logActivity('WARN', 'ffmpeg.queue.owned-processes-force-closed', { count: forceClosed });
       activeProcesses.clear();
       cancelCooldowns.clear();
       cancelledJobs.clear();

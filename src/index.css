@@ -539,6 +539,7 @@ input[type='number']:disabled { color: #737b87; background: #11151a; cursor: not
 .flag-warning.inline { display: block; margin-top: 8px; text-align: left; }
 .track-guidance { max-width: 560px; }
 .track-guidance p { margin: 0; color: #737d8b; font-size: 15px; line-height: 1.5; text-align: right; }
+.track-guidance .import-subtitles { width: max-content; margin: 10px 0 0 auto; }
 
 .menu-identity { display: flex; flex-direction: column; gap: 3px; margin: -1px -1px 7px; padding: 12px 13px; border-bottom: 1px solid #2b313b; }
 .menu-identity strong { color: #f0f2f6; font-size: 17px; }

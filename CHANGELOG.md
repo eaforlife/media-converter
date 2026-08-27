@@ -4,6 +4,29 @@ All notable changes to EA Media Tools are documented here.
 
 ## [Unreleased]
 
+## [2.4.0] - 2026-08-27
+
+### Added
+
+- Scan UTF-8 SRT, ASS, SSA, and WebVTT sidecars beside every selected video in single-file, multi-file, and recursive folder modes, matching only the video with the same basename in the same directory.
+- Import one or more UTF-8 subtitle files directly from the subtitle tab, including during metadata-only source replacement.
+- Edit audio and subtitle output languages during conversion, including streams reported as undefined.
+- Detect every CUVID decoder exposed by the active Jellyfin FFmpeg and use decoder-side zero-copy crop when the matching NVIDIA format is available.
+- Populate normal predefined presets from every valid `presets.ini` section while keeping Music Video exclusive to Music Video mode.
+
+### Changed
+
+- Consolidate default and forced dispositions onto the first flagged audio or subtitle track, inheriting the other primary flag when it was found on another language; hearing-impaired flags remain independent.
+- Improve dark-scene quality defaults for Regular, Streaming, Cellular, and Music Video presets while retaining each preset's speed and bitrate limits.
+- Create default `converted` directories only after an encode queue has been accepted and is starting.
+- Force-close any still-running child process owned by the completed queue without targeting unrelated FFmpeg processes.
+
+### Fixed
+
+- Prevent Windows video-option toggles from blanking the renderer.
+- Fall back from unavailable decoder-side NVIDIA crop to the protected NVDEC download, CPU crop, and CUDA upload bridge.
+- Convert imported text subtitles to `mov_text` for MP4 output and during MP4 metadata-only source replacement.
+
 ## [2.3.1] - 2026-08-27
 
 ### Added
@@ -253,6 +276,7 @@ All notable changes to EA Media Tools are documented here.
 - Convert crop offsets to CUVID edge values with division by two and floor rounding.
 - Cancel all active parallel encodes and interrupt pending cooldowns when the queue is stopped or a job fails.
 
+[2.4.0]: https://github.com/eaforlife/media-converter/compare/v2.3.1...v2.4.0
 [2.3.1]: https://github.com/eaforlife/media-converter/compare/v2.3.0...v2.3.1
 [2.3.0]: https://github.com/eaforlife/media-converter/compare/v2.2.1...v2.3.0
 [2.2.1]: https://github.com/eaforlife/media-converter/compare/v2.2.0...v2.2.1

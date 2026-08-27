@@ -2,7 +2,7 @@
 
 EA Media Tools is a desktop video and audio converter powered by Jellyfin FFmpeg. It inspects video, audio, subtitle, chapter, HDR, and Dolby Vision metadata; selects hardware or CPU processing; and runs queued conversions with live progress information.
 
-Version 2.3.1, codename **jaguar**, is the current stable release. It supports video files, short music videos with attached artwork, and recursive audio libraries. Hardware acceleration is enabled by default but can be disabled for CPU video encoding and decoding.
+Version 2.4.0, codename **jaguar**, is the current stable release. It supports video files, short music videos with attached artwork, and recursive audio libraries. Hardware acceleration is enabled by default but can be disabled for CPU video encoding and decoding.
 
 ## Download
 
@@ -12,7 +12,7 @@ Choose the asset that matches your operating system and CPU:
 
 | System | Intel/AMD 64-bit | ARM 64-bit |
 | --- | --- | --- |
-| Windows | `EA-Media-Tools-2.3.1-x64-Setup.exe` | `EA-Media-Tools-2.3.1-arm64-Setup.exe` |
+| Windows | `EA-Media-Tools-2.4.0-x64-Setup.exe` | `EA-Media-Tools-2.4.0-arm64-Setup.exe` |
 | macOS | ZIP containing `darwin-x64` | ZIP containing `darwin-arm64` for Apple silicon |
 | Debian/Ubuntu | `.deb` containing `amd64` | `.deb` containing `arm64` |
 
@@ -41,7 +41,7 @@ The macOS app is not signed or notarized. To uninstall it, quit the app and move
 Install the downloaded package from a terminal. Replace the filename with the asset you downloaded:
 
 ```bash
-sudo apt install ./ea-media-tools_2.3.1_amd64.deb
+sudo apt install ./ea-media-tools_2.4.0_amd64.deb
 ```
 
 ARM64 systems use the package ending in `arm64.deb`. Launch **EA Media Tools** from the desktop application menu. Remove it with:
@@ -64,7 +64,7 @@ Videos shorter than eight minutes with attached cover artwork use the Music Vide
 
 The app then checks the GPU driving the primary physical display. Virtual and secondary display adapters are ignored and recorded in **View Logs**. An encoder appears only after the corresponding Jellyfin FFmpeg flag completes an actual test encode on the installed hardware.
 
-Folder analysis inspects up to two videos at a time. Matching SRT sidecars are attached when their filename begins with the complete video basename, followed only by a language and/or disposition tokens—for example, `Show A H264.en.default.srt` matches `Show A H264.mkv`. Two- or three-letter language codes set the displayed language; `default`, `forced`, and `sdh` set the corresponding subtitle flags. Attached sidecars appear immediately in the subtitle tab and MP4 output converts them to `mov_text`.
+Folder analysis inspects up to two videos at a time and recursively discovers video batches. Single-file, multi-file, and folder modes scan beside each video for UTF-8 SRT, ASS, SSA, and WebVTT sidecars with the same basename. `Show A.srt` and `Show A.en.default.srt` match `Show A.mkv`, while a same-named file in another season directory does not. Two- or three-letter language codes set the displayed language; `default`, `forced`, and `sdh` set the corresponding subtitle flags. Sidecars appear immediately in the subtitle tab, can also be imported manually, and MP4 output converts text subtitles to `mov_text`.
 
 With smart naming enabled, sources containing season and episode numbers use the series/year/season layout. A source without both numbers is treated as a movie and uses `converted/Title (Year)/Title.ext`, omitting the year suffix when none can be parsed.
 
@@ -72,7 +72,7 @@ An NVENC-only batch begins with one encode and measures its average speed for 10
 
 The encode window keeps a separate progress page for every queued video. Browse pages with **Previous** and **Next** to inspect pending, active, completed, cancelled, or failed jobs. **Live FFmpeg Output** opens one console-style session log containing every command as its encode starts; executable and media paths are displayed as `ffmpeg`, `<input>`, and `<output>`. **Start New** becomes available after the queue settles. **Done** appears only after every job has completed or cancelled, then waits for active workers and partial-output cleanup before closing the app.
 
-Video, audio, and subtitle tabs each have a processing checkbox. Checked sections use their configured encoder settings; unchecked sections copy every source stream without re-encoding. Uncheck all three sections to enter metadata-only mode, where stream languages and default, forced, and hearing-impaired dispositions can be edited. After changing metadata, choose **Apply to all sources in queue** to copy only those changed fields to corresponding streams in every queued video or audio source. The app creates a same-directory `_tmp00` (or queue-indexed) stream copy, installs it only after FFmpeg succeeds, and restores the original if replacement cannot complete.
+Video, audio, and subtitle tabs each have a processing checkbox. Checked sections use their configured encoder settings; unchecked sections copy every source stream without re-encoding. Audio and subtitle languages can be set during conversion, including when FFprobe reports them as undefined. Only one audio track and one subtitle track can hold the default and forced flags; when those flags begin on different tracks, the first flagged track inherits both, while hearing-impaired flags remain independent. Uncheck all three sections to enter metadata-only mode, where stream languages and dispositions can be edited and UTF-8 subtitle files can be imported. The app creates a same-directory `_tmp00` (or queue-indexed) stream copy, installs it only after FFmpeg succeeds, and restores the original if replacement cannot complete.
 
 Advanced video controls are selected for the active encoder. NVENC exposes B-frames, multipass, B-frame references, adaptive B-frames, scene-cut detection, RC lookahead, non-reference P-frames, spatial AQ, and temporal AQ. QSV, AMF, and software encoders show only controls with an encoder-specific FFmpeg mapping; CUDA-only flags are never sent to them. P1-P7 speed and Tune controls follow the same rule. The top bar reports the decoder selected for the current source.
 
@@ -98,7 +98,7 @@ Windows x64 builds check the public Squirrel feed at startup and every 15 minute
 
 Every packaged Windows startup removes obsolete `app-<version>` installation directories and retries anything that was locked during the update event. Only the running version is kept. Logs archived by an earlier version are deleted, and the active runtime log is reset when its recorded application version differs from the current release.
 
-Auto Scale chooses an output profile from the source resolution. Selecting a scale explicitly applies that output profile's dimensions, bitrate limits, and buffer to the active built-in preset. When auto-crop removes black bars, the app derives an even output height from the cropped display aspect ratio before sending the dimensions to CUDA, QSV, AMF, VA-API, VideoToolbox, or a CPU encoder. On NVIDIA, auto-crop keeps generic NVDEC active: frames cross a protected download/upload bridge only for the crop operation, then return to CUDA for scaling, tone mapping when enabled, and NVENC output. A genuine hardware-decode failure still retries once with software decoding and the selected NVENC encoder.
+Auto Scale chooses an output profile from the source resolution. Selecting a scale explicitly applies that output profile's dimensions, bitrate limits, and buffer to the active built-in preset. When auto-crop removes black bars, the app derives an even output height from the cropped display aspect ratio before sending the dimensions to CUDA, QSV, AMF, VA-API, VideoToolbox, or a CPU encoder. On NVIDIA, a matching CUVID decoder crops in-place without leaving GPU memory. If decoder-side crop is unavailable, generic NVDEC uses the protected download, CPU crop, and CUDA upload bridge before CUDA scaling, optional tone mapping, and NVENC output. A genuine hardware-decode failure still retries once with software decoding and the selected NVENC encoder.
 
 | Output profile | FFmpeg scale | Maximum video rate | Streaming NVENC quality |
 | --- | --- | --- | --- |

@@ -1,6 +1,7 @@
 import type { EncodeJob } from './shared-types';
 
 type KillableProcess = { kill: () => unknown };
+type OwnedProcess = { exitCode: number | null; signalCode: NodeJS.Signals | null; kill: (signal?: NodeJS.Signals | number) => unknown };
 
 export const ADAPTIVE_SAMPLE_MS = 10_000;
 export const MINIMUM_JOB_FPS = 200;
@@ -45,6 +46,15 @@ export const cancelAdaptiveQueueActivity = (
 ) => {
   for (const cancel of [...pendingWaits]) cancel();
   for (const process of activeProcesses) process.kill();
+};
+
+export const forceCloseOwnedProcesses = (ownedProcesses: Iterable<OwnedProcess>) => {
+  let killed = 0;
+  for (const process of [...ownedProcesses]) {
+    if (process.exitCode !== null || process.signalCode !== null) continue;
+    if (process.kill('SIGKILL')) killed += 1;
+  }
+  return killed;
 };
 
 export const canAddEncodeJob = (aggregateFps: number | null, activeJobs: number, limit: number) => {

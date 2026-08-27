@@ -66,6 +66,11 @@ export type SubtitleStreamInfo = {
   externalPath?: string;
 };
 
+export type SubtitleImportResult = {
+  tracks: SubtitleStreamInfo[];
+  rejectedPaths: string[];
+};
+
 export type StreamFlags = {
   default: boolean;
   forced: boolean;

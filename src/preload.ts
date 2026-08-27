@@ -1,6 +1,7 @@
 import { contextBridge, ipcRenderer } from 'electron';
 import type {
   AppSettings, EncodeJob, EncodeProgress, EncodeStartResult, HardwareCapabilities, RuntimeState, SavedPreset, SourceFile,
+  SubtitleImportResult,
 } from './shared-types';
 import type { BuiltInPresetCatalog } from './presets';
 
@@ -9,10 +10,10 @@ export type { AppSettings, RuntimeState, SourceFile } from './shared-types';
 contextBridge.exposeInMainWorld('mediaAPI', {
   openFile: (initialDirectory?: string): Promise<SourceFile[]> => ipcRenderer.invoke('source:open-file', initialDirectory),
   openFolder: (initialDirectory?: string): Promise<SourceFile[]> => ipcRenderer.invoke('source:open-folder', initialDirectory),
+  importSubtitles: (sourcePath: string, firstIndex: number): Promise<SubtitleImportResult> =>
+    ipcRenderer.invoke('subtitle:import', sourcePath, firstIndex),
   chooseOutputDirectory: (defaultPath: string): Promise<string | null> =>
     ipcRenderer.invoke('output:choose-directory', defaultPath),
-  prepareOutputDirectory: (directoryPath: string): Promise<boolean> =>
-    ipcRenderer.invoke('output:prepare-directory', directoryPath),
   showInFolder: (targetPath: string): Promise<void> => ipcRenderer.invoke('path:show', targetPath),
   loadSettings: (): Promise<AppSettings> => ipcRenderer.invoke('settings:load'),
   saveSettings: (settings: AppSettings): Promise<void> => ipcRenderer.invoke('settings:save', settings),
@@ -56,8 +57,8 @@ declare global {
     mediaAPI: {
       openFile: (initialDirectory?: string) => Promise<SourceFile[]>;
       openFolder: (initialDirectory?: string) => Promise<SourceFile[]>;
+      importSubtitles: (sourcePath: string, firstIndex: number) => Promise<SubtitleImportResult>;
       chooseOutputDirectory: (defaultPath: string) => Promise<string | null>;
-      prepareOutputDirectory: (directoryPath: string) => Promise<boolean>;
       showInFolder: (targetPath: string) => Promise<void>;
       loadSettings: () => Promise<AppSettings>;
       saveSettings: (settings: AppSettings) => Promise<void>;

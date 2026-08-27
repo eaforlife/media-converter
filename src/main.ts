@@ -19,9 +19,12 @@ import { initializeRuntime, selectRuntimeChannel } from './runtime-manager';
 import { loadSettings, readConfig, saveSettings } from './settings-store';
 import { loadBuiltInPresets, presetFilePath, readPresetFile } from './preset-store';
 import { customPresetFilePath, loadCustomPresets, readCustomPresetFile, saveCustomPresets } from './custom-preset-store';
-import { externalSubtitleTracks } from './external-subtitles';
+import {
+  externalSubtitleTracks, importedSubtitleTracks, isSupportedExternalSubtitle, isUtf8SubtitleData,
+  UTF8_SUBTITLE_EXTENSIONS,
+} from './external-subtitles';
 import { shouldDisableUiHardwareAcceleration } from './ui-rendering';
-import type { AppSettings, EncodeJob, HardwareCapabilities, RuntimeState, SourceFile } from './shared-types';
+import type { AppSettings, EncodeJob, HardwareCapabilities, RuntimeState, SourceFile, SubtitleImportResult } from './shared-types';
 
 // Electron's UI compositor is independent of FFmpeg's CUDA/NVDEC/NVENC path.
 // Software UI rendering avoids Windows GPU-driver resets that can blank the frameless window.
@@ -322,22 +325,48 @@ const attachExternalSubtitles = (files: SourceFile[], subtitlePaths: readonly st
   return { ...file, media: { ...file.media, subtitles: [...file.media.subtitles, ...external] } };
 });
 
+const readableUtf8SubtitlePaths = (subtitlePaths: readonly string[]) => subtitlePaths.filter((subtitlePath) => {
+  try {
+    return isSupportedExternalSubtitle(subtitlePath) && isUtf8SubtitleData(fs.readFileSync(subtitlePath));
+  } catch {
+    return false;
+  }
+});
+
+const subtitlesBeside = (filePaths: readonly string[]) => {
+  const paths: string[] = [];
+  for (const directory of new Set(filePaths.map((filePath) => path.dirname(filePath)))) {
+    try {
+      for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+        if (entry.isFile() && isSupportedExternalSubtitle(entry.name)) paths.push(path.join(directory, entry.name));
+      }
+    } catch {
+      continue;
+    }
+  }
+  return readableUtf8SubtitlePaths(paths);
+};
+
 const keepOneWorkflow = (files: SourceFile[]) => {
   const workflow = files[0]?.workflow;
   return workflow ? files.filter((file) => file.workflow === workflow) : files;
 };
 
-const recursivelyFindAudio = (root: string) => {
-  const found: string[] = [];
+const recursivelyFindMedia = (root: string) => {
+  const videos: string[] = [];
+  const audio: string[] = [];
+  const subtitles: string[] = [];
   const visit = (directory: string) => {
     for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
       const fullPath = path.join(directory, entry.name);
-      if (entry.isDirectory() && !(directory === root && entry.name.toLowerCase() === 'converted')) visit(fullPath);
-      else if (entry.isFile() && AUDIO_EXTENSIONS.has(path.extname(entry.name).toLowerCase())) found.push(fullPath);
+      if (entry.isDirectory() && entry.name.toLowerCase() !== 'converted') visit(fullPath);
+      else if (entry.isFile() && VIDEO_EXTENSIONS.has(path.extname(entry.name).toLowerCase())) videos.push(fullPath);
+      else if (entry.isFile() && AUDIO_EXTENSIONS.has(path.extname(entry.name).toLowerCase())) audio.push(fullPath);
+      else if (entry.isFile() && isSupportedExternalSubtitle(entry.name)) subtitles.push(fullPath);
     }
   };
   visit(root);
-  return found;
+  return { videos, audio, subtitles: readableUtf8SubtitlePaths(subtitles) };
 };
 
 const checkForAppUpdate = () => {
@@ -529,7 +558,8 @@ const registerIpc = () => {
     if (result.canceled) return [];
     logActivity('INFO', 'source.file-selection', { count: result.filePaths.length });
     const files = result.filePaths.map((filePath) => toSourceFile(filePath)).filter((file): file is SourceFile => file !== null);
-    return keepOneWorkflow(await inspectSources(files));
+    const inspected = keepOneWorkflow(await inspectSources(files));
+    return attachExternalSubtitles(inspected, subtitlesBeside(result.filePaths));
   });
 
   ipcMain.handle('source:open-folder', async (event, initialDirectory?: string) => {
@@ -547,19 +577,13 @@ const registerIpc = () => {
 
     try {
       const sourceRoot = result.filePaths[0];
-      const entries = fs.readdirSync(sourceRoot, { withFileTypes: true });
-      const topLevelVideos = entries
-        .filter((entry) => entry.isFile() && VIDEO_EXTENSIONS.has(path.extname(entry.name).toLowerCase()))
-        .map((entry) => path.join(sourceRoot, entry.name));
-      const selectedPaths = topLevelVideos.length ? topLevelVideos : recursivelyFindAudio(sourceRoot);
-      const subtitlePaths = entries
-        .filter((entry) => entry.isFile() && path.extname(entry.name).toLowerCase() === '.srt')
-        .map((entry) => path.join(sourceRoot, entry.name));
+      const discovered = recursivelyFindMedia(sourceRoot);
+      const selectedPaths = discovered.videos.length ? discovered.videos : discovered.audio;
       const files = selectedPaths
         .map((filePath) => toSourceFile(filePath, sourceRoot))
         .filter((file): file is SourceFile => file !== null);
       const inspected = keepOneWorkflow(await inspectSources(files));
-      return topLevelVideos.length ? attachExternalSubtitles(inspected, subtitlePaths) : inspected;
+      return discovered.videos.length ? attachExternalSubtitles(inspected, discovered.subtitles) : inspected;
     } catch {
       return [];
     }
@@ -585,22 +609,26 @@ const registerIpc = () => {
     const rsgainPath = runtimeState?.rsgainAvailable ? runtimeState.rsgainPath : '';
     return startEncodeQueue(ffmpegPath, ccextractorPath, rsgainPath, jobs, event.sender);
   });
-  ipcMain.handle('encode:cancel', (_event, jobIndex?: number) => cancelEncoding(jobIndex));
 
-  ipcMain.handle('output:prepare-directory', async (_event, directoryPath: string) => {
-    if (!directoryPath || !path.isAbsolute(directoryPath)) return false;
-    try {
-      await fs.promises.mkdir(directoryPath, { recursive: true });
-      logActivity('INFO', 'output.directory.ready', { path: directoryPath });
-      return true;
-    } catch (error) {
-      logActivity('ERROR', 'output.directory.failed', {
-        path: directoryPath,
-        error: error instanceof Error ? error.message : String(error),
-      });
-      return false;
-    }
+  ipcMain.handle('subtitle:import', async (event, sourcePath: string, firstIndex: number): Promise<SubtitleImportResult> => {
+    const parent = BrowserWindow.fromWebContents(event.sender);
+    const options: Electron.OpenDialogOptions = {
+      title: 'Import UTF-8 subtitle files',
+      defaultPath: path.dirname(sourcePath),
+      properties: ['openFile', 'multiSelections'],
+      filters: [{ name: 'UTF-8 subtitle files', extensions: UTF8_SUBTITLE_EXTENSIONS.map((ext) => ext.slice(1)) }],
+    };
+    const result = parent
+      ? await dialog.showOpenDialog(parent, options)
+      : await dialog.showOpenDialog(options);
+    if (result.canceled) return { tracks: [], rejectedPaths: [] };
+    const validPaths = readableUtf8SubtitlePaths(result.filePaths);
+    const valid = new Set(validPaths.map((subtitlePath) => path.resolve(subtitlePath).toLocaleLowerCase()));
+    const rejectedPaths = result.filePaths.filter((subtitlePath) =>
+      !valid.has(path.resolve(subtitlePath).toLocaleLowerCase()));
+    return { tracks: importedSubtitleTracks(sourcePath, validPaths, firstIndex), rejectedPaths };
   });
+  ipcMain.handle('encode:cancel', (_event, jobIndex?: number) => cancelEncoding(jobIndex));
 
   ipcMain.handle('path:show', async (_event, targetPath: string) => {
     if (targetPath) shell.showItemInFolder(targetPath);
