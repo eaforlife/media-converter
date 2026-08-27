@@ -20,7 +20,12 @@ import { loadSettings, readConfig, saveSettings } from './settings-store';
 import { loadBuiltInPresets, presetFilePath, readPresetFile } from './preset-store';
 import { customPresetFilePath, loadCustomPresets, readCustomPresetFile, saveCustomPresets } from './custom-preset-store';
 import { externalSubtitleTracks } from './external-subtitles';
+import { shouldDisableUiHardwareAcceleration } from './ui-rendering';
 import type { AppSettings, EncodeJob, HardwareCapabilities, RuntimeState, SourceFile } from './shared-types';
+
+// Electron's UI compositor is independent of FFmpeg's CUDA/NVDEC/NVENC path.
+// Software UI rendering avoids Windows GPU-driver resets that can blank the frameless window.
+if (shouldDisableUiHardwareAcceleration(process.platform)) app.disableHardwareAcceleration();
 
 const runSquirrel = (args: string[]) => {
   const updateExe = path.resolve(path.dirname(process.execPath), '..', 'Update.exe');
@@ -621,6 +626,14 @@ const createWindow = () => {
     },
   });
 
+  mainWindow.webContents.on('render-process-gone', (_event, details) => {
+    logActivity('ERROR', 'renderer.process-gone', {
+      reason: details.reason,
+      exitCode: details.exitCode,
+    });
+  });
+  mainWindow.on('unresponsive', () => logActivity('ERROR', 'renderer.unresponsive'));
+
   if (MAIN_WINDOW_VITE_DEV_SERVER_URL) {
     mainWindow.loadURL(MAIN_WINDOW_VITE_DEV_SERVER_URL);
   } else {
@@ -633,7 +646,11 @@ if (!handlingSquirrelEvent) app.whenReady().then(async () => {
     await cleanupPreviousInstall(path.dirname(process.execPath)).catch(() => undefined);
   }
   await initializeLogger();
-  logActivity('INFO', 'application.started', { version: app.getVersion(), packaged: app.isPackaged });
+  logActivity('INFO', 'application.started', {
+    version: app.getVersion(),
+    packaged: app.isPackaged,
+    uiHardwareAcceleration: !shouldDisableUiHardwareAcceleration(process.platform),
+  });
   await initializePreviewStorage();
   registerIpc();
   createWindow();
