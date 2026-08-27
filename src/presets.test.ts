@@ -22,7 +22,7 @@ test('loads ordered built-in preset values from presets.ini', () => {
   assert.equal(presets.Regular.quality.software, '25');
   assert.deepEqual(presets.Streaming.advancedVideo, {
     bFrames: true, multipass: 2, bRefMode: 'middle', adaptiveBFrames: true,
-    sceneCutDetection: true, rcLookahead: 26, nonReferenceP: false, spatialAq: 0, temporalAq: true,
+    sceneCutDetection: true, rcLookahead: 26, nonReferenceP: false, spatialAq: 10, temporalAq: false,
   });
   assert.deepEqual(presets.Cellular.advancedVideo, presets.Streaming.advancedVideo);
   assert.deepEqual(presets['Music Video'].advancedVideo, presets.Streaming.advancedVideo);
@@ -37,7 +37,7 @@ test('Music Video maps upstream UHQ intent to Jellyfin-compatible AV1 NVENC sett
   assert.deepEqual(advancedVideoArguments('av1_nvenc', preset.advancedVideo), [
     '-multipass', '2', '-bf', '4', '-b_ref_mode', 'middle', '-b_adapt', '1',
     '-no-scenecut', '0', '-rc-lookahead', '26', '-nonref_p', '0',
-    '-spatial-aq', '0', '-temporal-aq', '1',
+    '-spatial-aq', '1', '-temporal-aq', '0', '-aq-strength', '10',
   ]);
   assert.equal(preset.bitrateControl, true);
   assert.equal(preset.bufferMultiplier, 2);
