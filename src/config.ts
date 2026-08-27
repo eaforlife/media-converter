@@ -1,6 +1,8 @@
 export const APP_NAME = 'EA Media Tools';
 export const APP_CODENAME = 'jaguar';
 export const APP_UPDATE_REPOSITORY = 'eaforlife/media-converter';
+export const PRESET_SOURCE_URL =
+  `https://raw.githubusercontent.com/${APP_UPDATE_REPOSITORY}/main/presets.ini`;
 export const FFMPEG_RELEASE_API =
   'https://api.github.com/repos/jellyfin/jellyfin-ffmpeg/releases/latest';
 export const FFMPEG_RELEASES_API =

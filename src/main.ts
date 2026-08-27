@@ -451,7 +451,18 @@ const registerIpc = () => {
 
   ipcMain.handle('settings:load', () => loadSettings());
   ipcMain.handle('settings:save', (_event, settings: AppSettings) => saveSettings(settings));
-  ipcMain.handle('presets:load', () => loadBuiltInPresets());
+  ipcMain.handle('presets:load', (event) => {
+    if (!event.sender.isDestroyed()) event.sender.send('runtime:progress', {
+      phase: 'verifying', message: 'Synchronizing preset defaults', progress: null,
+      appVersion: app.getVersion(), isPackaged: app.isPackaged,
+      updateEnabled: app.isPackaged && process.platform !== 'linux',
+      ffmpegAvailable: false, ffmpegPath: activeFfmpeg(), ffprobePath: activeFfprobe(),
+      ffmpegVersion: null, releaseTag: null, ffmpegChannel: 'stable',
+      rsgainAvailable: false, rsgainPath: '', rsgainVersion: null,
+      ccextractorAvailable: false, ccextractorPath: '', ccextractorVersion: null,
+    } satisfies RuntimeState);
+    return loadBuiltInPresets();
+  });
   ipcMain.handle('presets:read', () => readPresetFile());
   ipcMain.handle('presets:show', () => shell.showItemInFolder(presetFilePath()));
   ipcMain.handle('custom-presets:load', () => loadCustomPresets());
