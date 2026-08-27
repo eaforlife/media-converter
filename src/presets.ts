@@ -1,7 +1,8 @@
 import type { AdvancedVideoSettings, ScaleMode } from './shared-types';
 
-export type StandardVideoPresetName = 'Archive' | 'Regular' | 'Streaming' | 'Cellular';
-export type BuiltInPresetName = StandardVideoPresetName | 'Music Video';
+export const MUSIC_VIDEO_PRESET_NAME = 'Music Video';
+export const REQUIRED_BUILT_IN_PRESET_NAMES = ['Archive', 'Regular', 'Streaming', 'Cellular', MUSIC_VIDEO_PRESET_NAME] as const;
+export type BuiltInPresetName = typeof REQUIRED_BUILT_IN_PRESET_NAMES[number];
 export type PreferredVideoCodec = 'H.264' | 'HEVC' | 'AV1';
 export type PresetAudioCodec = 'aac' | 'opus';
 export type EncoderFamily = 'nvenc' | 'amf' | 'qsv' | 'vaapi' | 'videotoolbox' | 'software';
@@ -9,7 +10,7 @@ export type EncoderFamily = 'nvenc' | 'amf' | 'qsv' | 'vaapi' | 'videotoolbox' |
 type AudioRates = Record<PresetAudioCodec, { stereo: string; surround: string }>;
 
 export type BuiltInPresetDefinition = {
-  name: BuiltInPresetName;
+  name: string;
   description: string;
   format: 'mp4' | 'mkv';
   preferredVideoCodec: PreferredVideoCodec;
@@ -27,10 +28,11 @@ export type BuiltInPresetDefinition = {
   advancedVideo: AdvancedVideoSettings;
 };
 
-export type BuiltInPresetCatalog = Readonly<Record<BuiltInPresetName, BuiltInPresetDefinition>>;
+export type BuiltInPresetCatalog = Readonly<Record<string, BuiltInPresetDefinition>>;
 
-export const STANDARD_VIDEO_PRESET_NAMES: readonly StandardVideoPresetName[] = ['Archive', 'Regular', 'Streaming', 'Cellular'];
-export const BUILT_IN_PRESET_NAMES: readonly BuiltInPresetName[] = [...STANDARD_VIDEO_PRESET_NAMES, 'Music Video'];
+export const predefinedPresetNames = (catalog: BuiltInPresetCatalog, musicVideo: boolean) => musicVideo
+  ? catalog[MUSIC_VIDEO_PRESET_NAME] ? [MUSIC_VIDEO_PRESET_NAME] : []
+  : Object.keys(catalog).filter((name) => name !== MUSIC_VIDEO_PRESET_NAME);
 
 export const booleanValue = (value: string, label: string) => {
   if (value === '1' || value === 'true') return true;
@@ -72,10 +74,12 @@ export const parseIniSections = (ini: string) => {
 
 export const parseBuiltInPresets = (ini: string): BuiltInPresetCatalog => {
   const sections = parseIniSections(ini);
-  const parsed = {} as Record<BuiltInPresetName, BuiltInPresetDefinition>;
-  for (const name of BUILT_IN_PRESET_NAMES) {
-    const values = sections.get(name);
-    if (!values) throw new Error(`presets.ini is missing the [${name}] section`);
+  for (const name of REQUIRED_BUILT_IN_PRESET_NAMES) {
+    if (!sections.has(name)) throw new Error(`presets.ini is missing the [${name}] section`);
+  }
+  const parsed: Record<string, BuiltInPresetDefinition> = {};
+  for (const [name, values] of sections) {
+    if (name === 'Custom') throw new Error('presets.ini cannot define the reserved [Custom] section');
     const get = (key: string) => {
       const value = values.get(key);
       if (value === undefined || value === '') throw new Error(`[${name}] is missing ${key}`);

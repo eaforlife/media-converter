@@ -6,7 +6,7 @@ import {
   commonSeriesFolderName, parseEpisodeIdentity, preservedOutputBaseName, sanitizePathSegment,
   smartMovieFolderName, smartSeriesBaseName,
 } from './output-naming';
-import { BUILT_IN_PRESET_NAMES, STANDARD_VIDEO_PRESET_NAMES } from './presets';
+import { predefinedPresetNames, REQUIRED_BUILT_IN_PRESET_NAMES } from './presets';
 import type { BuiltInPresetCatalog, BuiltInPresetDefinition, BuiltInPresetName, EncoderFamily, PreferredVideoCodec, PresetAudioCodec } from './presets';
 import { advancedVideoArguments, supportedAdvancedVideoFields } from './advanced-video-settings';
 import type { AdvancedVideoField } from './advanced-video-settings';
@@ -17,9 +17,10 @@ import {
 import type { EncoderSpeed } from './encoder-controls';
 import { isValidCustomPresetName } from './custom-presets';
 import { externalSubtitleInputArguments, subtitleInputSpecifier } from './external-subtitles';
-import { aspectPreservingDimensions, detectedCrop } from './video-crop';
+import { aspectPreservingDimensions, cuvidCropMargins, detectedCrop } from './video-crop';
 import {
-  cudaCropBridgeFilters, hardwareUploadFilter, protectedHardwareDecodeArguments, strictVideoTranscodeArguments,
+  cudaCropBridgeFilters, cudaHardwareDecodeArguments, cuvidDecoderCropArguments, cuvidDecoderName, hardwareUploadFilter,
+  protectedHardwareDecodeArguments, strictVideoTranscodeArguments,
 } from './video-safety';
 import { bufferSizeFor, deliveryPresetForOutput, deliveryQualityForOutput, scaleDimensionsFor, videoOutputProfile } from './video-output-profile';
 import { applyEncodeProgress, canFinishEncodeQueue, createEncodeQueueProgress, isQueueTerminal } from './encode-progress-state';
@@ -93,7 +94,7 @@ let toastTimer: number | undefined;
 let runtimeState: RuntimeState | null = null;
 let hardwareCapabilities: HardwareCapabilities = {
   checkedAt: '', adapters: [], ignoredAdapters: [], cudaAvailable: false, nvdecAvailable: false,
-  amfDecodeAvailable: false, qsvDecodeAvailable: false,
+  cuvidDecoders: [], amfDecodeAvailable: false, qsvDecodeAvailable: false,
   qsvDecoders: [], vaapiAvailable: false, vaapiDevice: null, encoders: [],
 };
 let pickerBusy = false;
@@ -139,7 +140,7 @@ const isAudioWorkflow = (source: SourceFile) => workflowOf(source) === 'audio';
 const isMusicVideoWorkflow = (source: SourceFile) => workflowOf(source) === 'music-video';
 const isAudioPassthrough = (settings: JobSettings) => settings.format === 'source'
   || Object.values(settings.audio).some((track) => track.codec === 'copy');
-const builtInPreset = (name: string) => builtInPresets?.[name as BuiltInPresetName];
+const builtInPreset = (name: string) => builtInPresets?.[name];
 const requiredBuiltInPreset = (name: BuiltInPresetName) => {
   const preset = builtInPreset(name);
   if (!preset) throw new Error(`The ${name} preset is unavailable`);
@@ -743,7 +744,7 @@ const addDownmixArguments = (args: string[], outputIndex: number, track: AudioSt
 const encoderCanOutput10Bit = (encoder: string) => encoder === 'libx265'
   || Boolean(hardwareCapabilities.encoders.find((item) => item.id === encoder)?.tenBit);
 
-const hardwareDecoderName = (source: SourceFile) => {
+const qsvDecoderName = (source: SourceFile) => {
   const codecNames: Record<string, string> = {
     H264: 'h264', AVC: 'h264', HEVC: 'hevc', H265: 'hevc', AV1: 'av1',
     VP9: 'vp9', VP8: 'vp8', MPEG2VIDEO: 'mpeg2', MPEG4: 'mpeg4', VC1: 'vc1', MJPEG: 'mjpeg',
@@ -772,12 +773,16 @@ const hardwareInputArguments = (source: SourceFile, settings: JobSettings, force
   }
   if (!appSettings.hardwareAcceleration) return { args: [] as string[], cropHandledByDecoder: false, backend: 'software' as const };
   if (canUseCuda) {
+    const video = source.media?.video;
+    const crop = video && settings.filters.autoCrop ? detectedCropForSource(source) : null;
+    const decoder = crop ? cuvidDecoderName(video?.codec) : null;
+    const decoderCrop = video && crop
+      ? cuvidCropMargins(crop, video.width, video.height)
+      : null;
+    const decoderCropArgs = cuvidDecoderCropArguments(decoder, decoderCrop, hardwareCapabilities.cuvidDecoders);
     return {
-      args: [
-        '-init_hw_device', 'cuda=cu:0', '-filter_hw_device', 'cu', '-hwaccel', 'cuda',
-        '-hwaccel_output_format', 'cuda', ...protectedHardwareDecodeArguments(),
-      ],
-      cropHandledByDecoder: false, backend: 'cuda' as const,
+      args: cudaHardwareDecodeArguments(decoderCropArgs),
+      cropHandledByDecoder: decoderCropArgs.length > 0, backend: 'cuda' as const,
     };
   }
   if (settings.encoder.endsWith('_amf') && hardwareCapabilities.amfDecodeAvailable) {
@@ -790,7 +795,7 @@ const hardwareInputArguments = (source: SourceFile, settings: JobSettings, force
     };
   }
   if (settings.encoder.endsWith('_qsv') && hardwareCapabilities.qsvDecodeAvailable) {
-    const decoder = hardwareDecoderName(source);
+    const decoder = qsvDecoderName(source);
     const args = [
       '-init_hw_device', 'qsv=qs:hw', '-filter_hw_device', 'qs', '-hwaccel', 'qsv',
       ...protectedHardwareDecodeArguments(),
@@ -953,7 +958,8 @@ const getCommandArguments = (source: SourceFile, requestedOutputPath?: string, f
   const toneMapFormat: 'nv12' | 'p010le' = main10Output ? 'p010le' : 'nv12';
   const dimensions = hardwareScaleDimensions(source, settings);
   const crop = detectedCropForSource(source);
-  const cudaCrop = hardwareInput.backend === 'cuda' && settings.filters.autoCrop ? crop : null;
+  const cudaCrop = hardwareInput.backend === 'cuda' && settings.filters.autoCrop
+    && !hardwareInput.cropHandledByDecoder ? crop : null;
   if (settings.filters.autoCrop && crop && !hardwareInput.cropHandledByDecoder && !cudaCrop) {
     filters.push(`crop=${crop.filter}`);
   }
@@ -1478,7 +1484,7 @@ const showAppMenu = () => {
       appSettings.useStableFfmpeg = useStable;
       hardwareCapabilities = {
         checkedAt: '', adapters: [], ignoredAdapters: [], cudaAvailable: false, nvdecAvailable: false,
-        amfDecodeAvailable: false, qsvDecodeAvailable: false,
+        cuvidDecoders: [], amfDecodeAvailable: false, qsvDecodeAvailable: false,
         qsvDecoders: [], vaapiAvailable: false, vaapiDevice: null, encoders: [],
       };
       if (selectedRuntime.ffmpegAvailable) {
@@ -1647,7 +1653,9 @@ const renderWorkspace = () => {
   const fileRows = sources.map((file, index) => `<button class="source-row ${index === selectedIndex ? 'active' : ''}" data-source-index="${index}"><span class="file-type">${escapeHtml(file.extension.slice(0, 4))}</span><span class="source-row-copy"><strong>${escapeHtml(file.name)}</strong><small>${formatSize(file.size)}</small></span>${index === selectedIndex ? '<span class="active-pip"></span>' : ''}</button>`).join('');
   const video = source.media?.video;
   const showWorkingCustom = settings.preset === 'Custom';
-  const basePresets = audioWorkflow ? [...AUDIO_PRESET_NAMES] : musicVideo ? ['Music Video'] : [...STANDARD_VIDEO_PRESET_NAMES];
+  const basePresets = audioWorkflow
+    ? [...AUDIO_PRESET_NAMES]
+    : predefinedPresetNames(builtInPresets ?? {}, musicVideo);
   const visiblePresets = [...basePresets, ...(showWorkingCustom ? ['Custom'] : [])];
   const savedPresets = musicVideo ? [] : appSettings.customPresets.filter((preset) =>
     audioWorkflow ? preset.workflow === 'audio' : preset.workflow !== 'audio');
@@ -2129,7 +2137,8 @@ const saveCurrentPreset = async (source: SourceFile) => {
     showToast('Preset names cannot contain ], carriage returns, or line breaks');
     return;
   }
-  if ([...BUILT_IN_PRESET_NAMES, ...AUDIO_PRESET_NAMES, 'Custom'].includes(name as BuiltInPresetName | AudioPresetName | 'Custom')) {
+  const predefinedNames = builtInPresets ? Object.keys(builtInPresets) : [...REQUIRED_BUILT_IN_PRESET_NAMES];
+  if ([...predefinedNames, ...AUDIO_PRESET_NAMES, 'Custom'].includes(name)) {
     showToast('Choose a name different from the built-in presets');
     return;
   }

@@ -6,6 +6,12 @@ export type DetectedCrop = {
   filter: string;
 };
 
+export const cuvidCropMargins = (
+  crop: DetectedCrop,
+  sourceWidth: number,
+  sourceHeight: number,
+) => `${crop.y}x${sourceHeight - crop.y - crop.height}x${crop.x}x${sourceWidth - crop.x - crop.width}`;
+
 export const detectedCrop = (
   value: string | null | undefined,
   sourceWidth: number,

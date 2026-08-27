@@ -231,13 +231,16 @@ const canEncodeVaapi = async (ffmpegPath: string, encoder: string, device: strin
   }
 };
 
-const availableQsvDecoders = async (ffmpegPath: string) => {
+const availableHardwareDecoders = async (ffmpegPath: string) => {
   try {
     const output = await execute(ffmpegPath, ['-hide_banner', '-decoders']);
     const names = [...output.matchAll(/^\s*V[^\s]*\s+([^\s]+)\s/gm)].map((match) => match[1]);
-    return names.filter((name) => name.endsWith('_qsv'));
+    return {
+      cuvid: names.filter((name) => name.endsWith('_cuvid')),
+      qsv: names.filter((name) => name.endsWith('_qsv')),
+    };
   } catch {
-    return [];
+    return { cuvid: [] as string[], qsv: [] as string[] };
   }
 };
 
@@ -293,7 +296,7 @@ export const detectHardwareCapabilities = async (ffmpegPath: string): Promise<Ha
     detectedVendors.has('Intel')
       ? canInitializeDevice(ffmpegPath, 'qsv=qs:hw')
       : Promise.resolve(false),
-    availableQsvDecoders(ffmpegPath),
+    availableHardwareDecoders(ffmpegPath),
     vaapiDevice && (detectedVendors.has('AMD') || detectedVendors.has('Intel'))
       ? canInitializeDevice(ffmpegPath, `vaapi=va:${vaapiDevice}`)
       : Promise.resolve(false),
@@ -315,8 +318,8 @@ export const detectHardwareCapabilities = async (ffmpegPath: string): Promise<Ha
   const nvdecAvailable = cudaAvailable;
   const result = {
     checkedAt: new Date().toISOString(), adapters, ignoredAdapters: displayAdapters.ignored, cudaAvailable, nvdecAvailable,
-    amfDecodeAvailable, qsvDecodeAvailable,
-    qsvDecoders: decoders, vaapiAvailable, vaapiDevice, encoders,
+    cuvidDecoders: decoders.cuvid, amfDecodeAvailable, qsvDecodeAvailable,
+    qsvDecoders: decoders.qsv, vaapiAvailable, vaapiDevice, encoders,
   };
   logActivity('INFO', 'hardware.detection.completed', result);
   return result;

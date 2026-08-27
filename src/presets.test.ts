@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import test from 'node:test';
 import { advancedVideoArguments } from './advanced-video-settings.ts';
 import { encoderSpeedArguments, encoderTuneArguments } from './encoder-controls.ts';
-import { parseBuiltInPresets } from './presets.ts';
+import { parseBuiltInPresets, predefinedPresetNames } from './presets.ts';
 
 const presetFile = fs.readFileSync(new URL('../presets.ini', import.meta.url), 'utf8');
 
@@ -20,12 +20,22 @@ test('loads ordered built-in preset values from presets.ini', () => {
   assert.equal(presets.Regular.quality.nvenc, '24');
   assert.equal(presets.Regular.quality.amf, '22');
   assert.equal(presets.Regular.quality.software, '25');
+  assert.equal(presets.Regular.advancedVideo.spatialAq, 10);
   assert.deepEqual(presets.Streaming.advancedVideo, {
     bFrames: true, multipass: 2, bRefMode: 'middle', adaptiveBFrames: true,
     sceneCutDetection: true, rcLookahead: 26, nonReferenceP: false, spatialAq: 10, temporalAq: false,
   });
   assert.deepEqual(presets.Cellular.advancedVideo, presets.Streaming.advancedVideo);
   assert.deepEqual(presets['Music Video'].advancedVideo, presets.Streaming.advancedVideo);
+});
+
+test('automatically exposes new predefined sections while keeping Music Video workflow-only', () => {
+  const regularSection = presetFile.match(/\[Regular\][\s\S]*?(?=\r?\n\[Streaming\])/)?.[0];
+  assert.ok(regularSection);
+  const presets = parseBuiltInPresets(`${presetFile.trim()}\n\n${regularSection.replace('[Regular]', '[Cinema]')}\n`);
+  assert.deepEqual(predefinedPresetNames(presets, false), ['Archive', 'Regular', 'Streaming', 'Cellular', 'Cinema']);
+  assert.deepEqual(predefinedPresetNames(presets, true), ['Music Video']);
+  assert.equal(presets.Cinema.quality.nvenc, presets.Regular.quality.nvenc);
 });
 
 test('Music Video maps upstream UHQ intent to Jellyfin-compatible AV1 NVENC settings', () => {
