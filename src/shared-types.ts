@@ -63,6 +63,7 @@ export type SubtitleStreamInfo = {
   kind: SubtitleKind;
   isUtf8: boolean;
   flags: StreamFlags;
+  externalPath?: string;
 };
 
 export type StreamFlags = {

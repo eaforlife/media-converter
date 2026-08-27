@@ -14,6 +14,11 @@ export type EpisodeIdentity = {
   episode: number;
 };
 
+export type MovieIdentity = {
+  title: string;
+  year: number | null;
+};
+
 export const sanitizePathSegment = (value: string) => {
   let safe = Array.from(value, (character) => character.charCodeAt(0) < 32 ? ' ' : character).join('')
     .replaceAll('!', '')
@@ -45,10 +50,29 @@ export const parseEpisodeIdentity = (name: string): EpisodeIdentity | null => {
   };
 };
 
+const RELEASE_TOKEN = /(?:^|[ ._-])(?:4320p|2160p|1080[pi]|720p|576p|480p|4k|uhd|bluray|blu-ray|bdrip|remux|web(?:-?dl|rip)?|hdtv|dvdrip|x26[45]|h[ ._-]?26[45]|avc|hevc|av1)(?=$|[ ._-])/i;
+
+export const parseMovieIdentity = (name: string): MovieIdentity => {
+  const original = stripExtension(name);
+  const years = [...original.matchAll(/(?:^|[ ._(-])((?:19|20)\d{2})(?=$|[ ._)-])/gi)];
+  const yearMatch = years.filter((match) => (match.index ?? 0) > 0).at(-1);
+  const releaseBoundary = RELEASE_TOKEN.exec(original);
+  const titleEnd = yearMatch?.index ?? releaseBoundary?.index ?? original.length;
+  return {
+    title: sanitizePathSegment(original.slice(0, titleEnd)),
+    year: yearMatch ? Number(yearMatch[1]) : null,
+  };
+};
+
 export const smartSeriesBaseName = (name: string) => {
   const identity = parseEpisodeIdentity(name);
-  if (!identity) return sanitizePathSegment(stripExtension(name));
+  if (!identity) return parseMovieIdentity(name).title;
   return `${identity.showTitle} S${String(identity.season).padStart(2, '0')}E${String(identity.episode).padStart(2, '0')}`;
+};
+
+export const smartMovieFolderName = (name: string) => {
+  const identity = parseMovieIdentity(name);
+  return sanitizePathSegment(`${identity.title}${identity.year ? ` (${identity.year})` : ''}`);
 };
 
 export const commonSeriesFolderName = (names: readonly string[]) => {

@@ -23,3 +23,17 @@ test('adds extracted captions as a second FFmpeg input and next subtitle stream'
   assert.ok(injected.includes('-c:s:1'));
   assert.deepEqual(injected.slice(-2), ['hearing_impaired', 'C:\\output\\episode.mkv']);
 });
+
+test('adds extracted captions after existing external subtitle inputs', () => {
+  const args = [
+    '-i', 'C:\\input\\episode.mkv', '-i', 'C:\\input\\episode.en.srt',
+    '-map', '0:v:0', '-map', '1:0', '-c:s:0', 'mov_text', 'C:\\output\\episode.mp4',
+  ];
+  const injected = injectClosedCaptionInput(
+    args, 'C:\\input\\episode.mkv', 'C:\\temp\\captions.srt', 'mov_text',
+  );
+  assert.deepEqual(injected.slice(0, 6), [
+    '-i', 'C:\\input\\episode.mkv', '-i', 'C:\\input\\episode.en.srt', '-i', 'C:\\temp\\captions.srt',
+  ]);
+  assert.ok(injected.includes('2:0'));
+});

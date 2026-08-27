@@ -2,7 +2,10 @@ import './index.css';
 import { APP_CODENAME } from './config';
 import { AUDIO_PRESETS, AUDIO_PRESET_NAMES, MUSIC_VIDEO_AAC_BITRATE, audioBitrate, shouldResampleLossless } from './audio-workflow';
 import type { AudioPresetName } from './audio-workflow';
-import { commonSeriesFolderName, parseEpisodeIdentity, preservedOutputBaseName, sanitizePathSegment, smartSeriesBaseName } from './output-naming';
+import {
+  commonSeriesFolderName, parseEpisodeIdentity, preservedOutputBaseName, sanitizePathSegment,
+  smartMovieFolderName, smartSeriesBaseName,
+} from './output-naming';
 import { BUILT_IN_PRESET_NAMES } from './presets';
 import type { BuiltInPresetCatalog, BuiltInPresetDefinition, BuiltInPresetName, EncoderFamily, PreferredVideoCodec, PresetAudioCodec } from './presets';
 import { advancedVideoArguments, supportedAdvancedVideoFields } from './advanced-video-settings';
@@ -13,9 +16,10 @@ import {
 } from './encoder-controls';
 import type { EncoderSpeed } from './encoder-controls';
 import { isValidCustomPresetName } from './custom-presets';
+import { externalSubtitleInputArguments, subtitleInputSpecifier } from './external-subtitles';
 import { aspectPreservingDimensions, detectedCrop } from './video-crop';
 import {
-  hardwareUploadFilter, protectedHardwareDecodeArguments, strictVideoTranscodeArguments,
+  cudaCropBridgeFilters, hardwareUploadFilter, protectedHardwareDecodeArguments, strictVideoTranscodeArguments,
 } from './video-safety';
 import { bufferSizeFor, deliveryPresetForOutput, deliveryQualityForOutput, scaleDimensionsFor, videoOutputProfile } from './video-output-profile';
 import { applyEncodeProgress, canFinishEncodeQueue, createEncodeQueueProgress, isQueueTerminal } from './encode-progress-state';
@@ -277,7 +281,7 @@ const sourceHasMetadataChanges = (source: SourceFile, settings = getSettings(sou
   if (video && streamMetadataChanged(video, settings.videoMetadata)) return true;
   if ((source.media?.audio ?? []).some((track) =>
     streamMetadataChanged(track, settings.audio[track.index].metadata))) return true;
-  return (source.media?.subtitles ?? []).some((track) =>
+  return (source.media?.subtitles ?? []).filter((track) => !track.externalPath).some((track) =>
     streamMetadataChanged(track, settings.subtitles[track.index].metadata));
 };
 const matchingMetadataQueueSources = (origin: SourceFile) => sources.filter((source) =>
@@ -674,6 +678,10 @@ const makeDefaultOutputDirectory = (source: SourceFile) => {
       );
     }
   }
+  if (sourceMode === 'folder' && appSettings.smartFileNaming && !parseEpisodeIdentity(source.name)) {
+    const root = source.sourceRoot ?? parentPath(source.path);
+    return joinPath(joinPath(root, 'converted'), smartMovieFolderName(source.name));
+  }
   return joinPath(parentPath(source.path), 'converted');
 };
 const makeOutputFileName = (source: SourceFile) => {
@@ -753,11 +761,15 @@ const hardwareInputArguments = (source: SourceFile, settings: JobSettings, force
     };
   }
   const requiresUniversalCrop = settings.filters.autoCrop && Boolean(detectedCropForSource(source));
-  if (forceSoftwareDecode || requiresUniversalCrop) {
+  const canUseCuda = appSettings.hardwareAcceleration
+    && settings.encoder.endsWith('_nvenc')
+    && hardwareCapabilities.cudaAvailable
+    && hardwareCapabilities.nvdecAvailable;
+  if (forceSoftwareDecode || (requiresUniversalCrop && !canUseCuda)) {
     return { args: [] as string[], cropHandledByDecoder: false, backend: 'software' as const };
   }
   if (!appSettings.hardwareAcceleration) return { args: [] as string[], cropHandledByDecoder: false, backend: 'software' as const };
-  if (settings.encoder.endsWith('_nvenc') && hardwareCapabilities.cudaAvailable && hardwareCapabilities.nvdecAvailable) {
+  if (canUseCuda) {
     return {
       args: [
         '-init_hw_device', 'cuda=cu:0', '-filter_hw_device', 'cu', '-hwaccel', 'cuda',
@@ -796,11 +808,11 @@ const decoderStatus = (source: SourceFile, settings: JobSettings) => {
   if (isAudioWorkflow(source) || !settings.processing.video || !appSettings.hardwareAcceleration) {
     return { label: 'SOFTWARE', hardware: false };
   }
-  if (settings.filters.autoCrop && detectedCropForSource(source)) {
-    return { label: 'SOFTWARE', hardware: false };
-  }
   if (settings.encoder.endsWith('_nvenc') && hardwareCapabilities.cudaAvailable && hardwareCapabilities.nvdecAvailable) {
     return { label: 'NVIDIA NVDEC', hardware: true };
+  }
+  if (settings.filters.autoCrop && detectedCropForSource(source)) {
+    return { label: 'SOFTWARE', hardware: false };
   }
   if (settings.encoder.endsWith('_amf') && hardwareCapabilities.amfDecodeAvailable) {
     return { label: 'AMD AMF', hardware: true };
@@ -859,7 +871,7 @@ const metadataOnlyArguments = (source: SourceFile, settings: JobSettings, output
     const metadata = settings.audio[track.index].metadata;
     if (streamMetadataChanged(track, metadata)) addStreamMetadataArguments(args, 'a', index, metadata);
   });
-  (source.media?.subtitles ?? []).forEach((track, index) => {
+  (source.media?.subtitles ?? []).filter((track) => !track.externalPath).forEach((track, index) => {
     const metadata = settings.subtitles[track.index].metadata;
     if (streamMetadataChanged(track, metadata)) addStreamMetadataArguments(args, 's', index, metadata);
   });
@@ -903,6 +915,8 @@ const getCommandArguments = (source: SourceFile, requestedOutputPath?: string, f
     ? [...strictVideoTranscodeArguments(), ...hardwareInput.args]
     : [...hardwareInput.args];
   args.push('-i', source.path);
+  const subtitleTracks = source.media?.subtitles ?? [];
+  if (settings.processing.subtitles) args.push(...externalSubtitleInputArguments(subtitleTracks));
   if (settings.processing.video) {
     args.push('-map', `0:${source.media?.video?.index ?? 0}`, '-c:v', settings.encoder);
   args.push(...encoderSpeedArguments(settings.encoder, settings.encoderSpeed));
@@ -937,11 +951,15 @@ const getCommandArguments = (source: SourceFile, requestedOutputPath?: string, f
   const toneMapFormat: 'nv12' | 'p010le' = main10Output ? 'p010le' : 'nv12';
   const dimensions = hardwareScaleDimensions(source, settings);
   const crop = detectedCropForSource(source);
-  if (settings.filters.autoCrop && crop && !hardwareInput.cropHandledByDecoder) {
+  const cudaCrop = hardwareInput.backend === 'cuda' && settings.filters.autoCrop ? crop : null;
+  if (settings.filters.autoCrop && crop && !hardwareInput.cropHandledByDecoder && !cudaCrop) {
     filters.push(`crop=${crop.filter}`);
   }
 
   if (hardwareInput.backend === 'cuda') {
+    if (cudaCrop) {
+      filters.push(...cudaCropBridgeFilters(cudaCrop.filter, Boolean(video?.pixelFormat.includes('10'))));
+    }
     if (dimensions) {
       const format = !toneMap && main10Output ? ':format=p010le:passthrough=0' : '';
       filters.push(`scale_cuda=${dimensions[0]}:${dimensions[1]}${format}`);
@@ -953,7 +971,7 @@ const getCommandArguments = (source: SourceFile, requestedOutputPath?: string, f
       filters.push(`tonemap_cuda=format=${toneMapFormat}:p=bt709:t=bt709:m=bt709:tonemap=bt2390:peak=100:desat=0`);
     } else if (main10Output && !dimensions) {
       filters.push('scale_cuda=iw:ih:format=p010le:passthrough=0');
-    } else if (!dimensions && !toneMap) {
+    } else if (!dimensions && !toneMap && !cudaCrop) {
       filters.push('scale_cuda=iw:ih:passthrough=0');
     }
   } else if (hardwareInput.backend === 'qsv' && (dimensions || toneMap || main10Output)) {
@@ -1037,10 +1055,10 @@ const getCommandArguments = (source: SourceFile, requestedOutputPath?: string, f
       addStreamMetadataArguments(args, 'a', index, copyMetadata(track.language, track.flags)));
   }
   let subtitleOutputIndex = 0;
-  if (settings.processing.subtitles) orderByFlags(source.media?.subtitles ?? [], (track) => settings.subtitles[track.index]?.flags ?? track.flags).forEach((track) => {
+  if (settings.processing.subtitles) orderByFlags(subtitleTracks, (track) => settings.subtitles[track.index]?.flags ?? track.flags).forEach((track) => {
     const subtitle = settings.subtitles[track.index];
     if (!subtitle?.enabled) return;
-    args.push('-map', `0:${track.index}`, `-c:s:${subtitleOutputIndex}`, settings.format === 'mp4' ? 'mov_text' : subtitle.codec);
+    args.push('-map', subtitleInputSpecifier(track, subtitleTracks), `-c:s:${subtitleOutputIndex}`, settings.format === 'mp4' ? 'mov_text' : subtitle.codec);
     args.push(`-metadata:s:s:${subtitleOutputIndex}`, `language=${subtitle.metadata.language}`);
     args.push(`-disposition:s:${subtitleOutputIndex}`, dispositionValue(subtitle.flags));
     if (!isMusicVideoWorkflow(source)) {
@@ -1050,7 +1068,7 @@ const getCommandArguments = (source: SourceFile, requestedOutputPath?: string, f
   });
   else {
     args.push('-map', '0:s?', '-c:s', 'copy');
-    (source.media?.subtitles ?? []).forEach((track, index) =>
+    subtitleTracks.filter((track) => !track.externalPath).forEach((track, index) =>
       addStreamMetadataArguments(args, 's', index, copyMetadata(track.language, track.flags)));
   }
   if (settings.filters.stripMetadata) args.push('-map_metadata', '-1', '-metadata', 'title=', '-metadata', 'description=', '-metadata', 'comment=', '-metadata', 'synopsis=', '-metadata', 'grouping=');
@@ -1444,7 +1462,7 @@ const showAppMenu = () => {
   const runtimeSelector = sources.length === 0 && Boolean(document.querySelector('.welcome-shell'))
     ? `<label class="menu-check runtime-channel-toggle"><input id="stable-ffmpeg" type="checkbox"${checked(appSettings.useStableFfmpeg)}/><span><strong>Stable</strong><small>Use the stable Jellyfin FFmpeg runtime</small></span></label>`
     : '';
-  menu.innerHTML = `<div class="menu-identity"><strong>EA Media Tools</strong><span>Version ${escapeHtml(runtimeState?.appVersion ?? '2.3.0')} · ${APP_CODENAME}</span></div>${runtimeSelector}<label class="menu-check"><input id="hardware-acceleration" type="checkbox"${checked(appSettings.hardwareAcceleration)}/><span>Hardware Acceleration</span></label><button id="view-logs">View Logs</button><button id="view-config">View Running Config</button><button id="view-changelog">View Change Log</button><button id="check-update">Check for update</button><button class="danger" id="exit-app">Exit</button>`;
+  menu.innerHTML = `<div class="menu-identity"><strong>EA Media Tools</strong><span>Version ${escapeHtml(runtimeState?.appVersion ?? '2.3.1')} · ${APP_CODENAME}</span></div>${runtimeSelector}<label class="menu-check"><input id="hardware-acceleration" type="checkbox"${checked(appSettings.hardwareAcceleration)}/><span>Hardware Acceleration</span></label><button id="view-logs">View Logs</button><button id="view-config">View Running Config</button><button id="view-changelog">View Change Log</button><button id="check-update">Check for update</button><button class="danger" id="exit-app">Exit</button>`;
   document.body.appendChild(menu);
   menu.addEventListener('click', (event) => event.stopPropagation());
   menu.querySelector<HTMLInputElement>('#stable-ffmpeg')?.addEventListener('change', async (event) => {
@@ -1514,7 +1532,7 @@ const showAppMenu = () => {
     'EA Media Tools running config', 'config · user settings and active custom working state', () => window.mediaAPI.readConfig(appSettings),
   ));
   menu.querySelector('#view-changelog')?.addEventListener('click', () => void showTextReader(
-    `EA Media Tools ${runtimeState?.appVersion ?? '2.3.0'} change log`,
+    `EA Media Tools ${runtimeState?.appVersion ?? '2.3.1'} change log`,
     `${APP_CODENAME} · installed release notes from GitHub`,
     () => window.mediaAPI.readChangelog(),
   ));
@@ -2217,7 +2235,7 @@ const startApplication = async () => {
     }
     await new Promise((resolve) => window.setTimeout(resolve, runtimeState?.phase === 'error' ? 900 : 350));
   } catch (error) {
-    runtimeState = { phase: 'error', message: error instanceof Error ? error.message : 'Unable to initialize FFmpeg', progress: null, appVersion: '2.3.0', isPackaged: false, updateEnabled: false, ffmpegAvailable: false, ffmpegPath: '', ffprobePath: '', ffmpegVersion: null, releaseTag: null, ffmpegChannel: appSettings.useStableFfmpeg ? 'stable' : 'unstable', rsgainAvailable: false, rsgainPath: '', rsgainVersion: null, ccextractorAvailable: false, ccextractorPath: '', ccextractorVersion: null };
+    runtimeState = { phase: 'error', message: error instanceof Error ? error.message : 'Unable to initialize FFmpeg', progress: null, appVersion: '2.3.1', isPackaged: false, updateEnabled: false, ffmpegAvailable: false, ffmpegPath: '', ffprobePath: '', ffmpegVersion: null, releaseTag: null, ffmpegChannel: appSettings.useStableFfmpeg ? 'stable' : 'unstable', rsgainAvailable: false, rsgainPath: '', rsgainVersion: null, ccextractorAvailable: false, ccextractorPath: '', ccextractorVersion: null };
     renderBootstrap(runtimeState); await new Promise((resolve) => window.setTimeout(resolve, 900));
   } finally { removeProgressListener(); }
   if (!builtInPresets) return;

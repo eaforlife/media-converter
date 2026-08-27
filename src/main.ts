@@ -19,6 +19,7 @@ import { initializeRuntime, selectRuntimeChannel } from './runtime-manager';
 import { loadSettings, readConfig, saveSettings } from './settings-store';
 import { loadBuiltInPresets, presetFilePath, readPresetFile } from './preset-store';
 import { customPresetFilePath, loadCustomPresets, readCustomPresetFile, saveCustomPresets } from './custom-preset-store';
+import { externalSubtitleTracks } from './external-subtitles';
 import type { AppSettings, EncodeJob, HardwareCapabilities, RuntimeState, SourceFile } from './shared-types';
 
 const runSquirrel = (args: string[]) => {
@@ -302,6 +303,20 @@ const inspectSources = async (files: SourceFile[]) => {
   return inspected.filter((file): file is SourceFile => file !== null);
 };
 
+const attachExternalSubtitles = (files: SourceFile[], subtitlePaths: readonly string[]) => files.map((file) => {
+  if (!file.media?.video) return file;
+  const nextIndex = Math.max(-1, ...file.media.subtitles.map((track) => track.index)) + 1;
+  const external = externalSubtitleTracks(file.path, subtitlePaths, nextIndex);
+  if (!external.length) return file;
+  logActivity('INFO', 'source.external-subtitles.detected', {
+    source: file.path,
+    subtitles: external.map((track) => ({
+      path: track.externalPath, language: track.language, flags: track.flags,
+    })),
+  });
+  return { ...file, media: { ...file.media, subtitles: [...file.media.subtitles, ...external] } };
+});
+
 const keepOneWorkflow = (files: SourceFile[]) => {
   const workflow = files[0]?.workflow;
   return workflow ? files.filter((file) => file.workflow === workflow) : files;
@@ -532,10 +547,14 @@ const registerIpc = () => {
         .filter((entry) => entry.isFile() && VIDEO_EXTENSIONS.has(path.extname(entry.name).toLowerCase()))
         .map((entry) => path.join(sourceRoot, entry.name));
       const selectedPaths = topLevelVideos.length ? topLevelVideos : recursivelyFindAudio(sourceRoot);
+      const subtitlePaths = entries
+        .filter((entry) => entry.isFile() && path.extname(entry.name).toLowerCase() === '.srt')
+        .map((entry) => path.join(sourceRoot, entry.name));
       const files = selectedPaths
         .map((filePath) => toSourceFile(filePath, sourceRoot))
         .filter((file): file is SourceFile => file !== null);
-      return keepOneWorkflow(await inspectSources(files));
+      const inspected = keepOneWorkflow(await inspectSources(files));
+      return topLevelVideos.length ? attachExternalSubtitles(inspected, subtitlePaths) : inspected;
     } catch {
       return [];
     }

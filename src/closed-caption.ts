@@ -21,18 +21,21 @@ export const injectClosedCaptionInput = (
   codec: ClosedCaptionCodec,
 ) => {
   const sourceIndex = args.indexOf(sourcePath);
-  if (sourceIndex < 0 || args.length < 1) {
+  const inputOptionIndexes = args.flatMap((argument, index) => argument === '-i' ? [index] : []);
+  const lastInputPathIndex = inputOptionIndexes.at(-1);
+  if (sourceIndex < 0 || lastInputPathIndex === undefined || args.length < 1) {
     throw new Error('Unable to add extracted captions to the FFmpeg command');
   }
   const subtitleIndex = nextSubtitleIndex(args);
+  const captionInputIndex = inputOptionIndexes.length;
   const withInput = [
-    ...args.slice(0, sourceIndex + 1),
+    ...args.slice(0, lastInputPathIndex + 2),
     '-i', subtitlePath,
-    ...args.slice(sourceIndex + 1, -1),
+    ...args.slice(lastInputPathIndex + 2, -1),
   ];
   return [
     ...withInput,
-    '-map', '1:0',
+    '-map', `${captionInputIndex}:0`,
     `-c:s:${subtitleIndex}`, codec,
     `-metadata:s:s:${subtitleIndex}`, 'language=und',
     `-metadata:s:s:${subtitleIndex}`, 'title=Closed Captions',

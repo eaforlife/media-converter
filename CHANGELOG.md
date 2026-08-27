@@ -4,6 +4,20 @@ All notable changes to EA Media Tools are documented here.
 
 ## [Unreleased]
 
+## [2.3.1] - 2026-08-27
+
+### Added
+
+- Detect basename-matched SRT sidecars in video folder mode, show them in the subtitle tab, and derive language plus default, forced, and hearing-impaired dispositions from filename tokens.
+- Treat folder-mode videos without season and episode numbers as movies, using `converted/Title (Year)/Title.ext` smart output paths.
+
+### Fixed
+
+- Keep generic NVIDIA NVDEC active when auto-crop detects black bars instead of forcing the entire input path to software decoding.
+- Bridge CUDA frames through the protected software crop and return them to CUDA for scaling, tone mapping, and NVENC output while retaining the one-time software-decode fallback.
+- Report NVIDIA NVDEC in the workspace decoder indicator for auto-cropped NVENC jobs.
+- Add external SRT files as explicit FFmpeg inputs and convert them to `mov_text` for MP4 output.
+
 ## [2.3.0] - 2026-08-27
 
 ### Added
@@ -239,6 +253,7 @@ All notable changes to EA Media Tools are documented here.
 - Convert crop offsets to CUVID edge values with division by two and floor rounding.
 - Cancel all active parallel encodes and interrupt pending cooldowns when the queue is stopped or a job fails.
 
+[2.3.1]: https://github.com/eaforlife/media-converter/compare/v2.3.0...v2.3.1
 [2.3.0]: https://github.com/eaforlife/media-converter/compare/v2.2.1...v2.3.0
 [2.2.1]: https://github.com/eaforlife/media-converter/compare/v2.2.0...v2.2.1
 [2.2.0]: https://github.com/eaforlife/media-converter/compare/v2.1.0...v2.2.0

@@ -2,7 +2,7 @@
 
 EA Media Tools is a desktop video and audio converter powered by Jellyfin FFmpeg. It inspects video, audio, subtitle, chapter, HDR, and Dolby Vision metadata; selects hardware or CPU processing; and runs queued conversions with live progress information.
 
-Version 2.3.0, codename **jaguar**, is the current stable release. It supports video files, short music videos with attached artwork, and recursive audio libraries. Hardware acceleration is enabled by default but can be disabled for CPU video encoding and decoding.
+Version 2.3.1, codename **jaguar**, is the current stable release. It supports video files, short music videos with attached artwork, and recursive audio libraries. Hardware acceleration is enabled by default but can be disabled for CPU video encoding and decoding.
 
 ## Download
 
@@ -12,7 +12,7 @@ Choose the asset that matches your operating system and CPU:
 
 | System | Intel/AMD 64-bit | ARM 64-bit |
 | --- | --- | --- |
-| Windows | `EA-Media-Tools-2.3.0-x64-Setup.exe` | `EA-Media-Tools-2.3.0-arm64-Setup.exe` |
+| Windows | `EA-Media-Tools-2.3.1-x64-Setup.exe` | `EA-Media-Tools-2.3.1-arm64-Setup.exe` |
 | macOS | ZIP containing `darwin-x64` | ZIP containing `darwin-arm64` for Apple silicon |
 | Debian/Ubuntu | `.deb` containing `amd64` | `.deb` containing `arm64` |
 
@@ -41,7 +41,7 @@ The macOS app is not signed or notarized. To uninstall it, quit the app and move
 Install the downloaded package from a terminal. Replace the filename with the asset you downloaded:
 
 ```bash
-sudo apt install ./ea-media-tools_2.3.0_amd64.deb
+sudo apt install ./ea-media-tools_2.3.1_amd64.deb
 ```
 
 ARM64 systems use the package ending in `arm64.deb`. Launch **EA Media Tools** from the desktop application menu. Remove it with:
@@ -64,7 +64,11 @@ Videos shorter than eight minutes with attached cover artwork use the Music Vide
 
 The app then checks the GPU driving the primary physical display. Virtual and secondary display adapters are ignored and recorded in **View Logs**. An encoder appears only after the corresponding Jellyfin FFmpeg flag completes an actual test encode on the installed hardware.
 
-Folder analysis inspects up to two videos at a time. An NVENC-only batch begins with one encode and measures its average speed for 10 seconds. That first result creates a fixed ceiling of `floor(average FPS / 200)`, also bounded by the supported NVENC session cap. Later 10-second samples can delay expansion when there is not enough current headroom, but can never raise the first measurement's ceiling. A finished slot waits 10 seconds before taking another file. Other encoder families remain serial because the app does not yet have a reliable session-capability signal for them.
+Folder analysis inspects up to two videos at a time. Matching SRT sidecars are attached when their filename begins with the complete video basename, followed only by a language and/or disposition tokens—for example, `Show A H264.en.default.srt` matches `Show A H264.mkv`. Two- or three-letter language codes set the displayed language; `default`, `forced`, and `sdh` set the corresponding subtitle flags. Attached sidecars appear immediately in the subtitle tab and MP4 output converts them to `mov_text`.
+
+With smart naming enabled, sources containing season and episode numbers use the series/year/season layout. A source without both numbers is treated as a movie and uses `converted/Title (Year)/Title.ext`, omitting the year suffix when none can be parsed.
+
+An NVENC-only batch begins with one encode and measures its average speed for 10 seconds. That first result creates a fixed ceiling of `floor(average FPS / 200)`, also bounded by the supported NVENC session cap. Later 10-second samples can delay expansion when there is not enough current headroom, but can never raise the first measurement's ceiling. A finished slot waits 10 seconds before taking another file. Other encoder families remain serial because the app does not yet have a reliable session-capability signal for them.
 
 The encode window keeps a separate progress page for every queued video. Browse pages with **Previous** and **Next** to inspect pending, active, completed, cancelled, or failed jobs. **Live FFmpeg Output** opens one console-style session log containing every command as its encode starts; executable and media paths are displayed as `ffmpeg`, `<input>`, and `<output>`. **Start New** becomes available after the queue settles. **Done** appears only after every job has completed or cancelled, then waits for active workers and partial-output cleanup before closing the app.
 
@@ -94,7 +98,7 @@ Windows x64 builds check the public Squirrel feed at startup and every 15 minute
 
 Every packaged Windows startup removes obsolete `app-<version>` installation directories and retries anything that was locked during the update event. Only the running version is kept. Logs archived by an earlier version are deleted, and the active runtime log is reset when its recorded application version differs from the current release.
 
-Auto Scale chooses an output profile from the source resolution. Selecting a scale explicitly applies that output profile's dimensions, bitrate limits, and buffer to the active built-in preset. When auto-crop removes black bars, the app derives an even output height from the cropped display aspect ratio before sending the dimensions to CUDA, QSV, AMF, VA-API, VideoToolbox, or a CPU encoder:
+Auto Scale chooses an output profile from the source resolution. Selecting a scale explicitly applies that output profile's dimensions, bitrate limits, and buffer to the active built-in preset. When auto-crop removes black bars, the app derives an even output height from the cropped display aspect ratio before sending the dimensions to CUDA, QSV, AMF, VA-API, VideoToolbox, or a CPU encoder. On NVIDIA, auto-crop keeps generic NVDEC active: frames cross a protected download/upload bridge only for the crop operation, then return to CUDA for scaling, tone mapping when enabled, and NVENC output. A genuine hardware-decode failure still retries once with software decoding and the selected NVENC encoder.
 
 | Output profile | FFmpeg scale | Maximum video rate | Streaming NVENC quality |
 | --- | --- | --- | --- |
