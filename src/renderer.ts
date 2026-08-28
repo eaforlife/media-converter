@@ -30,6 +30,7 @@ import { mediaLanguageName, mediaLanguageOptions } from './media-language';
 import { applyStreamMetadataPatch, metadataTemporaryPath, streamMetadataChanged, streamMetadataPatch } from './metadata-edit';
 import type { EditableStreamMetadata } from './metadata-edit';
 import { attachedCoverArtArguments, isH264HighSource, musicVideoEncoderProfile } from './media-workflow';
+import { mp4PlaybackArguments } from './mp4-playback';
 import { consolidatePrimaryDispositions, setPrimaryDisposition } from './stream-dispositions';
 import type {
   AdvancedVideoSettings, AppSettings, AudioStreamInfo, EncodeJob, EncodeProgress, FilterSettings, HardwareCapabilities, RuntimeState, SavedPreset,
@@ -386,16 +387,19 @@ const applyAudioPreset = (source: SourceFile, presetName: string) => {
 const applyMusicVideoPreset = (source: SourceFile) => {
   const preset = requiredBuiltInPreset('Music Video');
   const outputProfile = videoOutputProfile(source.media?.video?.height ?? 0, 'auto');
+  const tierDefaults = preset.outputTierDefaults[outputProfile.tier];
+  const encoderSpeed = tierDefaults.encoderSpeed ?? preset.encoderSpeed;
+  const maxRate = tierDefaults.maxRate ?? outputProfile.maxRate;
   const settings = settingsByPath.get(source.path) ?? initialSettings(source);
   settingsByPath.set(source.path, settings);
   const encoder = hardwareEncoderFor(preset.preferredVideoCodec);
   Object.assign(settings, {
     preset: 'Music Video', format: preset.format, encoder,
-    encoderSpeed: normalizeEncoderSpeed(preset.encoderSpeed),
+    encoderSpeed: normalizeEncoderSpeed(encoderSpeed),
     encoderTune: normalizeEncoderTune(encoder, presetTune(preset, encoder)),
     quality: presetQuality(preset, encoder),
-    videoBitrate: '0', maxRate: String(outputProfile.maxRate), bufferMultiplier: preset.bufferMultiplier,
-    bufferSize: String(bufferSizeFor(outputProfile.maxRate, preset.bufferMultiplier)),
+    videoBitrate: '0', maxRate: String(maxRate), bufferMultiplier: preset.bufferMultiplier,
+    bufferSize: String(bufferSizeFor(maxRate, preset.bufferMultiplier)),
     deliveryMode: preset.deliveryMode, advancedVideo: copyAdvancedVideo(preset.advancedVideo),
     processing: { video: true, audio: true, subtitles: true },
   });
@@ -1093,7 +1097,9 @@ const getCommandArguments = (source: SourceFile, requestedOutputPath?: string, f
   }
   if (settings.filters.stripMetadata) args.push('-map_metadata', '-1', '-metadata', 'title=', '-metadata', 'description=', '-metadata', 'comment=', '-metadata', 'synopsis=', '-metadata', 'grouping=');
   args.push('-map_chapters', '0');
-  if (settings.format === 'mp4') args.push('-movflags', '+faststart');
+  if (settings.format === 'mp4') {
+    args.push(...mp4PlaybackArguments(settings.processing.video ? preferredCodecForEncoder(settings.encoder) : null));
+  }
   args.push(outputPath);
   return args;
 };

@@ -1,4 +1,5 @@
 import type { AdvancedVideoSettings, ScaleMode } from './shared-types';
+import type { OutputTier } from './video-output-profile';
 
 export const MUSIC_VIDEO_PRESET_NAME = 'Music Video';
 export const REQUIRED_BUILT_IN_PRESET_NAMES = ['Archive', 'Regular', 'Streaming', 'Cellular', MUSIC_VIDEO_PRESET_NAME] as const;
@@ -8,6 +9,7 @@ export type PresetAudioCodec = 'aac' | 'opus';
 export type EncoderFamily = 'nvenc' | 'amf' | 'qsv' | 'vaapi' | 'videotoolbox' | 'software';
 
 type AudioRates = Record<PresetAudioCodec, { stereo: string; surround: string }>;
+type OutputTierDefaults = { encoderSpeed?: number; maxRate?: number };
 
 export type BuiltInPresetDefinition = {
   name: string;
@@ -15,6 +17,7 @@ export type BuiltInPresetDefinition = {
   format: 'mp4' | 'mkv';
   preferredVideoCodec: PreferredVideoCodec;
   encoderSpeed: number;
+  outputTierDefaults: Record<OutputTier, OutputTierDefaults>;
   encoderTune: Record<EncoderFamily, string>;
   quality: Record<EncoderFamily, string>;
   resolution: string;
@@ -47,6 +50,9 @@ const numberValue = (value: string, label: string, minimum: number, maximum: num
   }
   return parsed;
 };
+
+const optionalNumberValue = (value: string, label: string, minimum: number, maximum: number) =>
+  value === '' ? undefined : numberValue(value, label, minimum, maximum);
 
 const enumValue = <T extends string>(value: string, allowed: readonly T[], label: string): T => {
   if (allowed.includes(value as T)) return value as T;
@@ -93,6 +99,10 @@ export const parseBuiltInPresets = (ini: string): BuiltInPresetCatalog => {
       format: enumValue(get('format'), ['mp4', 'mkv'], label('format')),
       preferredVideoCodec: enumValue(get('preferred_video_codec'), ['H.264', 'HEVC', 'AV1'], label('preferred_video_codec')),
       encoderSpeed: numberValue(get('encoder_speed'), label('encoder_speed'), 1, 7),
+      outputTierDefaults: Object.fromEntries(['4k', '1080p', '720p', '360p'].map((tier) => [tier, {
+        encoderSpeed: optionalNumberValue(optional(`encoder_speed_${tier}`), label(`encoder_speed_${tier}`), 1, 7),
+        maxRate: optionalNumberValue(optional(`max_rate_${tier}`), label(`max_rate_${tier}`), 1, 1_000_000),
+      }])) as Record<OutputTier, OutputTierDefaults>,
       encoderTune: {
         nvenc: optional('tune_nvenc'), amf: optional('tune_amf'), qsv: optional('tune_qsv'),
         vaapi: optional('tune_vaapi'), videotoolbox: optional('tune_videotoolbox'), software: optional('tune_software'),

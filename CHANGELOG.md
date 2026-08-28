@@ -4,6 +4,12 @@ All notable changes to EA Media Tools are documented here.
 
 ## [Unreleased]
 
+### Changed
+
+- Give only the Streaming preset a 3x bitrate buffer and spatial AQ strength 12 to further reduce dark-scene blockiness without changing its CQ, encode speed, or maximum rates.
+- Set Music Video sources in the 1080p tier to P7 and 7000 kbit/s maximum, and sources in the 4K tier to P6 and 11000 kbit/s maximum, with all four overrides defined in `presets.ini`.
+- Improve transcoded MP4 seeking and Jellyfin playback with five-second keyframe spacing, front-loaded metadata, and the browser-compatible `hvc1` tag for HEVC output.
+
 ## [2.4.0] - 2026-08-27
 
 ### Added
