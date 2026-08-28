@@ -4,11 +4,19 @@ All notable changes to EA Media Tools are documented here.
 
 ## [Unreleased]
 
+## [2.4.1] - 2026-08-28
+
+### Added
+
+- Add a validated `[Version: bbe1a13]` commit marker at the top of `presets.ini` and include it in preset synchronization log events.
+
 ### Changed
 
 - Give only the Streaming preset a 3x bitrate buffer and spatial AQ strength 12 to further reduce dark-scene blockiness without changing its CQ, encode speed, or maximum rates.
 - Set Music Video sources in the 1080p tier to P7 and 7000 kbit/s maximum, and sources in the 4K tier to P6 and 11000 kbit/s maximum, with all four overrides defined in `presets.ini`.
 - Improve transcoded MP4 seeking and Jellyfin playback with five-second keyframe spacing, front-loaded metadata, and the browser-compatible `hvc1` tag for HEVC output.
+- Move every output tier's resolution, target bitrate, maximum bitrate, and Streaming encoder-family quality value from application code into validated `presets.ini` sections and overrides.
+- Format the activity log as one compact event stream, removing the extra blank lines around FFmpeg and FFprobe events and normalizing existing logs.
 
 ## [2.4.0] - 2026-08-27
 
@@ -282,6 +290,7 @@ All notable changes to EA Media Tools are documented here.
 - Convert crop offsets to CUVID edge values with division by two and floor rounding.
 - Cancel all active parallel encodes and interrupt pending cooldowns when the queue is stopped or a job fails.
 
+[2.4.1]: https://github.com/eaforlife/media-converter/compare/v2.4.0...v2.4.1
 [2.4.0]: https://github.com/eaforlife/media-converter/compare/v2.3.1...v2.4.0
 [2.3.1]: https://github.com/eaforlife/media-converter/compare/v2.3.0...v2.3.1
 [2.3.0]: https://github.com/eaforlife/media-converter/compare/v2.2.1...v2.3.0

@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { parseBuiltInPresets } from './presets.ts';
+import { parseBuiltInPresetConfiguration } from './presets.ts';
 
 export const MAX_REMOTE_PRESET_BYTES = 64 * 1024;
 
@@ -15,7 +15,7 @@ export const validateRemotePresetContents = (contents: string) => {
   if (Buffer.byteLength(contents, 'utf8') > MAX_REMOTE_PRESET_BYTES) {
     throw new Error(`Remote presets.ini exceeds ${MAX_REMOTE_PRESET_BYTES} bytes`);
   }
-  parseBuiltInPresets(contents);
+  parseBuiltInPresetConfiguration(contents);
   return contents;
 };
 

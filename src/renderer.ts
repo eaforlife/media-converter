@@ -6,8 +6,8 @@ import {
   commonSeriesFolderName, parseEpisodeIdentity, preservedOutputBaseName, sanitizePathSegment,
   smartMovieFolderName, smartSeriesBaseName,
 } from './output-naming';
-import { predefinedPresetNames, REQUIRED_BUILT_IN_PRESET_NAMES } from './presets';
-import type { BuiltInPresetCatalog, BuiltInPresetDefinition, BuiltInPresetName, EncoderFamily, PreferredVideoCodec, PresetAudioCodec } from './presets';
+import { predefinedPresetNames, REQUIRED_BUILT_IN_PRESET_NAMES, resolvePresetOutputDefaults } from './presets';
+import type { BuiltInPresetConfiguration, BuiltInPresetDefinition, BuiltInPresetName, EncoderFamily, PreferredVideoCodec, PresetAudioCodec } from './presets';
 import { advancedVideoArguments, supportedAdvancedVideoFields } from './advanced-video-settings';
 import type { AdvancedVideoField } from './advanced-video-settings';
 import {
@@ -22,7 +22,7 @@ import {
   cudaCropBridgeFilters, cudaHardwareDecodeArguments, cuvidDecoderCropArguments, cuvidDecoderName, hardwareUploadFilter,
   protectedHardwareDecodeArguments, strictVideoTranscodeArguments,
 } from './video-safety';
-import { bufferSizeFor, deliveryPresetForOutput, deliveryQualityForOutput, scaleDimensionsFor, videoOutputProfile } from './video-output-profile';
+import { bufferSizeFor, scaleDimensionsFor, videoOutputProfile } from './video-output-profile';
 import { applyEncodeProgress, canFinishEncodeQueue, createEncodeQueueProgress, isQueueTerminal } from './encode-progress-state';
 import type { EncodeJobProgressState, EncodeQueueProgressState } from './encode-progress-state';
 import { formatSessionFfmpegCommand } from './ffmpeg-command-display';
@@ -86,7 +86,7 @@ if (!app) throw new Error('App root was not found');
 const AAC_BITRATES = ['128k', '144k', '160k', '192k', '224k', '256k', '320k'];
 const OPUS_BITRATES = ['32k', '48k', '64k', '80k', '96k', '112k', '128k'];
 let sources: SourceFile[] = [];
-let builtInPresets: BuiltInPresetCatalog | null = null;
+let builtInPresetConfiguration: BuiltInPresetConfiguration | null = null;
 let selectedIndex = 0;
 let activeTab = 'Summary';
 let outputDirectory = '';
@@ -142,14 +142,23 @@ const isAudioWorkflow = (source: SourceFile) => workflowOf(source) === 'audio';
 const isMusicVideoWorkflow = (source: SourceFile) => workflowOf(source) === 'music-video';
 const isAudioPassthrough = (settings: JobSettings) => settings.format === 'source'
   || Object.values(settings.audio).some((track) => track.codec === 'copy');
-const builtInPreset = (name: string) => builtInPresets?.[name];
+const builtInPreset = (name: string) => builtInPresetConfiguration?.presets[name];
+const requiredBuiltInPresetConfiguration = () => {
+  if (!builtInPresetConfiguration) throw new Error('The built-in preset configuration is unavailable');
+  return builtInPresetConfiguration;
+};
 const requiredBuiltInPreset = (name: BuiltInPresetName) => {
   const preset = builtInPreset(name);
   if (!preset) throw new Error(`The ${name} preset is unavailable`);
   return preset;
 };
 const outputProfileFor = (source: SourceFile, scale: ScaleMode, preset: string) =>
-  videoOutputProfile(source.media?.video?.height ?? 0, scale, preset === 'Cellular');
+  videoOutputProfile(
+    source.media?.video?.height ?? 0,
+    scale,
+    requiredBuiltInPresetConfiguration().outputProfiles,
+    preset === 'Cellular',
+  );
 const softwareEncoderFor = (codec: PreferredVideoCodec) => codec === 'H.264'
   ? 'libx264' : codec === 'AV1' ? 'libsvtav1' : 'libx265';
 const hardwareEncoderFor = (codec: PreferredVideoCodec) => appSettings.hardwareAcceleration
@@ -164,17 +173,19 @@ const encoderFamily = (encoder: string): EncoderFamily => encoder.endsWith('_nve
   ? 'nvenc' : encoder.endsWith('_amf') ? 'amf'
     : encoder.endsWith('_qsv') ? 'qsv' : encoder.endsWith('_vaapi') ? 'vaapi'
       : encoder.endsWith('_videotoolbox') ? 'videotoolbox' : 'software';
-const presetQuality = (preset: BuiltInPresetDefinition, encoder: string) => preset.quality[encoderFamily(encoder)];
 const presetTune = (preset: BuiltInPresetDefinition, encoder: string) => preset.encoderTune[encoderFamily(encoder)];
+const outputDefaultsFor = (
+  preset: BuiltInPresetDefinition,
+  tier: ReturnType<typeof videoOutputProfile>['tier'],
+  encoder: string,
+) => resolvePresetOutputDefaults(
+  requiredBuiltInPresetConfiguration(), preset, tier, encoderFamily(encoder),
+);
 const deliveryQuality = (
   preset: BuiltInPresetDefinition,
   tier: ReturnType<typeof videoOutputProfile>['tier'],
   encoder: string,
-) => deliveryQualityForOutput(
-  preset.name,
-  tier,
-  presetQuality(builtInPreset(deliveryPresetForOutput(preset.name, tier)) ?? preset, encoder),
-);
+) => outputDefaultsFor(preset, tier, encoder).quality;
 const audioBitrateFor = (
   presetName: string,
   codec: AudioCodec,
@@ -386,20 +397,20 @@ const applyAudioPreset = (source: SourceFile, presetName: string) => {
 
 const applyMusicVideoPreset = (source: SourceFile) => {
   const preset = requiredBuiltInPreset('Music Video');
-  const outputProfile = videoOutputProfile(source.media?.video?.height ?? 0, 'auto');
-  const tierDefaults = preset.outputTierDefaults[outputProfile.tier];
-  const encoderSpeed = tierDefaults.encoderSpeed ?? preset.encoderSpeed;
-  const maxRate = tierDefaults.maxRate ?? outputProfile.maxRate;
+  const outputProfile = videoOutputProfile(
+    source.media?.video?.height ?? 0, 'auto', requiredBuiltInPresetConfiguration().outputProfiles,
+  );
   const settings = settingsByPath.get(source.path) ?? initialSettings(source);
   settingsByPath.set(source.path, settings);
   const encoder = hardwareEncoderFor(preset.preferredVideoCodec);
+  const outputDefaults = outputDefaultsFor(preset, outputProfile.tier, encoder);
   Object.assign(settings, {
     preset: 'Music Video', format: preset.format, encoder,
-    encoderSpeed: normalizeEncoderSpeed(encoderSpeed),
+    encoderSpeed: normalizeEncoderSpeed(outputDefaults.encoderSpeed),
     encoderTune: normalizeEncoderTune(encoder, presetTune(preset, encoder)),
-    quality: presetQuality(preset, encoder),
-    videoBitrate: '0', maxRate: String(maxRate), bufferMultiplier: preset.bufferMultiplier,
-    bufferSize: String(bufferSizeFor(maxRate, preset.bufferMultiplier)),
+    resolution: outputDefaults.resolution.join(':'), quality: outputDefaults.quality,
+    videoBitrate: String(outputDefaults.videoBitrate), maxRate: String(outputDefaults.maxRate), bufferMultiplier: preset.bufferMultiplier,
+    bufferSize: String(bufferSizeFor(outputDefaults.maxRate, preset.bufferMultiplier)),
     deliveryMode: preset.deliveryMode, advancedVideo: copyAdvancedVideo(preset.advancedVideo),
     processing: { video: true, audio: true, subtitles: true },
   });
@@ -421,14 +432,15 @@ const initialSettings = (source: SourceFile): JobSettings => {
   if (isAudioWorkflow(source)) return initialAudioSettings(source);
   const preset = requiredBuiltInPreset('Streaming');
   const outputProfile = outputProfileFor(source, preset.scale, preset.name);
-  const profilePreset = builtInPreset(deliveryPresetForOutput(preset.name, outputProfile.tier)) ?? preset;
-  const maxRate = outputProfile.maxRate;
   const encoder = hardwareEncoderFor(preset.preferredVideoCodec);
+  const outputDefaults = outputDefaultsFor(preset, outputProfile.tier, encoder);
+  const profilePreset = outputDefaults.deliveryPreset;
   const selectedAudio = preferredAudioIndexes(source.media?.audio ?? []);
   const settings: JobSettings = {
-    preset: 'Streaming', format: preset.format, encoder, encoderSpeed: normalizeEncoderSpeed(preset.encoderSpeed), encoderTune: normalizeEncoderTune(encoder, presetTune(preset, encoder)),
-    resolution: outputProfile.scale.join(':'), quality: deliveryQuality(preset, outputProfile.tier, encoder),
-    videoBitrate: '0', maxRate: String(maxRate), bufferMultiplier: preset.bufferMultiplier, bufferSize: String(bufferSizeFor(maxRate, preset.bufferMultiplier)),
+    preset: 'Streaming', format: preset.format, encoder, encoderSpeed: normalizeEncoderSpeed(outputDefaults.encoderSpeed), encoderTune: normalizeEncoderTune(encoder, presetTune(preset, encoder)),
+    resolution: outputDefaults.resolution.join(':'), quality: outputDefaults.quality,
+    videoBitrate: String(outputDefaults.videoBitrate), maxRate: String(outputDefaults.maxRate), bufferMultiplier: preset.bufferMultiplier,
+    bufferSize: String(bufferSizeFor(outputDefaults.maxRate, preset.bufferMultiplier)),
     advancedVideo: copyAdvancedVideo(profilePreset.advancedVideo),
     processing: { video: true, audio: true, subtitles: true },
     videoMetadata: copyMetadata(source.media?.video?.language ?? 'und', source.media?.video?.flags ?? { default: false, forced: false, hearingImpaired: false }),
@@ -485,24 +497,23 @@ const applyPreset = (source: SourceFile, preset: string, persist = true) => {
       ? saved!.encoder
       : hardwareEncoderFor(preferredCodecForEncoder(saved!.encoder));
   const outputProfile = defaults ? outputProfileFor(source, defaults.scale, defaults.name) : null;
-  const profileDefaults = defaults && outputProfile
-    ? builtInPreset(deliveryPresetForOutput(defaults.name, outputProfile.tier)) ?? defaults
-    : null;
+  const outputDefaults = defaults && outputProfile ? outputDefaultsFor(defaults, outputProfile.tier, encoder) : null;
+  const profileDefaults = outputDefaults?.deliveryPreset ?? null;
   Object.assign(settings, {
     preset,
     format: selectedPreset.format,
     encoder,
-    encoderSpeed: normalizeEncoderSpeed(defaults ? defaults.encoderSpeed : saved!.encoderSpeed),
+    encoderSpeed: normalizeEncoderSpeed(defaults ? outputDefaults!.encoderSpeed : saved!.encoderSpeed),
     encoderTune: normalizeEncoderTune(encoder, defaults ? presetTune(defaults, encoder) : saved!.encoderTune),
-    quality: defaults ? deliveryQuality(defaults, outputProfile!.tier, encoder) : normalizeQuality(saved!.quality),
-    videoBitrate: defaults ? '0' : saved!.videoBitrate,
-    maxRate: defaults ? String(defaults.bitrateControl ? outputProfile!.maxRate : 0) : saved!.maxRate,
+    quality: defaults ? outputDefaults!.quality : normalizeQuality(saved!.quality),
+    videoBitrate: defaults ? String(defaults.bitrateControl ? outputDefaults!.videoBitrate : 0) : saved!.videoBitrate,
+    maxRate: defaults ? String(defaults.bitrateControl ? outputDefaults!.maxRate : 0) : saved!.maxRate,
     bufferMultiplier: defaults ? defaults.bufferMultiplier : saved!.bufferMultiplier,
-    bufferSize: defaults ? String(bufferSizeFor(outputProfile!.maxRate, defaults.bufferMultiplier)) : saved!.bufferSize,
+    bufferSize: defaults ? String(bufferSizeFor(defaults.bitrateControl ? outputDefaults!.maxRate : 0, defaults.bufferMultiplier)) : saved!.bufferSize,
     deliveryMode: selectedPreset.deliveryMode,
     advancedVideo: copyAdvancedVideo(defaults ? profileDefaults!.advancedVideo : saved!.advancedVideo),
   });
-  if (defaults) settings.resolution = defaults.scale === 'disabled' ? defaults.resolution : outputProfile!.scale.join(':');
+  if (defaults) settings.resolution = defaults.scale === 'disabled' ? defaults.resolution : outputDefaults!.resolution.join(':');
   settings.filters = defaults
     ? { ...defaultFilters(source), scale: defaults.scale, scaleLocked: defaults.scaleLocked }
     : { ...saved!.filters };
@@ -540,15 +551,17 @@ const applyBuiltInScaleProfile = (
   const defaults = builtInPreset(settings.preset);
   if (!defaults) return false;
   const outputProfile = outputProfileFor(source, scale, defaults.name);
-  const profileDefaults = builtInPreset(deliveryPresetForOutput(defaults.name, outputProfile.tier)) ?? defaults;
+  const outputDefaults = outputDefaultsFor(defaults, outputProfile.tier, settings.encoder);
+  const profileDefaults = outputDefaults.deliveryPreset;
   settings.filters.scale = scale;
   settings.filters.scaleLocked = defaults.scaleLocked;
-  settings.resolution = scale === 'disabled' ? defaults.resolution : outputProfile.scale.join(':');
-  settings.quality = deliveryQuality(defaults, outputProfile.tier, settings.encoder);
-  settings.videoBitrate = '0';
-  settings.maxRate = String(defaults.bitrateControl ? outputProfile.maxRate : 0);
+  settings.resolution = scale === 'disabled' ? defaults.resolution : outputDefaults.resolution.join(':');
+  settings.encoderSpeed = normalizeEncoderSpeed(outputDefaults.encoderSpeed);
+  settings.quality = outputDefaults.quality;
+  settings.videoBitrate = String(defaults.bitrateControl ? outputDefaults.videoBitrate : 0);
+  settings.maxRate = String(defaults.bitrateControl ? outputDefaults.maxRate : 0);
   settings.bufferMultiplier = defaults.bufferMultiplier;
-  settings.bufferSize = String(bufferSizeFor(outputProfile.maxRate, defaults.bufferMultiplier));
+  settings.bufferSize = String(bufferSizeFor(defaults.bitrateControl ? outputDefaults.maxRate : 0, defaults.bufferMultiplier));
   settings.deliveryMode = profileDefaults.deliveryMode;
   settings.advancedVideo = copyAdvancedVideo(profileDefaults.advancedVideo);
   for (const track of source.media?.audio ?? []) {
@@ -836,8 +849,19 @@ const hardwareScaleDimensions = (source: SourceFile, settings: JobSettings): [st
   const video = source.media?.video;
   if (!video) return null;
   const dimensions = isMusicVideoWorkflow(source)
-    ? video.height >= 2160 ? ['2960', '-2'] as const : null
-    : scaleDimensionsFor(video.height, settings.filters.scale, settings.preset === 'Cellular');
+    ? video.height >= 2160
+      ? outputDefaultsFor(
+        requiredBuiltInPreset('Music Video'),
+        outputProfileFor(source, 'auto', 'Music Video').tier,
+        settings.encoder,
+      ).resolution
+      : null
+    : scaleDimensionsFor(
+      video.height,
+      settings.filters.scale,
+      requiredBuiltInPresetConfiguration().outputProfiles,
+      settings.preset === 'Cellular',
+    );
   if (!dimensions) return null;
   const crop = settings.filters.autoCrop ? detectedCropForSource(source) : null;
   return aspectPreservingDimensions(dimensions, video.width, video.height, crop);
@@ -1488,7 +1512,7 @@ const showAppMenu = () => {
   const runtimeSelector = sources.length === 0 && Boolean(document.querySelector('.welcome-shell'))
     ? `<label class="menu-check runtime-channel-toggle"><input id="stable-ffmpeg" type="checkbox"${checked(appSettings.useStableFfmpeg)}/><span><strong>Stable</strong><small>Use the stable Jellyfin FFmpeg runtime</small></span></label>`
     : '';
-  menu.innerHTML = `<div class="menu-identity"><strong>EA Media Tools</strong><span>Version ${escapeHtml(runtimeState?.appVersion ?? '2.4.0')} · ${APP_CODENAME}</span></div>${runtimeSelector}<label class="menu-check"><input id="hardware-acceleration" type="checkbox"${checked(appSettings.hardwareAcceleration)}/><span>Hardware Acceleration</span></label><button id="view-logs">View Logs</button><button id="view-config">View Running Config</button><button id="view-changelog">View Change Log</button><button id="check-update">Check for update</button><button class="danger" id="exit-app">Exit</button>`;
+  menu.innerHTML = `<div class="menu-identity"><strong>EA Media Tools</strong><span>Version ${escapeHtml(runtimeState?.appVersion ?? '2.4.1')} · ${APP_CODENAME}</span></div>${runtimeSelector}<label class="menu-check"><input id="hardware-acceleration" type="checkbox"${checked(appSettings.hardwareAcceleration)}/><span>Hardware Acceleration</span></label><button id="view-logs">View Logs</button><button id="view-config">View Running Config</button><button id="view-changelog">View Change Log</button><button id="check-update">Check for update</button><button class="danger" id="exit-app">Exit</button>`;
   document.body.appendChild(menu);
   menu.addEventListener('click', (event) => event.stopPropagation());
   menu.querySelector<HTMLInputElement>('#stable-ffmpeg')?.addEventListener('change', async (event) => {
@@ -1558,7 +1582,7 @@ const showAppMenu = () => {
     'EA Media Tools running config', 'config · user settings and active custom working state', () => window.mediaAPI.readConfig(appSettings),
   ));
   menu.querySelector('#view-changelog')?.addEventListener('click', () => void showTextReader(
-    `EA Media Tools ${runtimeState?.appVersion ?? '2.4.0'} change log`,
+    `EA Media Tools ${runtimeState?.appVersion ?? '2.4.1'} change log`,
     `${APP_CODENAME} · installed release notes from GitHub`,
     () => window.mediaAPI.readChangelog(),
   ));
@@ -1671,7 +1695,7 @@ const renderWorkspace = () => {
   const showWorkingCustom = settings.preset === 'Custom';
   const basePresets = audioWorkflow
     ? [...AUDIO_PRESET_NAMES]
-    : predefinedPresetNames(builtInPresets ?? {}, musicVideo);
+    : predefinedPresetNames(builtInPresetConfiguration?.presets ?? {}, musicVideo);
   const visiblePresets = [...basePresets, ...(showWorkingCustom ? ['Custom'] : [])];
   const savedPresets = musicVideo ? [] : appSettings.customPresets.filter((preset) =>
     audioWorkflow ? preset.workflow === 'audio' : preset.workflow !== 'audio');
@@ -1875,11 +1899,14 @@ const renderFilterSettings = (source: SourceFile, settings: JobSettings) => {
   const hasSurround = Boolean(source.media?.audio.some((track) => settings.audio[track.index]?.enabled && !track.isStereo));
   const crop = detectedCropForSource(source);
   const cropDetail = crop ? `Detected ${crop.filter}` : 'No crop detected; full frame will be retained';
+  const musicVideoScale = isMusicVideoWorkflow(source)
+    ? outputDefaultsFor(requiredBuiltInPreset('Music Video'), '4k', settings.encoder).resolution.join(':')
+    : '';
   return `<fieldset class="filter-layout processing-fieldset ${settings.processing.video ? '' : 'processing-disabled'}"${settings.processing.video ? '' : ' disabled'}><section class="settings-card"><div class="card-title"><div><span>PICTURE FILTERS</span><h3>Automatic processing</h3></div>${icon('sliders', 22)}</div>
     <div class="filter-options"><label class="toggle-row"><span><strong>Auto Crop</strong><small>${escapeHtml(cropDetail)}</small></span><input type="checkbox" data-filter="autoCrop"${checked(settings.filters.autoCrop)}/><i></i></label>
     <label class="toggle-row ${isHdr ? '' : 'disabled'}"><span><strong>HDR to SDR</strong><small>${isHdr ? `Tone-map ${escapeHtml(hdrLabel(source))} to SDR` : 'Unavailable because the source is SDR'}</small></span><input type="checkbox" data-filter="toneMapHdrToSdr"${checked(settings.filters.toneMapHdrToSdr)}${isHdr ? '' : ' disabled'}/><i></i></label>
     <label class="toggle-row sub-option ${allow10Bit && supports10Bit ? '' : 'disabled'}"><span><strong>Pixel Format: 10-bit</strong><small>${forcedMusicMain10 && supports10Bit ? 'Required Main10 output for this H.264 High music-video source' : allow10Bit && supports10Bit ? 'Output as yuv420p10le' : hevcOutput && !supports10Bit ? 'The detected HEVC hardware path did not pass the Main10 test' : hevcOutput ? 'Requires HDR/DV, HEVC Main10, or an H.264 High music-video source' : 'Requires an HEVC output encoder'}</small></span><input type="checkbox" data-filter="pixelFormat10Bit"${checked(forcedMusicMain10 && supports10Bit || settings.filters.pixelFormat10Bit && hevcOutput)}${allow10Bit && supports10Bit && !forcedMusicMain10 ? '' : ' disabled'}/><i></i></label>
-    <label class="scale-row"><span><strong>Auto scale</strong><small>${isMusicVideoWorkflow(source) ? 'Music Video locks Auto Scale and only scales 4K sources to 2960:-2.' : settings.filters.scaleLocked ? 'Cellular locks scaling to 360p.' : 'Choose an automatic output height or leave scaling disabled.'}</small></span><select id="filter-scale"${settings.filters.scaleLocked ? ' disabled' : ''}><option value="auto"${selected(settings.filters.scale === 'auto')}>Auto Scale</option><option value="1080p"${selected(settings.filters.scale === '1080p')}>1080p</option><option value="720p"${selected(settings.filters.scale === '720p')}>720p</option><option value="360p"${selected(settings.filters.scale === '360p')}>360p</option><option value="disabled"${selected(settings.filters.scale === 'disabled')}>Disabled</option></select></label></div></section>
+    <label class="scale-row"><span><strong>Auto scale</strong><small>${isMusicVideoWorkflow(source) ? `Music Video locks Auto Scale and only scales 4K sources to ${escapeHtml(musicVideoScale)}.` : settings.filters.scaleLocked ? 'Cellular locks scaling to 360p.' : 'Choose an automatic output height or leave scaling disabled.'}</small></span><select id="filter-scale"${settings.filters.scaleLocked ? ' disabled' : ''}><option value="auto"${selected(settings.filters.scale === 'auto')}>Auto Scale</option><option value="1080p"${selected(settings.filters.scale === '1080p')}>1080p</option><option value="720p"${selected(settings.filters.scale === '720p')}>720p</option><option value="360p"${selected(settings.filters.scale === '360p')}>360p</option><option value="disabled"${selected(settings.filters.scale === 'disabled')}>Disabled</option></select></label></div></section>
     <section class="settings-card locked-options"><div class="card-title"><div><span>OUTPUT CONTENT</span><h3>Required job behavior</h3></div>${icon('check', 22)}</div><div class="job-options">
       <label class="locked-check"><input type="checkbox" checked disabled/> Remux audio into video output</label><label class="locked-check"><input type="checkbox" checked disabled/> Remux subtitles into video output</label><label class="locked-check"><input type="checkbox"${checked(settings.filters.stripMetadata)} disabled/> ${settings.filters.stripMetadata ? 'Strip title, group, and description metadata' : 'Preserve source metadata'}</label>
       <label class="locked-check ${hasSurround ? '' : 'disabled'}"><input type="checkbox" data-job-behavior="doNotReplaceAudio"${checked(settings.filters.doNotReplaceAudio)}${hasSurround ? '' : ' disabled'}/> Do not replace audio track <small>Keep surround and add a default stereo downmix.</small></label></div></section></fieldset>`;
@@ -2184,7 +2211,9 @@ const saveCurrentPreset = async (source: SourceFile) => {
     showToast('Preset names cannot contain ], carriage returns, or line breaks');
     return;
   }
-  const predefinedNames = builtInPresets ? Object.keys(builtInPresets) : [...REQUIRED_BUILT_IN_PRESET_NAMES];
+  const predefinedNames = builtInPresetConfiguration
+    ? Object.keys(builtInPresetConfiguration.presets)
+    : [...REQUIRED_BUILT_IN_PRESET_NAMES];
   if ([...predefinedNames, ...AUDIO_PRESET_NAMES, 'Custom'].includes(name)) {
     showToast('Choose a name different from the built-in presets');
     return;
@@ -2282,7 +2311,7 @@ const startApplication = async () => {
   const removeProgressListener = window.mediaAPI.onRuntimeProgress((state) => { runtimeState = state; renderBootstrap(state); });
   try {
     await window.mediaAPI.initializeAppUpdate();
-    builtInPresets = await window.mediaAPI.loadBuiltInPresets();
+    builtInPresetConfiguration = await window.mediaAPI.loadBuiltInPresets();
     try { appSettings = await window.mediaAPI.loadSettings(); } catch { /* defaults remain active */ }
     appSettings.customPresets = await window.mediaAPI.loadCustomPresets();
     runtimeState = await window.mediaAPI.initializeRuntime(appSettings.useStableFfmpeg); renderBootstrap(runtimeState);
@@ -2292,10 +2321,10 @@ const startApplication = async () => {
     }
     await new Promise((resolve) => window.setTimeout(resolve, runtimeState?.phase === 'error' ? 900 : 350));
   } catch (error) {
-    runtimeState = { phase: 'error', message: error instanceof Error ? error.message : 'Unable to initialize FFmpeg', progress: null, appVersion: '2.4.0', isPackaged: false, updateEnabled: false, ffmpegAvailable: false, ffmpegPath: '', ffprobePath: '', ffmpegVersion: null, releaseTag: null, ffmpegChannel: appSettings.useStableFfmpeg ? 'stable' : 'unstable', rsgainAvailable: false, rsgainPath: '', rsgainVersion: null, ccextractorAvailable: false, ccextractorPath: '', ccextractorVersion: null };
+    runtimeState = { phase: 'error', message: error instanceof Error ? error.message : 'Unable to initialize FFmpeg', progress: null, appVersion: '2.4.1', isPackaged: false, updateEnabled: false, ffmpegAvailable: false, ffmpegPath: '', ffprobePath: '', ffmpegVersion: null, releaseTag: null, ffmpegChannel: appSettings.useStableFfmpeg ? 'stable' : 'unstable', rsgainAvailable: false, rsgainPath: '', rsgainVersion: null, ccextractorAvailable: false, ccextractorPath: '', ccextractorVersion: null };
     renderBootstrap(runtimeState); await new Promise((resolve) => window.setTimeout(resolve, 900));
   } finally { removeProgressListener(); }
-  if (!builtInPresets) return;
+  if (!builtInPresetConfiguration) return;
   renderWelcome();
 };
 

@@ -1,5 +1,5 @@
 import type { AdvancedVideoSettings, ScaleMode } from './shared-types';
-import type { OutputTier } from './video-output-profile';
+import type { OutputTier, VideoOutputProfiles } from './video-output-profile';
 
 export const MUSIC_VIDEO_PRESET_NAME = 'Music Video';
 export const REQUIRED_BUILT_IN_PRESET_NAMES = ['Archive', 'Regular', 'Streaming', 'Cellular', MUSIC_VIDEO_PRESET_NAME] as const;
@@ -7,9 +7,18 @@ export type BuiltInPresetName = typeof REQUIRED_BUILT_IN_PRESET_NAMES[number];
 export type PreferredVideoCodec = 'H.264' | 'HEVC' | 'AV1';
 export type PresetAudioCodec = 'aac' | 'opus';
 export type EncoderFamily = 'nvenc' | 'amf' | 'qsv' | 'vaapi' | 'videotoolbox' | 'software';
+export const OUTPUT_TIERS: readonly OutputTier[] = ['4k', '1080p', '720p', '360p'];
+export const ENCODER_FAMILIES: readonly EncoderFamily[] = ['nvenc', 'amf', 'qsv', 'vaapi', 'videotoolbox', 'software'];
 
 type AudioRates = Record<PresetAudioCodec, { stereo: string; surround: string }>;
-type OutputTierDefaults = { encoderSpeed?: number; maxRate?: number };
+type OutputTierDefaults = {
+  encoderSpeed?: number;
+  resolution?: readonly [string, string];
+  videoBitrate?: number;
+  maxRate?: number;
+  deliveryPreset?: string;
+  quality: Partial<Record<EncoderFamily, string>>;
+};
 
 export type BuiltInPresetDefinition = {
   name: string;
@@ -32,6 +41,11 @@ export type BuiltInPresetDefinition = {
 };
 
 export type BuiltInPresetCatalog = Readonly<Record<string, BuiltInPresetDefinition>>;
+export type BuiltInPresetConfiguration = Readonly<{
+  version: string;
+  outputProfiles: VideoOutputProfiles;
+  presets: BuiltInPresetCatalog;
+}>;
 
 export const predefinedPresetNames = (catalog: BuiltInPresetCatalog, musicVideo: boolean) => musicVideo
   ? catalog[MUSIC_VIDEO_PRESET_NAME] ? [MUSIC_VIDEO_PRESET_NAME] : []
@@ -53,6 +67,14 @@ const numberValue = (value: string, label: string, minimum: number, maximum: num
 
 const optionalNumberValue = (value: string, label: string, minimum: number, maximum: number) =>
   value === '' ? undefined : numberValue(value, label, minimum, maximum);
+
+const resolutionValue = (value: string, label: string): readonly [string, string] => {
+  const match = value.match(/^(-?\d+):(-?\d+)$/);
+  if (!match || [match[1], match[2]].some((part) => Number(part) !== -2 && Number(part) <= 0)) {
+    throw new Error(`${label} must contain two positive dimensions or -2`);
+  }
+  return [match[1], match[2]];
+};
 
 const enumValue = <T extends string>(value: string, allowed: readonly T[], label: string): T => {
   if (allowed.includes(value as T)) return value as T;
@@ -78,14 +100,36 @@ export const parseIniSections = (ini: string) => {
   return sections;
 };
 
-export const parseBuiltInPresets = (ini: string): BuiltInPresetCatalog => {
+export const parseBuiltInPresetConfiguration = (ini: string): BuiltInPresetConfiguration => {
+  const firstEntry = ini.replace(/^\uFEFF/, '').split(/\r?\n/).map((line) => line.trim()).find(Boolean) ?? '';
+  const versionMatch = firstEntry.match(/^\[Version: ([0-9a-f]{7,40})\]$/i);
+  if (!versionMatch) throw new Error('presets.ini must begin with [Version: <commit>]');
+  const versionSection = firstEntry.slice(1, -1);
   const sections = parseIniSections(ini);
   for (const name of REQUIRED_BUILT_IN_PRESET_NAMES) {
     if (!sections.has(name)) throw new Error(`presets.ini is missing the [${name}] section`);
   }
+  const outputProfiles = Object.fromEntries(OUTPUT_TIERS.map((tier) => {
+    const name = `Output: ${tier}`;
+    const values = sections.get(name);
+    if (!values) throw new Error(`presets.ini is missing the [${name}] section`);
+    const get = (key: string) => {
+      const value = values.get(key);
+      if (value === undefined || value === '') throw new Error(`[${name}] is missing ${key}`);
+      return value;
+    };
+    return [tier, Object.freeze({
+      tier,
+      scale: resolutionValue(get('resolution'), `[${name}] resolution`),
+      videoBitrate: numberValue(get('video_bitrate'), `[${name}] video_bitrate`, 0, 1_000_000),
+      maxRate: numberValue(get('max_rate'), `[${name}] max_rate`, 1, 1_000_000),
+    })];
+  })) as VideoOutputProfiles;
+  const metadataSections = new Set([versionSection, ...OUTPUT_TIERS.map((tier) => `Output: ${tier}`)]);
   const parsed: Record<string, BuiltInPresetDefinition> = {};
   for (const [name, values] of sections) {
     if (name === 'Custom') throw new Error('presets.ini cannot define the reserved [Custom] section');
+    if (metadataSections.has(name)) continue;
     const get = (key: string) => {
       const value = values.get(key);
       if (value === undefined || value === '') throw new Error(`[${name}] is missing ${key}`);
@@ -99,9 +143,17 @@ export const parseBuiltInPresets = (ini: string): BuiltInPresetCatalog => {
       format: enumValue(get('format'), ['mp4', 'mkv'], label('format')),
       preferredVideoCodec: enumValue(get('preferred_video_codec'), ['H.264', 'HEVC', 'AV1'], label('preferred_video_codec')),
       encoderSpeed: numberValue(get('encoder_speed'), label('encoder_speed'), 1, 7),
-      outputTierDefaults: Object.fromEntries(['4k', '1080p', '720p', '360p'].map((tier) => [tier, {
+      outputTierDefaults: Object.fromEntries(OUTPUT_TIERS.map((tier) => [tier, {
         encoderSpeed: optionalNumberValue(optional(`encoder_speed_${tier}`), label(`encoder_speed_${tier}`), 1, 7),
+        resolution: optional(`resolution_${tier}`)
+          ? resolutionValue(optional(`resolution_${tier}`), label(`resolution_${tier}`))
+          : undefined,
+        videoBitrate: optionalNumberValue(optional(`video_bitrate_${tier}`), label(`video_bitrate_${tier}`), 0, 1_000_000),
         maxRate: optionalNumberValue(optional(`max_rate_${tier}`), label(`max_rate_${tier}`), 1, 1_000_000),
+        deliveryPreset: optional(`delivery_preset_${tier}`) || undefined,
+        quality: Object.fromEntries(ENCODER_FAMILIES.map((family) => [
+          family, optional(`quality_${family}_${tier}`) || undefined,
+        ])) as Partial<Record<EncoderFamily, string>>,
       }])) as Record<OutputTier, OutputTierDefaults>,
       encoderTune: {
         nvenc: optional('tune_nvenc'), amf: optional('tune_amf'), qsv: optional('tune_qsv'),
@@ -136,5 +188,42 @@ export const parseBuiltInPresets = (ini: string): BuiltInPresetCatalog => {
       },
     };
   }
-  return Object.freeze(parsed);
+  for (const preset of Object.values(parsed)) {
+    for (const tier of OUTPUT_TIERS) {
+      const deliveryPreset = preset.outputTierDefaults[tier].deliveryPreset;
+      if (deliveryPreset && !parsed[deliveryPreset]) {
+        throw new Error(`[${preset.name}] delivery_preset_${tier} references missing preset ${deliveryPreset}`);
+      }
+    }
+  }
+  return Object.freeze({
+    version: versionMatch[1],
+    outputProfiles: Object.freeze(outputProfiles),
+    presets: Object.freeze(parsed),
+  });
+};
+
+export const parseBuiltInPresets = (ini: string): BuiltInPresetCatalog =>
+  parseBuiltInPresetConfiguration(ini).presets;
+
+export const resolvePresetOutputDefaults = (
+  configuration: BuiltInPresetConfiguration,
+  preset: BuiltInPresetDefinition,
+  tier: OutputTier,
+  family: EncoderFamily,
+) => {
+  const outputProfile = configuration.outputProfiles[tier];
+  const overrides = preset.outputTierDefaults[tier];
+  const deliveryPreset = overrides.deliveryPreset
+    ? configuration.presets[overrides.deliveryPreset]
+    : preset;
+  if (!deliveryPreset) throw new Error(`The ${overrides.deliveryPreset} preset is unavailable`);
+  return {
+    deliveryPreset,
+    encoderSpeed: overrides.encoderSpeed ?? preset.encoderSpeed,
+    resolution: overrides.resolution ?? outputProfile.scale,
+    quality: overrides.quality[family] ?? deliveryPreset.quality[family],
+    videoBitrate: overrides.videoBitrate ?? outputProfile.videoBitrate,
+    maxRate: overrides.maxRate ?? outputProfile.maxRate,
+  };
 };

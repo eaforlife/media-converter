@@ -2,6 +2,7 @@ import { app } from 'electron';
 import fs from 'node:fs';
 import path from 'node:path';
 import { cleanupRuntimeLogs, runtimeLogNeedsReset } from './install-cleanup';
+import { compactActivityLog } from './log-format';
 
 const MAX_LOG_BYTES = 5 * 1024 * 1024;
 let writeQueue = Promise.resolve();
@@ -38,6 +39,9 @@ export const initializeLogger = async () => {
   const existing = await fs.promises.readFile(logPath(), 'utf8').catch(() => '');
   if (runtimeLogNeedsReset(existing, app.getVersion())) {
     await fs.promises.rm(logPath(), { force: true }).catch(() => undefined);
+  } else if (existing) {
+    const compacted = compactActivityLog(existing);
+    if (compacted !== existing) await fs.promises.writeFile(logPath(), compacted, 'utf8');
   }
   await rotateIfNeeded();
 };
@@ -56,8 +60,7 @@ export const logActivity = (
   event: string,
   details?: unknown,
 ) => {
-  const processOutput = /(?:^|[.])ffmpeg(?:[.]|$)|(?:^|[.])ffprobe(?:[.]|$)/i.test(event);
-  const line = `${processOutput ? '\n\n' : ''}${logLine(level, event, details)}\n${processOutput ? '\n\n' : ''}`;
+  const line = `${logLine(level, event, details)}\n`;
   writeQueue = writeQueue.then(async () => {
     await rotateIfNeeded();
     await fs.promises.appendFile(logPath(), line, 'utf8');
@@ -66,7 +69,7 @@ export const logActivity = (
 
 export const readLog = async () => {
   try {
-    return await fs.promises.readFile(logPath(), 'utf8');
+    return compactActivityLog(await fs.promises.readFile(logPath(), 'utf8'));
   } catch {
     return 'No log entries are available yet.';
   }

@@ -3,7 +3,7 @@ import type {
   AppSettings, EncodeJob, EncodeProgress, EncodeStartResult, HardwareCapabilities, RuntimeState, SavedPreset, SourceFile,
   SubtitleImportResult,
 } from './shared-types';
-import type { BuiltInPresetCatalog } from './presets';
+import type { BuiltInPresetConfiguration } from './presets';
 
 export type { AppSettings, RuntimeState, SourceFile } from './shared-types';
 
@@ -17,7 +17,7 @@ contextBridge.exposeInMainWorld('mediaAPI', {
   showInFolder: (targetPath: string): Promise<void> => ipcRenderer.invoke('path:show', targetPath),
   loadSettings: (): Promise<AppSettings> => ipcRenderer.invoke('settings:load'),
   saveSettings: (settings: AppSettings): Promise<void> => ipcRenderer.invoke('settings:save', settings),
-  loadBuiltInPresets: (): Promise<BuiltInPresetCatalog> => ipcRenderer.invoke('presets:load'),
+  loadBuiltInPresets: (): Promise<BuiltInPresetConfiguration> => ipcRenderer.invoke('presets:load'),
   readPresetFile: (): Promise<string> => ipcRenderer.invoke('presets:read'),
   showPresetFile: (): Promise<void> => ipcRenderer.invoke('presets:show'),
   loadCustomPresets: (): Promise<SavedPreset[]> => ipcRenderer.invoke('custom-presets:load'),
@@ -62,7 +62,7 @@ declare global {
       showInFolder: (targetPath: string) => Promise<void>;
       loadSettings: () => Promise<AppSettings>;
       saveSettings: (settings: AppSettings) => Promise<void>;
-      loadBuiltInPresets: () => Promise<BuiltInPresetCatalog>;
+      loadBuiltInPresets: () => Promise<BuiltInPresetConfiguration>;
       readPresetFile: () => Promise<string>;
       showPresetFile: () => Promise<void>;
       loadCustomPresets: () => Promise<SavedPreset[]>;

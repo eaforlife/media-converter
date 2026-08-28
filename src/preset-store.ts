@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { APP_NAME, PRESET_SOURCE_URL } from './config';
 import { logActivity } from './app-logger';
-import { parseBuiltInPresets } from './presets';
+import { parseBuiltInPresetConfiguration } from './presets';
 import { synchronizePresetFile, validateRemotePresetContents } from './preset-sync';
 
 const installedPresetFilePath = () => app.isPackaged
@@ -18,10 +18,18 @@ export const presetFilePath = () => activePresetFilePath ?? installedPresetFileP
 
 const validPresetFile = async (target: string) => {
   try {
-    parseBuiltInPresets(await fs.promises.readFile(target, 'utf8'));
+    parseBuiltInPresetConfiguration(await fs.promises.readFile(target, 'utf8'));
     return true;
   } catch {
     return false;
+  }
+};
+
+const presetVersionForFile = async (target: string) => {
+  try {
+    return parseBuiltInPresetConfiguration(await fs.promises.readFile(target, 'utf8')).version;
+  } catch {
+    return 'unknown';
   }
 };
 
@@ -45,24 +53,26 @@ export const initializeBuiltInPresets = () => {
     const managed = managedPresetFilePath();
     try {
       const remoteContents = await fetchRemotePresets();
+      const presetVersion = parseBuiltInPresetConfiguration(remoteContents).version;
       try {
         const updated = await synchronizePresetFile(installed, remoteContents);
         await fs.promises.rm(managed, { force: true }).catch(() => undefined);
         activePresetFilePath = installed;
         logActivity('INFO', updated ? 'presets.remote.updated' : 'presets.remote.current', {
-          source: PRESET_SOURCE_URL, destination: installed,
+          version: presetVersion, source: PRESET_SOURCE_URL, destination: installed,
         });
       } catch (error) {
         const updated = await synchronizePresetFile(managed, remoteContents);
         activePresetFilePath = managed;
         logActivity('WARN', 'presets.remote.managed-fallback', {
-          source: PRESET_SOURCE_URL, destination: managed, updated,
+          version: presetVersion, source: PRESET_SOURCE_URL, destination: managed, updated,
           reason: error instanceof Error ? error.message : String(error),
         });
       }
     } catch (error) {
       if (await validPresetFile(managed)) activePresetFilePath = managed;
       logActivity('WARN', 'presets.remote.unavailable', {
+        version: await presetVersionForFile(activePresetFilePath),
         source: PRESET_SOURCE_URL, fallback: activePresetFilePath,
         reason: error instanceof Error ? error.message : String(error),
       });
@@ -74,7 +84,7 @@ export const initializeBuiltInPresets = () => {
 export const loadBuiltInPresets = async () => {
   await initializeBuiltInPresets();
   const contents = await fs.promises.readFile(presetFilePath(), 'utf8');
-  return parseBuiltInPresets(contents);
+  return parseBuiltInPresetConfiguration(contents);
 };
 
 export const readPresetFile = () => fs.promises.readFile(presetFilePath(), 'utf8');

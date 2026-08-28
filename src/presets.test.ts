@@ -3,12 +3,14 @@ import fs from 'node:fs';
 import test from 'node:test';
 import { advancedVideoArguments } from './advanced-video-settings.ts';
 import { encoderSpeedArguments, encoderTuneArguments } from './encoder-controls.ts';
-import { parseBuiltInPresets, predefinedPresetNames } from './presets.ts';
+import { parseBuiltInPresetConfiguration, parseBuiltInPresets, predefinedPresetNames } from './presets.ts';
 
 const presetFile = fs.readFileSync(new URL('../presets.ini', import.meta.url), 'utf8');
 
 test('loads ordered built-in preset values from presets.ini', () => {
-  const presets = parseBuiltInPresets(presetFile);
+  const configuration = parseBuiltInPresetConfiguration(presetFile);
+  const presets = configuration.presets;
+  assert.equal(configuration.version, 'bbe1a13');
   assert.deepEqual(Object.keys(presets), ['Archive', 'Regular', 'Streaming', 'Cellular', 'Music Video']);
   assert.equal(presets.Streaming.audioCodec, 'opus');
   assert.equal(presets.Streaming.audioRates.opus.stereo, '96k');
@@ -43,8 +45,14 @@ test('Music Video maps upstream UHQ intent to Jellyfin-compatible AV1 NVENC sett
   const preset = parseBuiltInPresets(presetFile)['Music Video'];
   assert.equal(preset.preferredVideoCodec, 'AV1');
   assert.equal(preset.quality.nvenc, '24');
-  assert.deepEqual(preset.outputTierDefaults['4k'], { encoderSpeed: 6, maxRate: 11000 });
-  assert.deepEqual(preset.outputTierDefaults['1080p'], { encoderSpeed: 7, maxRate: 7000 });
+  assert.deepEqual(
+    [preset.outputTierDefaults['4k'].encoderSpeed, preset.outputTierDefaults['4k'].maxRate, preset.outputTierDefaults['4k'].resolution],
+    [6, 11000, ['2960', '-2']],
+  );
+  assert.deepEqual(
+    [preset.outputTierDefaults['1080p'].encoderSpeed, preset.outputTierDefaults['1080p'].maxRate, preset.outputTierDefaults['1080p'].resolution],
+    [7, 7000, ['-2', '-2']],
+  );
   assert.deepEqual(encoderSpeedArguments('av1_nvenc', preset.outputTierDefaults['4k'].encoderSpeed!), ['-preset', 'p6']);
   assert.deepEqual(encoderSpeedArguments('av1_nvenc', preset.outputTierDefaults['1080p'].encoderSpeed!), ['-preset', 'p7']);
   assert.deepEqual(encoderTuneArguments('av1_nvenc', preset.encoderTune.nvenc), ['-tune', 'hq']);
@@ -76,6 +84,10 @@ test('streaming tiers retain their own speed and CQ around the shared UHQ-compat
 });
 
 test('rejects out-of-range editable preset values', () => {
+  assert.throws(
+    () => parseBuiltInPresets(presetFile.replace('[Version: bbe1a13]', '[Version: current]')),
+    /must begin with \[Version: <commit>\]/,
+  );
   assert.throws(
     () => parseBuiltInPresets(presetFile.replace('rc_lookahead=26', 'rc_lookahead=43')),
     /rc_lookahead must be an integer from 0 to 42/,
