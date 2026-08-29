@@ -10,7 +10,7 @@ const presetFile = fs.readFileSync(new URL('../presets.ini', import.meta.url), '
 test('loads ordered built-in preset values from presets.ini', () => {
   const configuration = parseBuiltInPresetConfiguration(presetFile);
   const presets = configuration.presets;
-  assert.equal(configuration.version, '384aa14');
+  assert.equal(configuration.version, '47913a9');
   assert.deepEqual(Object.keys(presets), ['Archive', 'Regular', 'Streaming', 'Cellular', 'Music Video']);
   assert.equal(presets.Streaming.audioCodec, 'opus');
   assert.equal(presets.Streaming.audioRates.opus.stereo, '96k');
@@ -89,7 +89,7 @@ test('streaming tiers retain their own speed and CQ around the shared UHQ-compat
 
 test('rejects out-of-range editable preset values', () => {
   assert.throws(
-    () => parseBuiltInPresets(presetFile.replace('[Version: 384aa14]', '[Version: current]')),
+    () => parseBuiltInPresets(presetFile.replace('[Version: 47913a9]', '[Version: current]')),
     /must begin with \[Version: <commit>\]/,
   );
   assert.throws(
