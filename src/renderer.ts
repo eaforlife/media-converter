@@ -1,5 +1,6 @@
 import './index.css';
 import { APP_CODENAME } from './config';
+import { surroundDownmixFilter } from './audio-filters';
 import { AUDIO_PRESETS, AUDIO_PRESET_NAMES, audioBitrate, shouldResampleLossless } from './audio-workflow';
 import type { AudioPresetName } from './audio-workflow';
 import {
@@ -266,6 +267,7 @@ const defaultFilters = (source: SourceFile): FilterSettings => ({
   doNotReplaceAudio: false,
   extractClosedCaptions: false,
   downmixToStereo: true,
+  dynamicRangeCompression: true,
   resampleLosslessTo48k: true,
   normalizeAudio: true,
 });
@@ -382,6 +384,7 @@ const applyAudioPreset = (source: SourceFile, presetName: string) => {
   settings.processing = { video: false, audio: name !== 'Passthrough', subtitles: false };
   settings.filters = {
     ...defaultFilters(source), stripMetadata: false, downmixToStereo: true,
+    dynamicRangeCompression: preset.dynamicRangeCompression,
     resampleLosslessTo48k: true, normalizeAudio: true,
   };
   for (const track of source.media?.audio ?? []) {
@@ -417,6 +420,7 @@ const applyMusicVideoPreset = (source: SourceFile) => {
   settings.filters = {
     ...defaultFilters(source), scale: preset.scale, scaleLocked: preset.scaleLocked, stripMetadata: false,
     extractClosedCaptions: true, pixelFormat10Bit: isH264HighSource(source.media?.video),
+    dynamicRangeCompression: preset.dynamicRangeCompression,
   };
   for (const track of source.media?.audio ?? []) {
     settings.audio[track.index] = {
@@ -456,7 +460,10 @@ const initialSettings = (source: SourceFile): JobSettings => {
       enabled: track.kind === 'text', codec: track.kind === 'text' ? 'mov_text' : 'copy',
       flags: { ...track.flags }, metadata: copyMetadata(track.language, track.flags),
     }])),
-    filters: { ...defaultFilters(source), scale: preset.scale, scaleLocked: preset.scaleLocked }, deliveryMode: preset.deliveryMode,
+    filters: {
+      ...defaultFilters(source), scale: preset.scale, scaleLocked: preset.scaleLocked,
+      dynamicRangeCompression: preset.dynamicRangeCompression,
+    }, deliveryMode: preset.deliveryMode,
   };
   normalizeStreamDispositions(settings);
   return settings;
@@ -515,7 +522,10 @@ const applyPreset = (source: SourceFile, preset: string, persist = true) => {
   });
   if (defaults) settings.resolution = defaults.scale === 'disabled' ? defaults.resolution : outputDefaults!.resolution.join(':');
   settings.filters = defaults
-    ? { ...defaultFilters(source), scale: defaults.scale, scaleLocked: defaults.scaleLocked }
+    ? {
+      ...defaultFilters(source), scale: defaults.scale, scaleLocked: defaults.scaleLocked,
+      dynamicRangeCompression: defaults.dynamicRangeCompression,
+    }
     : { ...saved!.filters };
   const codec = defaults ? defaults.audioCodec === 'opus' ? 'libopus' : 'libfdk_aac' : saved!.audioCodec;
   const selectedAudio = preferredAudioIndexes(source.media?.audio ?? []);
@@ -742,17 +752,13 @@ const qualityLabel = (encoder: string) => {
   if (encoder.endsWith('_videotoolbox')) return 'Q';
   return 'RF';
 };
-const downmixFilter = (track: AudioStreamInfo) => {
-  if (track.channels >= 8 || /^7\.1/i.test(track.channelLayout)) {
-    return 'pan=stereo|c0=c0+0.707*c2+0.707*c4+0.707*c6|c1=c1+0.707*c2+0.707*c5+0.707*c7,volume=1.8';
-  }
-  if (track.channels >= 6 || /^5\.1/i.test(track.channelLayout)) {
-    return 'pan=stereo|c0=c0+0.707*c2+0.707*c4|c1=c1+0.707*c2+0.707*c5,volume=1.8';
-  }
-  return null;
-};
-const addDownmixArguments = (args: string[], outputIndex: number, track: AudioStreamInfo) => {
-  const filter = downmixFilter(track);
+const addDownmixArguments = (
+  args: string[],
+  outputIndex: number,
+  track: AudioStreamInfo,
+  dynamicRangeCompression: boolean,
+) => {
+  const filter = surroundDownmixFilter(track, dynamicRangeCompression && track.channels > 2);
   if (filter) args.push(`-filter:a:${outputIndex}`, filter);
   else args.push(`-ac:a:${outputIndex}`, '2');
 };
@@ -933,7 +939,9 @@ const audioCommandArguments = (source: SourceFile, settings: JobSettings, output
   if (!track || !audio) return [];
   const args = ['-i', source.path, '-map', `0:${track.index}`, '-vn', '-sn', '-dn', '-c:a:0', audio.codec];
   if (audio.bitrate) args.push('-b:a:0', audio.bitrate);
-  if (settings.filters.downmixToStereo && !track.isStereo) addDownmixArguments(args, 0, track);
+  if (settings.filters.downmixToStereo && !track.isStereo) {
+    addDownmixArguments(args, 0, track, settings.filters.dynamicRangeCompression);
+  }
   if (shouldResampleLossless(track, settings.filters.resampleLosslessTo48k)) args.push('-ar:a:0', '48000');
   addStreamMetadataArguments(args, 'a', 0, audio.metadata);
   if (settings.filters.stripMetadata) args.push('-map_metadata', '-1');
@@ -1069,7 +1077,9 @@ const getCommandArguments = (source: SourceFile, requestedOutputPath?: string, f
     const originalIndex = audioOutputIndex++;
     args.push('-map', `0:${track.index}`, `-c:a:${originalIndex}`, audio.codec);
     if (audio.codec !== 'copy') args.push(`-b:a:${originalIndex}`, audio.bitrate);
-    if (!settings.filters.doNotReplaceAudio && !track.isStereo) addDownmixArguments(args, originalIndex, track);
+    if (!settings.filters.doNotReplaceAudio && !track.isStereo) {
+      addDownmixArguments(args, originalIndex, track, settings.filters.dynamicRangeCompression);
+    }
     args.push(`-metadata:s:a:${originalIndex}`, `language=${audio.metadata.language}`);
     const originalFlags = settings.filters.doNotReplaceAudio
       ? { default: false, forced: false, hearingImpaired: false }
@@ -1088,7 +1098,7 @@ const getCommandArguments = (source: SourceFile, requestedOutputPath?: string, f
         ? audioBitrateFor(settings.preset, stereoCodec, track.isStereo)
         : audio.bitrate;
       args.push('-map', `0:${track.index}`, `-c:a:${stereoIndex}`, stereoCodec, `-b:a:${stereoIndex}`, stereoBitrate);
-      addDownmixArguments(args, stereoIndex, track);
+      addDownmixArguments(args, stereoIndex, track, settings.filters.dynamicRangeCompression);
       if (track.language !== 'und') args.push(`-metadata:s:a:${stereoIndex}`, `language=${track.language}`);
       args.push(`-disposition:a:${stereoIndex}`, stereoDefaultAssigned ? '0' : 'default');
       if (!isMusicVideoWorkflow(source)) {
@@ -1347,6 +1357,7 @@ const startNewEncode = async () => {
   await persistAppSettings().catch(() => undefined);
   document.body.classList.remove('picker-busy');
   document.body.setAttribute('aria-busy', 'false');
+  document.querySelector('.picker-progress')?.remove();
   document.querySelector('.encode-modal')?.remove();
   renderWelcome();
 };
@@ -1512,7 +1523,7 @@ const showAppMenu = () => {
   const runtimeSelector = sources.length === 0 && Boolean(document.querySelector('.welcome-shell'))
     ? `<label class="menu-check runtime-channel-toggle"><input id="stable-ffmpeg" type="checkbox"${checked(appSettings.useStableFfmpeg)}/><span><strong>Stable</strong><small>Use the stable Jellyfin FFmpeg runtime</small></span></label>`
     : '';
-  menu.innerHTML = `<div class="menu-identity"><strong>EA Media Tools</strong><span>Version ${escapeHtml(runtimeState?.appVersion ?? '2.4.1')} · ${APP_CODENAME}</span></div>${runtimeSelector}<label class="menu-check"><input id="hardware-acceleration" type="checkbox"${checked(appSettings.hardwareAcceleration)}/><span>Hardware Acceleration</span></label><button id="view-logs">View Logs</button><button id="view-config">View Running Config</button><button id="view-changelog">View Change Log</button><button id="check-update">Check for update</button><button class="danger" id="exit-app">Exit</button>`;
+  menu.innerHTML = `<div class="menu-identity"><strong>EA Media Tools</strong><span>Version ${escapeHtml(runtimeState?.appVersion ?? '2.5.0')} · ${APP_CODENAME}</span></div>${runtimeSelector}<label class="menu-check"><input id="hardware-acceleration" type="checkbox"${checked(appSettings.hardwareAcceleration)}/><span>Hardware Acceleration</span></label><button id="view-logs">View Logs</button><button id="view-config">View Running Config</button><button id="view-changelog">View Change Log</button><button id="check-update">Check for update</button><button class="danger" id="exit-app">Exit</button>`;
   document.body.appendChild(menu);
   menu.addEventListener('click', (event) => event.stopPropagation());
   menu.querySelector<HTMLInputElement>('#stable-ffmpeg')?.addEventListener('change', async (event) => {
@@ -1582,7 +1593,7 @@ const showAppMenu = () => {
     'EA Media Tools running config', 'config · user settings and active custom working state', () => window.mediaAPI.readConfig(appSettings),
   ));
   menu.querySelector('#view-changelog')?.addEventListener('click', () => void showTextReader(
-    `EA Media Tools ${runtimeState?.appVersion ?? '2.4.1'} change log`,
+    `EA Media Tools ${runtimeState?.appVersion ?? '2.5.0'} change log`,
     `${APP_CODENAME} · installed release notes from GitHub`,
     () => window.mediaAPI.readChangelog(),
   ));
@@ -1627,10 +1638,19 @@ const renderWelcome = () => {
   bindWindowControls();
 };
 
-const setPickerBusy = (busy: boolean) => {
+const setPickerBusy = (busy: boolean, type?: 'file' | 'folder') => {
   pickerBusy = busy;
   document.body.classList.toggle('picker-busy', busy);
   document.body.setAttribute('aria-busy', String(busy));
+  document.querySelector('.picker-progress')?.remove();
+  if (busy) {
+    const progress = document.createElement('div');
+    progress.className = 'picker-progress';
+    progress.setAttribute('role', 'status');
+    progress.setAttribute('aria-live', 'polite');
+    progress.innerHTML = `<div class="picker-progress-orbit"><span>${icon(type === 'folder' ? 'folder' : 'file', 28)}</span></div><strong>Inspecting selected ${type === 'folder' ? 'folder' : 'media'}</strong><small>Reading streams, metadata, and conversion details&hellip;</small>`;
+    document.body.appendChild(progress);
+  }
   document.querySelectorAll<HTMLButtonElement>('button').forEach((button) => {
     if (busy) { button.dataset.pickerWasDisabled = String(button.disabled); button.disabled = true; }
     else { button.disabled = button.dataset.pickerWasDisabled === 'true'; delete button.dataset.pickerWasDisabled; }
@@ -1638,7 +1658,7 @@ const setPickerBusy = (busy: boolean) => {
 };
 const requestSources = async (type: 'file' | 'folder') => {
   if (pickerBusy) return [];
-  setPickerBusy(true);
+  setPickerBusy(true, type);
   try { return type === 'file'
     ? await window.mediaAPI.openFile(appSettings.lastSourceDirectory)
     : await window.mediaAPI.openFolder(appSettings.lastSourceDirectory); }
@@ -1859,31 +1879,32 @@ const renderAudioSettings = (source: SourceFile, settings: JobSettings) => {
     const setting = settings.audio[track.index];
     const passthrough = isAudioPassthrough(settings);
     const codecOptions = `<option value="libfdk_aac"${selected(setting.codec === 'libfdk_aac')}>AAC (libfdk_aac)</option><option value="libopus"${selected(setting.codec === 'libopus')}>Opus</option><option value="copy"${selected(setting.codec === 'copy')}>Passthrough</option>`;
-    return `<div class="track-stack"><section class="track-card ${passthrough ? 'track-disabled' : ''}"><div class="track-heading"><div><span>AUDIO OUTPUT</span><h3>${escapeHtml(track.codecLabel)}</h3></div><span class="track-badge">${escapeHtml(track.channelLayout)}</span></div><div class="track-meta"><span>${track.channels} channel${track.channels === 1 ? '' : 's'}</span><span>${track.sampleRate ? `${track.sampleRate / 1000} kHz` : 'Unknown sample rate'}</span><span>${track.isLossless ? 'Lossless source' : 'Lossy source'}</span></div><fieldset class="processing-fieldset"${passthrough ? ' disabled' : ''}><div class="form-grid"><label>Output codec<select data-audio-codec="${track.index}">${codecOptions}</select></label><label>Bitrate<select data-audio-bitrate="${track.index}">${bitrateOptions(setting.codec, setting.bitrate)}</select></label></div>${!track.isStereo && settings.filters.downmixToStereo ? `<div class="downmix-notice">${icon('audio', 16)} ${escapeHtml(track.channelLayout)} will be downmixed to stereo.</div>` : ''}</fieldset>${renderMetadataEditor('audio', track.index, setting.metadata, !passthrough, false)}</section><section class="command-card"><div class="command-heading"><div><span>COMMAND PREVIEW</span><strong>${passthrough ? 'No conversion' : 'Audio workflow'}</strong></div><button id="copy-command">${icon('copy', 15)} Copy command</button></div><code id="command-preview">${escapeHtml(getCommand())}</code></section></div>`;
+    return `<div class="track-stack"><section class="track-card ${passthrough ? 'track-disabled' : ''}"><div class="track-heading"><div><span>AUDIO OUTPUT</span><h3>${escapeHtml(track.codecLabel)}</h3></div><span class="track-badge">${escapeHtml(track.channelLayout)}</span></div><div class="track-meta"><span>${track.channels} channel${track.channels === 1 ? '' : 's'}</span><span>${track.sampleRate ? `${track.sampleRate / 1000} kHz` : 'Unknown sample rate'}</span><span>${track.isLossless ? 'Lossless source' : 'Lossy source'}</span></div><fieldset class="processing-fieldset"${passthrough ? ' disabled' : ''}><div class="form-grid"><label>Output codec<select data-audio-codec="${track.index}">${codecOptions}</select></label><label>Bitrate<select data-audio-bitrate="${track.index}">${bitrateOptions(setting.codec, setting.bitrate)}</select></label></div>${!track.isStereo && settings.filters.downmixToStereo ? `<div class="downmix-notice">${icon('audio', 16)} ${escapeHtml(track.channelLayout)} will be downmixed to stereo${track.channels > 2 && settings.filters.dynamicRangeCompression ? ' and dynamically compressed' : ''}.</div>` : ''}</fieldset>${renderMetadataEditor('audio', track.index, setting.metadata, !passthrough, false)}</section><section class="command-card"><div class="command-heading"><div><span>COMMAND PREVIEW</span><strong>${passthrough ? 'No conversion' : 'Audio workflow'}</strong></div><button id="copy-command">${icon('copy', 15)} Copy command</button></div><code id="command-preview">${escapeHtml(getCommand())}</code></section></div>`;
   }
   const constrained = isDeliveryPreset(settings);
   const metadataOnly = isMetadataOnly(settings);
   const processing = settings.processing.audio;
-  return `<div class="track-stack">${renderProcessingToggle('audio', processing, 'Encode selected audio streams')}<div class="track-intro"><div><span>AUDIO OUTPUT</span><h3>One setting group per source track</h3></div><p>${metadataOnly ? 'All tracks will be copied; language and disposition metadata can be changed.' : processing ? constrained ? 'Streaming and Cellular allow AAC or Opus only.' : 'Configure the selected output tracks and their languages.' : 'All source audio streams will be copied unchanged.'}</p></div>${processing && settings.filters.doNotReplaceAudio ? '<div class="downmix-notice">Surround tracks are retained. The first generated stereo downmix becomes default; existing default and forced flags are removed.</div>' : ''}${tracks.map((track, position) => renderAudioTrack(track, position, settings.audio[track.index], constrained, settings.filters.doNotReplaceAudio, processing, metadataOnly)).join('')}</div>`;
+  return `<div class="track-stack">${renderProcessingToggle('audio', processing, 'Encode selected audio streams')}<div class="track-intro"><div><span>AUDIO OUTPUT</span><h3>One setting group per source track</h3></div><p>${metadataOnly ? 'All tracks will be copied; language and disposition metadata can be changed.' : processing ? constrained ? 'Streaming and Cellular allow AAC or Opus only.' : 'Configure the selected output tracks and their languages.' : 'All source audio streams will be copied unchanged.'}</p></div>${processing && settings.filters.doNotReplaceAudio ? '<div class="downmix-notice">Surround tracks are retained. The first generated stereo downmix becomes default; existing default and forced flags are removed.</div>' : ''}${tracks.map((track, position) => renderAudioTrack(track, position, settings.audio[track.index], constrained, settings.filters.doNotReplaceAudio, processing, metadataOnly, settings.filters.dynamicRangeCompression)).join('')}</div>`;
 };
-const renderAudioTrack = (track: AudioStreamInfo, position: number, setting: AudioSetting, constrained: boolean, replaceAudio: boolean, processing: boolean, metadataOnly: boolean) => {
+const renderAudioTrack = (track: AudioStreamInfo, position: number, setting: AudioSetting, constrained: boolean, replaceAudio: boolean, processing: boolean, metadataOnly: boolean, dynamicRangeCompression: boolean) => {
   const codecOptions = `<option value="libfdk_aac"${selected(setting.codec === 'libfdk_aac')}>AAC</option><option value="libopus"${selected(setting.codec === 'libopus')}>Opus</option>${constrained ? '' : `<option value="copy"${selected(setting.codec === 'copy')}>Passthrough</option>`}`;
   return `<section class="track-card ${processing && setting.enabled || metadataOnly ? '' : 'track-disabled'}"><div class="track-heading"><div><span>TRACK ${position + 1}</span><h3>${position + 1}. Track ${position + 1}: ${escapeHtml(mediaLanguageName(setting.metadata.language))}</h3></div><span class="track-badge">${escapeHtml(track.codecLabel)}</span></div><div class="track-meta"><span>${track.channels} channel${track.channels === 1 ? '' : 's'}</span><span>${escapeHtml(track.channelLayout)}</span><span>${escapeHtml(flagsLabel(setting.flags))}</span></div>
     <fieldset class="processing-fieldset"${processing ? '' : ' disabled'}><label class="check-label"><input type="checkbox" data-audio-enabled="${track.index}"${checked(setting.enabled)}/> Include track${setting.enabled ? '' : ' (lower-quality duplicate language track excluded)'}</label>
-    ${processing && setting.enabled && !track.isStereo ? `<div class="downmix-notice">${icon('audio', 16)} Source is ${escapeHtml(track.channelLayout)}; this preset will downmix the track to stereo.</div>` : ''}
+    ${processing && setting.enabled && !track.isStereo ? `<div class="downmix-notice">${icon('audio', 16)} Source is ${escapeHtml(track.channelLayout)}; this preset will downmix the track to stereo${track.channels > 2 && dynamicRangeCompression ? ' and apply dynamic range compression' : ''}.</div>` : ''}
     <div class="form-grid"><label>Output codec<select data-audio-codec="${track.index}"${setting.enabled ? '' : ' disabled'}>${codecOptions}</select></label><label>Bitrate<select data-audio-bitrate="${track.index}"${setting.enabled && setting.codec !== 'copy' ? '' : ' disabled'}>${bitrateOptions(setting.codec, setting.bitrate)}</select><small class="field-help">${setting.codec === 'libopus' ? 'Opus: 32–128 kbps' : setting.codec === 'libfdk_aac' ? 'AAC: 128–320 kbps' : 'Copied without re-encoding'}</small></label></div>${renderDispositionControls('audio', track.index, setting.flags, !setting.enabled, replaceAudio)}</fieldset>${renderMetadataEditor('audio', track.index, setting.metadata, metadataOnly || processing && setting.enabled, metadataOnly)}</section>`;
 };
 
 const renderFilterSettings = (source: SourceFile, settings: JobSettings) => {
   if (isAudioWorkflow(source)) {
     const passthrough = isAudioPassthrough(settings);
-    const hasSurround = sources.some((item) => item.media?.audio.some((track) => !track.isStereo));
+    const hasSurround = sources.some((item) => item.media?.audio.some((track) => track.channels > 2));
     const hasLossless = sources.some((item) => item.media?.audio.some((track) => track.isLossless));
     const highFrequency = sources.some((item) => item.media?.audio.some((track) => track.isLossless && (track.sampleRate ?? 0) > 48_000));
     const normalizeReady = Boolean(runtimeState?.rsgainAvailable);
     return `<section class="settings-card"><div class="card-title"><div><span>AUDIO FILTERS</span><h3>Library processing</h3></div>${icon('sliders', 22)}</div><div class="filter-options">
       <label class="toggle-row ${passthrough ? 'disabled' : ''}"><span><strong>Strip all metadata</strong><small>${passthrough ? 'Unavailable for Passthrough.' : 'Remove source container and stream metadata.'}</small></span><input type="checkbox" data-audio-filter="stripMetadata"${checked(settings.filters.stripMetadata)}${passthrough ? ' disabled' : ''}/><i></i></label>
       <label class="toggle-row ${hasSurround && !passthrough ? '' : 'disabled'}"><span><strong>Downmix to stereo</strong><small>${passthrough ? 'Unavailable for Passthrough.' : hasSurround ? 'Apply the surround downmix filter to multichannel sources.' : 'No surround source was detected.'}</small></span><input type="checkbox" data-audio-filter="downmixToStereo"${checked(settings.filters.downmixToStereo)}${hasSurround && !passthrough ? '' : ' disabled'}/><i></i></label>
+      <label class="toggle-row ${hasSurround && settings.filters.downmixToStereo && !passthrough ? '' : 'disabled'}"><span><strong>Dynamic range compressor</strong><small>${passthrough ? 'Unavailable for Passthrough.' : !hasSurround ? 'No surround source was detected.' : !settings.filters.downmixToStereo ? 'Enable surround downmixing to use compression.' : 'Apply Feishin\'s Default compressor immediately after surround downmixing.'}</small></span><input type="checkbox" data-audio-filter="dynamicRangeCompression"${checked(settings.filters.dynamicRangeCompression)}${hasSurround && settings.filters.downmixToStereo && !passthrough ? '' : ' disabled'}/><i></i></label>
       <label class="toggle-row ${hasLossless && !passthrough ? '' : 'disabled'}"><span><strong>Convert high-frequency lossless audio to 48 kHz</strong><small>${passthrough ? 'Unavailable for Passthrough.' : hasLossless ? highFrequency ? 'High-frequency lossless audio was detected.' : 'Lossless audio is already at or below 48 kHz.' : 'No ALAC, FLAC, PCM, or other lossless source was detected.'}</small></span><input type="checkbox" data-audio-filter="resampleLosslessTo48k"${checked(settings.filters.resampleLosslessTo48k)}${hasLossless && !passthrough ? '' : ' disabled'}/><i></i></label>
       <label class="toggle-row ${normalizeReady ? '' : 'disabled'}"><span><strong>Normalize Audio</strong><small>${normalizeReady ? 'Runs rsgain once after every audio encode succeeds.' : 'The managed rsgain runtime is unavailable.'}</small></span><input type="checkbox" data-audio-filter="normalizeAudio"${checked(settings.filters.normalizeAudio)}${normalizeReady ? '' : ' disabled'}/><i></i></label>
     </div></section>`;
@@ -1896,20 +1917,23 @@ const renderFilterSettings = (source: SourceFile, settings: JobSettings) => {
     isHdr || Boolean(video?.isHevcMain10) || forcedMusicMain10
   );
   const supports10Bit = encoderCanOutput10Bit(settings.encoder);
-  const hasSurround = Boolean(source.media?.audio.some((track) => settings.audio[track.index]?.enabled && !track.isStereo));
+  const hasSurround = Boolean(source.media?.audio.some((track) => settings.audio[track.index]?.enabled && track.channels > 2));
   const crop = detectedCropForSource(source);
   const cropDetail = crop ? `Detected ${crop.filter}` : 'No crop detected; full frame will be retained';
   const musicVideoScale = isMusicVideoWorkflow(source)
     ? outputDefaultsFor(requiredBuiltInPreset('Music Video'), '4k', settings.encoder).resolution.join(':')
     : '';
-  return `<fieldset class="filter-layout processing-fieldset ${settings.processing.video ? '' : 'processing-disabled'}"${settings.processing.video ? '' : ' disabled'}><section class="settings-card"><div class="card-title"><div><span>PICTURE FILTERS</span><h3>Automatic processing</h3></div>${icon('sliders', 22)}</div>
+  return `<div class="filter-layout"><fieldset class="settings-card processing-fieldset ${settings.processing.video ? '' : 'processing-disabled'}"${settings.processing.video ? '' : ' disabled'}><div class="card-title"><div><span>PICTURE FILTERS</span><h3>Automatic processing</h3></div>${icon('sliders', 22)}</div>
     <div class="filter-options"><label class="toggle-row"><span><strong>Auto Crop</strong><small>${escapeHtml(cropDetail)}</small></span><input type="checkbox" data-filter="autoCrop"${checked(settings.filters.autoCrop)}/><i></i></label>
     <label class="toggle-row ${isHdr ? '' : 'disabled'}"><span><strong>HDR to SDR</strong><small>${isHdr ? `Tone-map ${escapeHtml(hdrLabel(source))} to SDR` : 'Unavailable because the source is SDR'}</small></span><input type="checkbox" data-filter="toneMapHdrToSdr"${checked(settings.filters.toneMapHdrToSdr)}${isHdr ? '' : ' disabled'}/><i></i></label>
     <label class="toggle-row sub-option ${allow10Bit && supports10Bit ? '' : 'disabled'}"><span><strong>Pixel Format: 10-bit</strong><small>${forcedMusicMain10 && supports10Bit ? 'Required Main10 output for this H.264 High music-video source' : allow10Bit && supports10Bit ? 'Output as yuv420p10le' : hevcOutput && !supports10Bit ? 'The detected HEVC hardware path did not pass the Main10 test' : hevcOutput ? 'Requires HDR/DV, HEVC Main10, or an H.264 High music-video source' : 'Requires an HEVC output encoder'}</small></span><input type="checkbox" data-filter="pixelFormat10Bit"${checked(forcedMusicMain10 && supports10Bit || settings.filters.pixelFormat10Bit && hevcOutput)}${allow10Bit && supports10Bit && !forcedMusicMain10 ? '' : ' disabled'}/><i></i></label>
-    <label class="scale-row"><span><strong>Auto scale</strong><small>${isMusicVideoWorkflow(source) ? `Music Video locks Auto Scale and only scales 4K sources to ${escapeHtml(musicVideoScale)}.` : settings.filters.scaleLocked ? 'Cellular locks scaling to 360p.' : 'Choose an automatic output height or leave scaling disabled.'}</small></span><select id="filter-scale"${settings.filters.scaleLocked ? ' disabled' : ''}><option value="auto"${selected(settings.filters.scale === 'auto')}>Auto Scale</option><option value="1080p"${selected(settings.filters.scale === '1080p')}>1080p</option><option value="720p"${selected(settings.filters.scale === '720p')}>720p</option><option value="360p"${selected(settings.filters.scale === '360p')}>360p</option><option value="disabled"${selected(settings.filters.scale === 'disabled')}>Disabled</option></select></label></div></section>
+    <label class="scale-row"><span><strong>Auto scale</strong><small>${isMusicVideoWorkflow(source) ? `Music Video locks Auto Scale and only scales 4K sources to ${escapeHtml(musicVideoScale)}.` : settings.filters.scaleLocked ? 'Cellular locks scaling to 360p.' : 'Choose an automatic output height or leave scaling disabled.'}</small></span><select id="filter-scale"${settings.filters.scaleLocked ? ' disabled' : ''}><option value="auto"${selected(settings.filters.scale === 'auto')}>Auto Scale</option><option value="1080p"${selected(settings.filters.scale === '1080p')}>1080p</option><option value="720p"${selected(settings.filters.scale === '720p')}>720p</option><option value="360p"${selected(settings.filters.scale === '360p')}>360p</option><option value="disabled"${selected(settings.filters.scale === 'disabled')}>Disabled</option></select></label></div></fieldset>
+    <fieldset class="settings-card processing-fieldset ${settings.processing.audio ? '' : 'processing-disabled'}"${settings.processing.audio ? '' : ' disabled'}><div class="card-title"><div><span>AUDIO FILTERS</span><h3>Surround processing</h3></div>${icon('audio', 22)}</div><div class="filter-options">
+      <label class="toggle-row ${hasSurround ? '' : 'disabled'}"><span><strong>Dynamic range compressor</strong><small>${hasSurround ? 'Apply Feishin\'s Default compressor immediately after each surround downmix.' : 'No enabled surround source was detected.'}</small></span><input type="checkbox" data-audio-filter="dynamicRangeCompression"${checked(settings.filters.dynamicRangeCompression)}${hasSurround ? '' : ' disabled'}/><i></i></label>
+    </div></fieldset>
     <section class="settings-card locked-options"><div class="card-title"><div><span>OUTPUT CONTENT</span><h3>Required job behavior</h3></div>${icon('check', 22)}</div><div class="job-options">
       <label class="locked-check"><input type="checkbox" checked disabled/> Remux audio into video output</label><label class="locked-check"><input type="checkbox" checked disabled/> Remux subtitles into video output</label><label class="locked-check"><input type="checkbox"${checked(settings.filters.stripMetadata)} disabled/> ${settings.filters.stripMetadata ? 'Strip title, group, and description metadata' : 'Preserve source metadata'}</label>
-      <label class="locked-check ${hasSurround ? '' : 'disabled'}"><input type="checkbox" data-job-behavior="doNotReplaceAudio"${checked(settings.filters.doNotReplaceAudio)}${hasSurround ? '' : ' disabled'}/> Do not replace audio track <small>Keep surround and add a default stereo downmix.</small></label></div></section></fieldset>`;
+      <label class="locked-check ${hasSurround ? '' : 'disabled'}"><input type="checkbox" data-job-behavior="doNotReplaceAudio"${checked(settings.filters.doNotReplaceAudio)}${hasSurround ? '' : ' disabled'}/> Do not replace audio track <small>Keep surround and add a default stereo downmix.</small></label></div></section></div>`;
 };
 
 const importSubtitlesForSource = async (source: SourceFile, settings: JobSettings) => {
@@ -2165,7 +2189,7 @@ const bindContentEvents = () => {
     renderWorkspace();
   }));
   document.querySelectorAll<HTMLInputElement>('[data-audio-filter]').forEach((control) => control.addEventListener('change', () => {
-    const key = control.dataset.audioFilter as 'stripMetadata' | 'downmixToStereo' | 'resampleLosslessTo48k' | 'normalizeAudio';
+    const key = control.dataset.audioFilter as 'stripMetadata' | 'downmixToStereo' | 'dynamicRangeCompression' | 'resampleLosslessTo48k' | 'normalizeAudio';
     settings.filters[key] = control.checked;
     if (key === 'downmixToStereo') {
       for (const track of source.media?.audio ?? []) {
@@ -2321,7 +2345,7 @@ const startApplication = async () => {
     }
     await new Promise((resolve) => window.setTimeout(resolve, runtimeState?.phase === 'error' ? 900 : 350));
   } catch (error) {
-    runtimeState = { phase: 'error', message: error instanceof Error ? error.message : 'Unable to initialize FFmpeg', progress: null, appVersion: '2.4.1', isPackaged: false, updateEnabled: false, ffmpegAvailable: false, ffmpegPath: '', ffprobePath: '', ffmpegVersion: null, releaseTag: null, ffmpegChannel: appSettings.useStableFfmpeg ? 'stable' : 'unstable', rsgainAvailable: false, rsgainPath: '', rsgainVersion: null, ccextractorAvailable: false, ccextractorPath: '', ccextractorVersion: null };
+    runtimeState = { phase: 'error', message: error instanceof Error ? error.message : 'Unable to initialize FFmpeg', progress: null, appVersion: '2.5.0', isPackaged: false, updateEnabled: false, ffmpegAvailable: false, ffmpegPath: '', ffprobePath: '', ffmpegVersion: null, releaseTag: null, ffmpegChannel: appSettings.useStableFfmpeg ? 'stable' : 'unstable', rsgainAvailable: false, rsgainPath: '', rsgainVersion: null, ccextractorAvailable: false, ccextractorPath: '', ccextractorVersion: null };
     renderBootstrap(runtimeState); await new Promise((resolve) => window.setTimeout(resolve, 900));
   } finally { removeProgressListener(); }
   if (!builtInPresetConfiguration) return;

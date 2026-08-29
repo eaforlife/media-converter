@@ -37,6 +37,7 @@ export type BuiltInPresetDefinition = {
   bufferMultiplier: number;
   audioCodec: PresetAudioCodec;
   audioRates: AudioRates;
+  dynamicRangeCompression: boolean;
   advancedVideo: AdvancedVideoSettings;
 };
 
@@ -175,6 +176,7 @@ export const parseBuiltInPresetConfiguration = (ini: string): BuiltInPresetConfi
         aac: { stereo: get('audio_aac_stereo'), surround: get('audio_aac_downmix') },
         opus: { stereo: get('audio_opus_stereo'), surround: get('audio_opus_downmix') },
       },
+      dynamicRangeCompression: booleanValue(get('dynamic_range_compression'), label('dynamic_range_compression')),
       advancedVideo: {
         bFrames: booleanValue(get('b_frames'), label('b_frames')),
         multipass: numberValue(get('multipass'), label('multipass'), 0, 2) as AdvancedVideoSettings['multipass'],

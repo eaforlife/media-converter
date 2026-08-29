@@ -4,6 +4,24 @@ All notable changes to EA Media Tools are documented here.
 
 ## [Unreleased]
 
+## [2.5.0] - 2026-08-29
+
+### Added
+
+- Add a Filters-tab dynamic range compressor for surround downmixes using Feishin's Default preset: -24 dB threshold, 4:1 ratio, 20 ms attack, 250 ms release, +6 dB makeup gain, and a 2.83 dB knee.
+- Add animated file and folder inspection feedback after a source is selected.
+
+### Changed
+
+- Run dynamic range compression immediately after the downmix volume stage for every source with more than two channels, including retained-surround jobs that add a stereo track.
+- Enable dynamic range compression by default for Regular, Streaming, Cellular, Music Video, and audio-only Streaming while keeping Archive and Passthrough disabled.
+- Persist the new `dynamic_range_compression` boolean in built-in presets, custom presets, and the working settings file.
+- Raise Cellular and Music Video spatial AQ strength to 12, set Music Video to P6 at 1080p and 4K, use NVENC CQ 26, and use a 3x bitrate buffer.
+
+### Compatibility
+
+- Verify the full downmix, volume, and `acompressor` chain against Jellyfin FFmpeg 7.1.4 stable and 8.1.2 pre-release.
+
 ## [2.4.1] - 2026-08-28
 
 ### Added
@@ -290,6 +308,7 @@ All notable changes to EA Media Tools are documented here.
 - Convert crop offsets to CUVID edge values with division by two and floor rounding.
 - Cancel all active parallel encodes and interrupt pending cooldowns when the queue is stopped or a job fails.
 
+[2.5.0]: https://github.com/eaforlife/media-converter/compare/v2.4.1...v2.5.0
 [2.4.1]: https://github.com/eaforlife/media-converter/compare/v2.4.0...v2.4.1
 [2.4.0]: https://github.com/eaforlife/media-converter/compare/v2.3.1...v2.4.0
 [2.3.1]: https://github.com/eaforlife/media-converter/compare/v2.3.0...v2.3.1

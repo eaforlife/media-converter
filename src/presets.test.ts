@@ -10,7 +10,7 @@ const presetFile = fs.readFileSync(new URL('../presets.ini', import.meta.url), '
 test('loads ordered built-in preset values from presets.ini', () => {
   const configuration = parseBuiltInPresetConfiguration(presetFile);
   const presets = configuration.presets;
-  assert.equal(configuration.version, 'bbe1a13');
+  assert.equal(configuration.version, '384aa14');
   assert.deepEqual(Object.keys(presets), ['Archive', 'Regular', 'Streaming', 'Cellular', 'Music Video']);
   assert.equal(presets.Streaming.audioCodec, 'opus');
   assert.equal(presets.Streaming.audioRates.opus.stereo, '96k');
@@ -24,12 +24,16 @@ test('loads ordered built-in preset values from presets.ini', () => {
   assert.equal(presets.Regular.quality.amf, '22');
   assert.equal(presets.Regular.quality.software, '25');
   assert.equal(presets.Regular.advancedVideo.spatialAq, 10);
+  assert.equal(presets.Archive.dynamicRangeCompression, false);
+  for (const name of ['Regular', 'Streaming', 'Cellular', 'Music Video'] as const) {
+    assert.equal(presets[name].dynamicRangeCompression, true);
+  }
   assert.deepEqual(presets.Streaming.advancedVideo, {
     bFrames: true, multipass: 2, bRefMode: 'middle', adaptiveBFrames: true,
     sceneCutDetection: true, rcLookahead: 26, nonReferenceP: false, spatialAq: 12, temporalAq: false,
   });
-  assert.equal(presets.Cellular.advancedVideo.spatialAq, 10);
-  assert.equal(presets['Music Video'].advancedVideo.spatialAq, 10);
+  assert.equal(presets.Cellular.advancedVideo.spatialAq, 12);
+  assert.equal(presets['Music Video'].advancedVideo.spatialAq, 12);
 });
 
 test('automatically exposes new predefined sections while keeping Music Video workflow-only', () => {
@@ -44,25 +48,25 @@ test('automatically exposes new predefined sections while keeping Music Video wo
 test('Music Video maps upstream UHQ intent to Jellyfin-compatible AV1 NVENC settings', () => {
   const preset = parseBuiltInPresets(presetFile)['Music Video'];
   assert.equal(preset.preferredVideoCodec, 'AV1');
-  assert.equal(preset.quality.nvenc, '24');
+  assert.equal(preset.quality.nvenc, '26');
   assert.deepEqual(
     [preset.outputTierDefaults['4k'].encoderSpeed, preset.outputTierDefaults['4k'].maxRate, preset.outputTierDefaults['4k'].resolution],
     [6, 11000, ['2960', '-2']],
   );
   assert.deepEqual(
     [preset.outputTierDefaults['1080p'].encoderSpeed, preset.outputTierDefaults['1080p'].maxRate, preset.outputTierDefaults['1080p'].resolution],
-    [7, 7000, ['-2', '-2']],
+    [6, 7000, ['-2', '-2']],
   );
   assert.deepEqual(encoderSpeedArguments('av1_nvenc', preset.outputTierDefaults['4k'].encoderSpeed!), ['-preset', 'p6']);
-  assert.deepEqual(encoderSpeedArguments('av1_nvenc', preset.outputTierDefaults['1080p'].encoderSpeed!), ['-preset', 'p7']);
+  assert.deepEqual(encoderSpeedArguments('av1_nvenc', preset.outputTierDefaults['1080p'].encoderSpeed!), ['-preset', 'p6']);
   assert.deepEqual(encoderTuneArguments('av1_nvenc', preset.encoderTune.nvenc), ['-tune', 'hq']);
   assert.deepEqual(advancedVideoArguments('av1_nvenc', preset.advancedVideo), [
     '-multipass', '2', '-bf', '4', '-b_ref_mode', 'middle', '-b_adapt', '1',
     '-no-scenecut', '0', '-rc-lookahead', '26', '-nonref_p', '0',
-    '-spatial-aq', '1', '-temporal-aq', '0', '-aq-strength', '10',
+    '-spatial-aq', '1', '-temporal-aq', '0', '-aq-strength', '12',
   ]);
   assert.equal(preset.bitrateControl, true);
-  assert.equal(preset.bufferMultiplier, 2);
+  assert.equal(preset.bufferMultiplier, 3);
 });
 
 test('streaming tiers retain their own speed and CQ around the shared UHQ-compatible stack', () => {
@@ -79,13 +83,13 @@ test('streaming tiers retain their own speed and CQ around the shared UHQ-compat
     assert.equal(presets[name].encoderTune.nvenc, 'hq');
   }
   assert.equal(presets.Streaming.advancedVideo.spatialAq, 12);
-  assert.equal(presets.Cellular.advancedVideo.spatialAq, 10);
-  assert.equal(presets['Music Video'].advancedVideo.spatialAq, 10);
+  assert.equal(presets.Cellular.advancedVideo.spatialAq, 12);
+  assert.equal(presets['Music Video'].advancedVideo.spatialAq, 12);
 });
 
 test('rejects out-of-range editable preset values', () => {
   assert.throws(
-    () => parseBuiltInPresets(presetFile.replace('[Version: bbe1a13]', '[Version: current]')),
+    () => parseBuiltInPresets(presetFile.replace('[Version: 384aa14]', '[Version: current]')),
     /must begin with \[Version: <commit>\]/,
   );
   assert.throws(
@@ -99,5 +103,9 @@ test('rejects out-of-range editable preset values', () => {
   assert.throws(
     () => parseBuiltInPresets(presetFile.replace('max_rate_4k=11000', 'max_rate_4k=0')),
     /max_rate_4k must be an integer from 1 to 1000000/,
+  );
+  assert.throws(
+    () => parseBuiltInPresets(presetFile.replace('dynamic_range_compression=0', 'dynamic_range_compression=2')),
+    /dynamic_range_compression must be 0 or 1/,
   );
 });

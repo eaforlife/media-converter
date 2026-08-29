@@ -30,6 +30,7 @@ const defaultFilters = (): FilterSettings => ({
   doNotReplaceAudio: false,
   extractClosedCaptions: false,
   downmixToStereo: true,
+  dynamicRangeCompression: true,
   resampleLosslessTo48k: true,
   normalizeAudio: true,
 });
@@ -89,6 +90,7 @@ const parsePresets = (xml: string): SavedPreset[] => {
         doNotReplaceAudio: bool(attributes.doNotReplaceAudio, false),
         extractClosedCaptions: bool(attributes.extractClosedCaptions, false),
         downmixToStereo: bool(attributes.downmixToStereo, true),
+        dynamicRangeCompression: bool(attributes.dynamicRangeCompression, true),
         resampleLosslessTo48k: bool(attributes.resampleLosslessTo48k, true),
         normalizeAudio: bool(attributes.normalizeAudio, true),
       },
@@ -113,11 +115,11 @@ ${indent}  <deliveryMode>${Number(preset.deliveryMode)}</deliveryMode>
 ${indent}  <advancedVideo bFrames="${Number(preset.advancedVideo.bFrames)}" multipass="${preset.advancedVideo.multipass}" bRefMode="${preset.advancedVideo.bRefMode}" adaptiveBFrames="${Number(preset.advancedVideo.adaptiveBFrames)}" sceneCutDetection="${Number(preset.advancedVideo.sceneCutDetection)}" rcLookahead="${preset.advancedVideo.rcLookahead}" nonReferenceP="${Number(preset.advancedVideo.nonReferenceP)}" spatialAq="${preset.advancedVideo.spatialAq}" temporalAq="${Number(preset.advancedVideo.temporalAq)}" />
 ${indent}  <audioCodec>${preset.audioCodec}</audioCodec>
 ${indent}  <audioBitrate>${xmlEscape(preset.audioBitrate)}</audioBitrate>
-${indent}  <filters autoCrop="${Number(preset.filters.autoCrop)}" toneMapHdrToSdr="${Number(preset.filters.toneMapHdrToSdr)}" pixelFormat10Bit="${Number(preset.filters.pixelFormat10Bit)}" scale="${preset.filters.scale}" scaleLocked="${Number(preset.filters.scaleLocked)}" doNotReplaceAudio="${Number(preset.filters.doNotReplaceAudio)}" extractClosedCaptions="${Number(preset.filters.extractClosedCaptions)}" downmixToStereo="${Number(preset.filters.downmixToStereo)}" resampleLosslessTo48k="${Number(preset.filters.resampleLosslessTo48k)}" normalizeAudio="${Number(preset.filters.normalizeAudio)}" />
+${indent}  <filters autoCrop="${Number(preset.filters.autoCrop)}" toneMapHdrToSdr="${Number(preset.filters.toneMapHdrToSdr)}" pixelFormat10Bit="${Number(preset.filters.pixelFormat10Bit)}" scale="${preset.filters.scale}" scaleLocked="${Number(preset.filters.scaleLocked)}" doNotReplaceAudio="${Number(preset.filters.doNotReplaceAudio)}" extractClosedCaptions="${Number(preset.filters.extractClosedCaptions)}" downmixToStereo="${Number(preset.filters.downmixToStereo)}" dynamicRangeCompression="${Number(preset.filters.dynamicRangeCompression)}" resampleLosslessTo48k="${Number(preset.filters.resampleLosslessTo48k)}" normalizeAudio="${Number(preset.filters.normalizeAudio)}" />
 ${indent}</preset>`;
 
 const serialize = (settings: AppSettings) => `<?xml version="1.0" encoding="UTF-8"?>
-<eaMediaToolsSettings version="9">
+<eaMediaToolsSettings version="10">
   <hardwareAcceleration>${Number(settings.hardwareAcceleration)}</hardwareAcceleration>
   <useStableFfmpeg>${Number(settings.useStableFfmpeg)}</useStableFfmpeg>
   <smartFileNaming>${Number(settings.smartFileNaming)}</smartFileNaming>

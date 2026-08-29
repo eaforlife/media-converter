@@ -2,7 +2,7 @@
 
 EA Media Tools is a desktop video and audio converter powered by Jellyfin FFmpeg. It inspects video, audio, subtitle, chapter, HDR, and Dolby Vision metadata; selects hardware or CPU processing; and runs queued conversions with live progress information.
 
-Version 2.4.1, codename **jaguar**, is the current stable release. It supports video files, short music videos with attached artwork, and recursive audio libraries. Hardware acceleration is enabled by default but can be disabled for CPU video encoding and decoding.
+Version 2.5.0, codename **jaguar**, is the current stable release. It supports video files, short music videos with attached artwork, and recursive audio libraries. Hardware acceleration is enabled by default but can be disabled for CPU video encoding and decoding.
 
 ## Download
 
@@ -12,7 +12,7 @@ Choose the asset that matches your operating system and CPU:
 
 | System | Intel/AMD 64-bit | ARM 64-bit |
 | --- | --- | --- |
-| Windows | `EA-Media-Tools-2.4.1-x64-Setup.exe` | `EA-Media-Tools-2.4.1-arm64-Setup.exe` |
+| Windows | `EA-Media-Tools-2.5.0-x64-Setup.exe` | `EA-Media-Tools-2.5.0-arm64-Setup.exe` |
 | macOS | ZIP containing `darwin-x64` | ZIP containing `darwin-arm64` for Apple silicon |
 | Debian/Ubuntu | `.deb` containing `amd64` | `.deb` containing `arm64` |
 
@@ -41,7 +41,7 @@ The macOS app is not signed or notarized. To uninstall it, quit the app and move
 Install the downloaded package from a terminal. Replace the filename with the asset you downloaded:
 
 ```bash
-sudo apt install ./ea-media-tools_2.4.1_amd64.deb
+sudo apt install ./ea-media-tools_2.5.0_amd64.deb
 ```
 
 ARM64 systems use the package ending in `arm64.deb`. Launch **EA Media Tools** from the desktop application menu. Remove it with:
@@ -58,11 +58,13 @@ The managed runtime setup also installs [rsgain 3.7](https://github.com/complexl
 
 Audio folders are scanned recursively. Streaming outputs 96 kbps Opus, or 128 kbps when surround audio is downmixed; Archive outputs 224 kbps libfdk_aac, or 256 kbps for a surround downmix. Converted files retain their source basename and relative artist/album layout beneath `converted`, and matching `.lrc` lyric files are copied beside them. Passthrough leaves the source files in place and can still run library normalization.
 
+For sources with more than two channels, enabled dynamic range compression runs immediately after the stereo downmix and its volume stage. It uses [Feishin's Default compressor preset](https://github.com/jeffvli/feishin/blob/development/src/renderer/features/settings/components/playback/eq-settings.tsx): -24 dB threshold, 4:1 ratio, 20 ms attack, 250 ms release, +6 dB makeup gain, and a 2.83 dB knee. The option is available in the Filters tab. It defaults on for Regular, Streaming, Cellular, Music Video, and audio-only Streaming, and off for Archive and Passthrough. Both the stable and pre-release managed Jellyfin FFmpeg channels support the generated `acompressor` chain.
+
 The Streaming video preset also uses Opus: 96 kbps for a stereo source and 128 kbps for a surround downmix. Its 3x bitrate buffer and spatial AQ strength 12 give difficult dark scenes more short-term bitrate flexibility without changing the preset's CQ, encode speed, or maximum rates.
 
 Transcoded MP4 video places the playback index at the beginning, adds a keyframe at least every five seconds for more responsive seeking and Jellyfin segment boundaries, and marks HEVC video as `hvc1` for broader Apple and Safari direct-play compatibility. Stream-copy operations retain the source keyframe layout.
 
-Videos shorter than eight minutes with attached cover artwork use the Music Video workflow. It preserves metadata and the original filename stem, copies the cover artwork into the finished conversion, checks embedded CEA-608/708 captions automatically, uses P7 with a 7000 kbps maximum rate for 1080p sources and P6 with an 11000 kbps maximum rate for 4K sources, and scales only 4K sources to `2960:-2`.
+Videos shorter than eight minutes with attached cover artwork use the Music Video workflow. It preserves metadata and the original filename stem, copies the cover artwork into the finished conversion, checks embedded CEA-608/708 captions automatically, uses P6 with a 7000 kbps maximum rate for 1080p sources and P6 with an 11000 kbps maximum rate for 4K sources, and scales only 4K sources to `2960:-2`.
 
 The app then checks the GPU driving the primary physical display. Virtual and secondary display adapters are ignored and recorded in **View Logs**. An encoder appears only after the corresponding Jellyfin FFmpeg flag completes an actual test encode on the installed hardware.
 
@@ -86,7 +88,7 @@ Named custom presets are stored separately in the platform application-data dire
 
 The repository's `presets.ini` is authoritative for predefined defaults, so local edits to the installed copy are replaced at the next online startup. To keep personal settings, change a built-in value in the app and save it as a named custom preset. Configuration files contain data only and must not include comments. The first section is a validated source marker such as `[Version: bbe1a13]`; it is metadata and never appears in the preset selector.
 
-The `[Output: 4k]`, `[Output: 1080p]`, `[Output: 720p]`, and `[Output: 360p]` sections define each tier's resolution, target `video_bitrate`, and `max_rate`. Boolean fields use `0` for disabled and `1` for enabled. `encoder_speed` accepts `1` through `7`, where P1 is fastest and P7 is slowest. Optional `encoder_speed_<tier>`, `resolution_<tier>`, `video_bitrate_<tier>`, and `max_rate_<tier>` values override the shared output tier for one preset. EA Media Tools maps speed levels to native NVENC, QSV, AMF, VideoToolbox, x264, x265, or SVT-AV1 settings. Tune defaults use the `tune_nvenc`, `tune_amf`, `tune_qsv`, `tune_vaapi`, `tune_videotoolbox`, and `tune_software` keys; an empty value means the encoder has no general-purpose equivalent. Modern NVENC combines the selected P-level with `tune_nvenc=hq`; the deprecated `-preset hq` alias is not used because it maps to P7 and would bypass the speed control.
+The `[Output: 4k]`, `[Output: 1080p]`, `[Output: 720p]`, and `[Output: 360p]` sections define each tier's resolution, target `video_bitrate`, and `max_rate`. Boolean fields use `0` for disabled and `1` for enabled, including `dynamic_range_compression`. `encoder_speed` accepts `1` through `7`, where P1 is fastest and P7 is slowest. Optional `encoder_speed_<tier>`, `resolution_<tier>`, `video_bitrate_<tier>`, and `max_rate_<tier>` values override the shared output tier for one preset. EA Media Tools maps speed levels to native NVENC, QSV, AMF, VideoToolbox, x264, x265, or SVT-AV1 settings. Tune defaults use the `tune_nvenc`, `tune_amf`, `tune_qsv`, `tune_vaapi`, `tune_videotoolbox`, and `tune_software` keys; an empty value means the encoder has no general-purpose equivalent. Modern NVENC combines the selected P-level with `tune_nvenc=hq`; the deprecated `-preset hq` alias is not used because it maps to P7 and would bypass the speed control.
 
 Quality defaults use matching `quality_nvenc`, `quality_amf`, `quality_qsv`, `quality_vaapi`, `quality_videotoolbox`, and `quality_software` keys. A `quality_<family>_<tier>` key overrides that value for one tier; Streaming declares every tier explicitly, including NVENC CQ. `delivery_preset_<tier>` can inherit another preset's audio and advanced-video stack. The installed values are conservative VMAF-aligned starting points for comparable perceptual quality, but exact results still depend on codec generation, driver, source content, and hardware. Multipass accepts `0` (none), `1` (quarter resolution), or `2` (full resolution). `b_ref_mode` accepts `disabled`, `each`, or `middle`. `rc_lookahead` accepts `0` through `42`, and `spatial_aq` accepts `0` through `15`; zero disables either feature.
 

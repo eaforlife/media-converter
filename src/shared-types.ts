@@ -115,6 +115,7 @@ export type FilterSettings = {
   doNotReplaceAudio: boolean;
   extractClosedCaptions: boolean;
   downmixToStereo: boolean;
+  dynamicRangeCompression: boolean;
   resampleLosslessTo48k: boolean;
   normalizeAudio: boolean;
 };

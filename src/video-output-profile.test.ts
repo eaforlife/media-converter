@@ -60,7 +60,7 @@ test('resolves Cellular delivery and Music Video tier overrides from presets.ini
   deepStrictEqual(music4k.resolution, ['2960', '-2']);
 
   const music1080 = resolvePresetOutputDefaults(configuration, configuration.presets['Music Video'], '1080p', 'nvenc');
-  equal(music1080.encoderSpeed, 7);
+  equal(music1080.encoderSpeed, 6);
   equal(music1080.maxRate, 7000);
   deepStrictEqual(music1080.resolution, ['-2', '-2']);
 });

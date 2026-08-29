@@ -73,6 +73,7 @@ export const parseCustomPresets = (ini: string): SavedPreset[] => {
         doNotReplaceAudio: booleanValue(get('do_not_replace_audio', '0'), label('do_not_replace_audio')),
         extractClosedCaptions: booleanValue(get('extract_closed_captions', '0'), label('extract_closed_captions')),
         downmixToStereo: booleanValue(get('downmix_to_stereo', '1'), label('downmix_to_stereo')),
+        dynamicRangeCompression: booleanValue(get('dynamic_range_compression', '1'), label('dynamic_range_compression')),
         resampleLosslessTo48k: booleanValue(get('resample_lossless_to_48k', '1'), label('resample_lossless_to_48k')),
         normalizeAudio: booleanValue(get('normalize_audio', '1'), label('normalize_audio')),
       },
@@ -113,6 +114,7 @@ strip_metadata=${oneOrZero(preset.filters.stripMetadata)}
 do_not_replace_audio=${oneOrZero(preset.filters.doNotReplaceAudio)}
 extract_closed_captions=${oneOrZero(preset.filters.extractClosedCaptions)}
 downmix_to_stereo=${oneOrZero(preset.filters.downmixToStereo)}
+dynamic_range_compression=${oneOrZero(preset.filters.dynamicRangeCompression)}
 resample_lossless_to_48k=${oneOrZero(preset.filters.resampleLosslessTo48k)}
 normalize_audio=${oneOrZero(preset.filters.normalizeAudio)}`;
 

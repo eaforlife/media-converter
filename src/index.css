@@ -417,7 +417,19 @@ select { height: 44px; font-size: 16px; }
 .check-label { height: 44px; display: flex; align-items: center; gap: 10px; color: #c2c8d0; }
 .check-label input { width: 19px; height: 19px; accent-color: var(--accent); }
 
-body.picker-busy::after { content: 'Waiting for selection and inspecting video…'; position: fixed; z-index: 9999; inset: 0; display: grid; place-items: center; color: #f0f2f6; background: rgba(5, 7, 10, .72); backdrop-filter: blur(3px); font-size: 20px; font-weight: 650; pointer-events: all; }
+body.picker-busy::after { content: ''; position: fixed; z-index: 9998; inset: 0; background: rgba(5, 7, 10, .78); backdrop-filter: blur(5px); pointer-events: all; }
+.picker-progress { position: fixed; z-index: 9999; inset: 0; display: flex; align-items: center; justify-content: center; flex-direction: column; color: #f0f2f6; pointer-events: none; animation: picker-progress-enter .24s ease-out both; }
+.picker-progress-orbit { position: relative; width: 88px; height: 88px; display: grid; place-items: center; margin-bottom: 23px; border: 1px solid rgba(255,107,53,.24); border-radius: 50%; background: radial-gradient(circle, rgba(255,107,53,.14), transparent 68%); box-shadow: 0 0 45px rgba(255,107,53,.13); }
+.picker-progress-orbit::before { content: ''; position: absolute; inset: -1px; border: 2px solid transparent; border-top-color: var(--accent); border-right-color: rgba(255,141,82,.35); border-radius: 50%; animation: picker-progress-spin 1s linear infinite; }
+.picker-progress-orbit span { width: 54px; height: 54px; display: grid; place-items: center; border-radius: 50%; color: #ff895e; background: #241915; animation: picker-progress-pulse 1.5s ease-in-out infinite; }
+.picker-progress strong { font-size: 21px; font-weight: 700; letter-spacing: -.015em; }
+.picker-progress small { margin-top: 8px; color: #7f8997; font-size: 14px; }
+@keyframes picker-progress-enter { from { opacity: 0; transform: scale(.98); } to { opacity: 1; transform: scale(1); } }
+@keyframes picker-progress-spin { to { transform: rotate(360deg); } }
+@keyframes picker-progress-pulse { 50% { color: #ffac88; transform: scale(1.06); } }
+@media (prefers-reduced-motion: reduce) {
+  .picker-progress, .picker-progress-orbit::before, .picker-progress-orbit span { animation: none; }
+}
 button:disabled, select:disabled, input:disabled { cursor: not-allowed; opacity: .5; }
 
 /* Frameless window chrome */

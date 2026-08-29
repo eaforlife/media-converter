@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
-  audioBitrate, MUSIC_VIDEO_AAC_BITRATE, rsgainArguments, shouldResampleLossless, successfulNormalizationRoots,
+  audioBitrate, AUDIO_PRESETS, MUSIC_VIDEO_AAC_BITRATE, rsgainArguments, shouldResampleLossless, successfulNormalizationRoots,
 } from './audio-workflow.ts';
 import type { AudioStreamInfo } from './shared-types.ts';
 
@@ -17,6 +17,12 @@ test('audio presets use the requested stereo and surround-downmix rates', () => 
   assert.equal(audioBitrate('Streaming', track({ channels: 6, isStereo: false }), true), '128k');
   assert.equal(audioBitrate('Archive', track(), true), '224k');
   assert.equal(audioBitrate('Archive', track({ channels: 6, isStereo: false }), true), '256k');
+});
+
+test('audio preset compressor defaults exclude Archive and Passthrough', () => {
+  assert.equal(AUDIO_PRESETS.Streaming.dynamicRangeCompression, true);
+  assert.equal(AUDIO_PRESETS.Archive.dynamicRangeCompression, false);
+  assert.equal(AUDIO_PRESETS.Passthrough.dynamicRangeCompression, false);
 });
 
 test('music video audio uses libfdk AAC at 224 kbit/s', () => {
