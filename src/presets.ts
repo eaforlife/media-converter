@@ -9,6 +9,9 @@ export type PresetAudioCodec = 'aac' | 'opus';
 export type EncoderFamily = 'nvenc' | 'amf' | 'qsv' | 'vaapi' | 'videotoolbox' | 'software';
 export const OUTPUT_TIERS: readonly OutputTier[] = ['4k', '1080p', '720p', '360p'];
 export const ENCODER_FAMILIES: readonly EncoderFamily[] = ['nvenc', 'amf', 'qsv', 'vaapi', 'videotoolbox', 'software'];
+const CODEC_KEYS: Readonly<Record<PreferredVideoCodec, string>> = {
+  'H.264': 'h264', HEVC: 'hevc', AV1: 'av1',
+};
 
 type AudioRates = Record<PresetAudioCodec, { stereo: string; surround: string }>;
 type OutputTierDefaults = {
@@ -18,6 +21,11 @@ type OutputTierDefaults = {
   maxRate?: number;
   deliveryPreset?: string;
   quality: Partial<Record<EncoderFamily, string>>;
+  codec: Partial<Record<PreferredVideoCodec, {
+    encoderSpeed?: number;
+    videoBitrate?: number;
+    maxRate?: number;
+  }>>;
 };
 
 export type BuiltInPresetDefinition = {
@@ -26,6 +34,7 @@ export type BuiltInPresetDefinition = {
   format: 'mp4' | 'mkv';
   preferredVideoCodec: PreferredVideoCodec;
   encoderSpeed: number;
+  encoderProfile: Partial<Record<PreferredVideoCodec, string>>;
   outputTierDefaults: Record<OutputTier, OutputTierDefaults>;
   encoderTune: Record<EncoderFamily, string>;
   quality: Record<EncoderFamily, string>;
@@ -144,6 +153,9 @@ export const parseBuiltInPresetConfiguration = (ini: string): BuiltInPresetConfi
       format: enumValue(get('format'), ['mp4', 'mkv'], label('format')),
       preferredVideoCodec: enumValue(get('preferred_video_codec'), ['H.264', 'HEVC', 'AV1'], label('preferred_video_codec')),
       encoderSpeed: numberValue(get('encoder_speed'), label('encoder_speed'), 1, 7),
+      encoderProfile: Object.fromEntries(Object.entries(CODEC_KEYS).map(([codec, key]) => [
+        codec, optional(`profile_${key}`) || undefined,
+      ])) as Partial<Record<PreferredVideoCodec, string>>,
       outputTierDefaults: Object.fromEntries(OUTPUT_TIERS.map((tier) => [tier, {
         encoderSpeed: optionalNumberValue(optional(`encoder_speed_${tier}`), label(`encoder_speed_${tier}`), 1, 7),
         resolution: optional(`resolution_${tier}`)
@@ -155,6 +167,13 @@ export const parseBuiltInPresetConfiguration = (ini: string): BuiltInPresetConfi
         quality: Object.fromEntries(ENCODER_FAMILIES.map((family) => [
           family, optional(`quality_${family}_${tier}`) || undefined,
         ])) as Partial<Record<EncoderFamily, string>>,
+        codec: Object.fromEntries(Object.entries(CODEC_KEYS).map(([codec, key]) => [codec, {
+          encoderSpeed: optionalNumberValue(optional(`encoder_speed_${key}_${tier}`), label(`encoder_speed_${key}_${tier}`), 1, 7),
+          videoBitrate: optionalNumberValue(optional(`video_bitrate_${key}_${tier}`), label(`video_bitrate_${key}_${tier}`), 0, 1_000_000),
+          maxRate: optionalNumberValue(optional(`max_rate_${key}_${tier}`), label(`max_rate_${key}_${tier}`), 1, 1_000_000),
+        }])) as Partial<Record<PreferredVideoCodec, {
+          encoderSpeed?: number; videoBitrate?: number; maxRate?: number;
+        }>>,
       }])) as Record<OutputTier, OutputTierDefaults>,
       encoderTune: {
         nvenc: optional('tune_nvenc'), amf: optional('tune_amf'), qsv: optional('tune_qsv'),
@@ -213,19 +232,22 @@ export const resolvePresetOutputDefaults = (
   preset: BuiltInPresetDefinition,
   tier: OutputTier,
   family: EncoderFamily,
+  codec: PreferredVideoCodec = preset.preferredVideoCodec,
 ) => {
   const outputProfile = configuration.outputProfiles[tier];
   const overrides = preset.outputTierDefaults[tier];
+  const codecOverrides = overrides.codec[codec] ?? {};
   const deliveryPreset = overrides.deliveryPreset
     ? configuration.presets[overrides.deliveryPreset]
     : preset;
   if (!deliveryPreset) throw new Error(`The ${overrides.deliveryPreset} preset is unavailable`);
   return {
     deliveryPreset,
-    encoderSpeed: overrides.encoderSpeed ?? preset.encoderSpeed,
+    encoderSpeed: codecOverrides.encoderSpeed ?? overrides.encoderSpeed ?? preset.encoderSpeed,
+    encoderProfile: preset.encoderProfile[codec] ?? '',
     resolution: overrides.resolution ?? outputProfile.scale,
     quality: overrides.quality[family] ?? deliveryPreset.quality[family],
-    videoBitrate: overrides.videoBitrate ?? outputProfile.videoBitrate,
-    maxRate: overrides.maxRate ?? outputProfile.maxRate,
+    videoBitrate: codecOverrides.videoBitrate ?? overrides.videoBitrate ?? outputProfile.videoBitrate,
+    maxRate: codecOverrides.maxRate ?? overrides.maxRate ?? outputProfile.maxRate,
   };
 };

@@ -4,6 +4,16 @@ All notable changes to EA Media Tools are documented here.
 
 ## [Unreleased]
 
+## [2.5.1] - 2026-08-31
+
+### Changed
+
+- Make H.264 the default video codec for Archive and Regular and select the H.264 High profile from `presets.ini`.
+- Add codec-and-tier-specific encoder speed, bitrate, and maximum-rate overrides to the validated built-in preset schema.
+- Set the requested H.264 1080p maximum rates to 10000 kbps for Archive, 8000 kbps for Regular, 6500 kbps for Streaming, and 7000 kbps for Music Video; use 4000 kbps at 720p and 360p/Cellular.
+- Use P4 for Regular and Streaming H.264 at 4K/1080p, P6 for Music Video, and P2 for those presets at 720p/360p while retaining each preset's existing buffer multiplier.
+- Drive Archive bitrate controls from `bitrate_control` in `presets.ini` so its configured maximum rate reaches FFmpeg.
+
 ## [2.5.0] - 2026-08-29
 
 ### Added

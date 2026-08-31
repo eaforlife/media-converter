@@ -151,6 +151,7 @@ export type SavedPreset = {
   encoder: string;
   encoderSpeed: number;
   encoderTune: string;
+  encoderProfile: string;
   quality: string;
   videoBitrate: string;
   maxRate: string;

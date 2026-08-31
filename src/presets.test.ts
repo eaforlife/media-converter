@@ -16,6 +16,11 @@ test('loads ordered built-in preset values from presets.ini', () => {
   assert.equal(presets.Streaming.audioRates.opus.stereo, '96k');
   assert.equal(presets.Streaming.audioRates.opus.surround, '128k');
   assert.equal(presets.Streaming.encoderSpeed, 2);
+  assert.equal(presets.Archive.preferredVideoCodec, 'H.264');
+  assert.equal(presets.Regular.preferredVideoCodec, 'H.264');
+  assert.equal(presets.Archive.encoderProfile['H.264'], 'high');
+  assert.equal(presets.Regular.encoderProfile['H.264'], 'high');
+  assert.equal(presets.Archive.bitrateControl, true);
   assert.equal(presets.Streaming.bufferMultiplier, 3);
   assert.equal(presets.Streaming.encoderTune.nvenc, 'hq');
   assert.equal(presets.Streaming.encoderTune.amf, 'high_quality');
@@ -87,6 +92,19 @@ test('streaming tiers retain their own speed and CQ around the shared UHQ-compat
   assert.equal(presets['Music Video'].advancedVideo.spatialAq, 12);
 });
 
+test('loads codec-specific H.264 tier overrides from presets.ini', () => {
+  const presets = parseBuiltInPresets(presetFile);
+  assert.deepEqual(presets.Regular.outputTierDefaults['1080p'].codec['H.264'], {
+    encoderSpeed: 4, videoBitrate: undefined, maxRate: 8000,
+  });
+  assert.deepEqual(presets.Streaming.outputTierDefaults['720p'].codec['H.264'], {
+    encoderSpeed: 2, videoBitrate: undefined, maxRate: 4000,
+  });
+  assert.deepEqual(presets['Music Video'].outputTierDefaults['360p'].codec['H.264'], {
+    encoderSpeed: 2, videoBitrate: undefined, maxRate: 4000,
+  });
+});
+
 test('rejects out-of-range editable preset values', () => {
   assert.throws(
     () => parseBuiltInPresets(presetFile.replace('[Version: 47913a9]', '[Version: current]')),
@@ -103,6 +121,10 @@ test('rejects out-of-range editable preset values', () => {
   assert.throws(
     () => parseBuiltInPresets(presetFile.replace('max_rate_4k=11000', 'max_rate_4k=0')),
     /max_rate_4k must be an integer from 1 to 1000000/,
+  );
+  assert.throws(
+    () => parseBuiltInPresets(presetFile.replace('max_rate_h264_1080p=10000', 'max_rate_h264_1080p=0')),
+    /max_rate_h264_1080p must be an integer from 1 to 1000000/,
   );
   assert.throws(
     () => parseBuiltInPresets(presetFile.replace('dynamic_range_compression=0', 'dynamic_range_compression=2')),

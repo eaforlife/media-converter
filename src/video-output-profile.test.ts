@@ -65,6 +65,35 @@ test('resolves Cellular delivery and Music Video tier overrides from presets.ini
   deepStrictEqual(music1080.resolution, ['-2', '-2']);
 });
 
+test('resolves H.264-only rates, profiles, and speed tiers from presets.ini', () => {
+  const cases = [
+    { preset: 'Archive', tier: '1080p', speed: 6, maxRate: 10000 },
+    { preset: 'Regular', tier: '1080p', speed: 4, maxRate: 8000 },
+    { preset: 'Streaming', tier: '1080p', speed: 4, maxRate: 6500 },
+    { preset: 'Music Video', tier: '1080p', speed: 6, maxRate: 7000 },
+    { preset: 'Regular', tier: '720p', speed: 2, maxRate: 4000 },
+    { preset: 'Streaming', tier: '360p', speed: 2, maxRate: 4000 },
+    { preset: 'Cellular', tier: '360p', speed: 2, maxRate: 4000 },
+    { preset: 'Music Video', tier: '720p', speed: 2, maxRate: 4000 },
+  ] as const;
+
+  for (const expected of cases) {
+    const defaults = resolvePresetOutputDefaults(
+      configuration, configuration.presets[expected.preset], expected.tier, 'nvenc', 'H.264',
+    );
+    equal(defaults.encoderProfile, 'high');
+    equal(defaults.encoderSpeed, expected.speed);
+    equal(defaults.maxRate, expected.maxRate);
+  }
+
+  const streamingHevc = resolvePresetOutputDefaults(
+    configuration, configuration.presets.Streaming, '1080p', 'nvenc', 'HEVC',
+  );
+  equal(streamingHevc.encoderProfile, '');
+  equal(streamingHevc.encoderSpeed, 2);
+  equal(streamingHevc.maxRate, 5000);
+});
+
 test('disabled scaling emits no scale filter while retaining the source rate tier', () => {
   equal(scaleDimensionsFor(2160, 'disabled', profiles), null);
   equal(videoOutputProfile(2160, 'disabled', profiles).tier, '4k');

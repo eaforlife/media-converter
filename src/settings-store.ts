@@ -60,10 +60,12 @@ const parsePresets = (xml: string): SavedPreset[] => {
       encoderSpeed: Math.min(7, Math.max(1, Number(tag(body, 'encoderSpeed'))
         || Number((tag(body, 'encoderPreset') || '').replace(/^p/i, '')) || 4)),
       encoderTune: xmlUnescape(tag(body, 'encoderTune') || ''),
+      encoderProfile: xmlUnescape(tag(body, 'encoderProfile') || ''),
       quality: tag(body, 'quality') || '20',
       videoBitrate: tag(body, 'videoBitrate') || '0',
       maxRate: tag(body, 'maxRate') || '0',
-      bufferMultiplier: Number(tag(body, 'bufferMultiplier')) || 1,
+      bufferMultiplier: tag(body, 'bufferMultiplier') === undefined
+        ? 1 : Math.min(20, Math.max(0, Number(tag(body, 'bufferMultiplier')) || 0)),
       bufferSize: tag(body, 'bufferSize') || '0',
       deliveryMode: bool(tag(body, 'deliveryMode'), false),
       advancedVideo: {
@@ -106,6 +108,7 @@ ${indent}  <format>${preset.format}</format>
 ${indent}  <encoder>${xmlEscape(preset.encoder)}</encoder>
 ${indent}  <encoderSpeed>${preset.encoderSpeed}</encoderSpeed>
 ${indent}  <encoderTune>${xmlEscape(preset.encoderTune)}</encoderTune>
+${indent}  <encoderProfile>${xmlEscape(preset.encoderProfile)}</encoderProfile>
 ${indent}  <quality>${xmlEscape(preset.quality)}</quality>
 ${indent}  <videoBitrate>${xmlEscape(preset.videoBitrate)}</videoBitrate>
 ${indent}  <maxRate>${xmlEscape(preset.maxRate)}</maxRate>
@@ -119,7 +122,7 @@ ${indent}  <filters autoCrop="${Number(preset.filters.autoCrop)}" toneMapHdrToSd
 ${indent}</preset>`;
 
 const serialize = (settings: AppSettings) => `<?xml version="1.0" encoding="UTF-8"?>
-<eaMediaToolsSettings version="10">
+<eaMediaToolsSettings version="11">
   <hardwareAcceleration>${Number(settings.hardwareAcceleration)}</hardwareAcceleration>
   <useStableFfmpeg>${Number(settings.useStableFfmpeg)}</useStableFfmpeg>
   <smartFileNaming>${Number(settings.smartFileNaming)}</smartFileNaming>

@@ -42,6 +42,7 @@ export const parseCustomPresets = (ini: string): SavedPreset[] => {
       encoder: get('encoder', ''),
       encoderSpeed: integer(get('encoder_speed', '4'), label('encoder_speed'), 1, 7),
       encoderTune: get('encoder_tune', ''),
+      encoderProfile: get('encoder_profile', ''),
       quality: get('quality', '20'),
       videoBitrate: get('video_bitrate', '0'),
       maxRate: get('max_rate', '0'),
@@ -88,6 +89,7 @@ format=${preset.format}
 encoder=${preset.encoder}
 encoder_speed=${preset.encoderSpeed}
 encoder_tune=${preset.encoderTune}
+encoder_profile=${preset.encoderProfile}
 quality=${preset.quality}
 video_bitrate=${preset.videoBitrate}
 max_rate=${preset.maxRate}

@@ -2,7 +2,7 @@
 
 EA Media Tools is a desktop video and audio converter powered by Jellyfin FFmpeg. It inspects video, audio, subtitle, chapter, HDR, and Dolby Vision metadata; selects hardware or CPU processing; and runs queued conversions with live progress information.
 
-Version 2.5.0, codename **jaguar**, is the current stable release. It supports video files, short music videos with attached artwork, and recursive audio libraries. Hardware acceleration is enabled by default but can be disabled for CPU video encoding and decoding.
+Version 2.5.1, codename **jaguar**, is the current stable release. It supports video files, short music videos with attached artwork, and recursive audio libraries. Hardware acceleration is enabled by default but can be disabled for CPU video encoding and decoding.
 
 ## Download
 
@@ -88,7 +88,7 @@ Named custom presets are stored separately in the platform application-data dire
 
 The repository's `presets.ini` is authoritative for predefined defaults, so local edits to the installed copy are replaced at the next online startup. To keep personal settings, change a built-in value in the app and save it as a named custom preset. Configuration files contain data only and must not include comments. The first section is a validated source marker such as `[Version: 47913a9]`; it is metadata and never appears in the preset selector.
 
-The `[Output: 4k]`, `[Output: 1080p]`, `[Output: 720p]`, and `[Output: 360p]` sections define each tier's resolution, target `video_bitrate`, and `max_rate`. Boolean fields use `0` for disabled and `1` for enabled, including `dynamic_range_compression`. `encoder_speed` accepts `1` through `7`, where P1 is fastest and P7 is slowest. Optional `encoder_speed_<tier>`, `resolution_<tier>`, `video_bitrate_<tier>`, and `max_rate_<tier>` values override the shared output tier for one preset. EA Media Tools maps speed levels to native NVENC, QSV, AMF, VideoToolbox, x264, x265, or SVT-AV1 settings. Tune defaults use the `tune_nvenc`, `tune_amf`, `tune_qsv`, `tune_vaapi`, `tune_videotoolbox`, and `tune_software` keys; an empty value means the encoder has no general-purpose equivalent. Modern NVENC combines the selected P-level with `tune_nvenc=hq`; the deprecated `-preset hq` alias is not used because it maps to P7 and would bypass the speed control.
+The `[Output: 4k]`, `[Output: 1080p]`, `[Output: 720p]`, and `[Output: 360p]` sections define each tier's resolution, target `video_bitrate`, and `max_rate`. Boolean fields use `0` for disabled and `1` for enabled, including `bitrate_control` and `dynamic_range_compression`. `encoder_speed` accepts `1` through `7`, where P1 is fastest and P7 is slowest. Optional `encoder_speed_<tier>`, `resolution_<tier>`, `video_bitrate_<tier>`, and `max_rate_<tier>` values override the shared output tier for one preset. Codec-specific `encoder_speed_<codec>_<tier>`, `video_bitrate_<codec>_<tier>`, and `max_rate_<codec>_<tier>` values take precedence, where `<codec>` is `h264`, `hevc`, or `av1`. `profile_<codec>` selects an FFmpeg output profile, such as `profile_h264=high`. EA Media Tools maps speed levels to native NVENC, QSV, AMF, VideoToolbox, x264, x265, or SVT-AV1 settings. Tune defaults use the `tune_nvenc`, `tune_amf`, `tune_qsv`, `tune_vaapi`, `tune_videotoolbox`, and `tune_software` keys; an empty value means the encoder has no general-purpose equivalent. Modern NVENC combines the selected P-level with `tune_nvenc=hq`; the deprecated `-preset hq` alias is not used because it maps to P7 and would bypass the speed control.
 
 Quality defaults use matching `quality_nvenc`, `quality_amf`, `quality_qsv`, `quality_vaapi`, `quality_videotoolbox`, and `quality_software` keys. A `quality_<family>_<tier>` key overrides that value for one tier; Streaming declares every tier explicitly, including NVENC CQ. `delivery_preset_<tier>` can inherit another preset's audio and advanced-video stack. The installed values are conservative VMAF-aligned starting points for comparable perceptual quality, but exact results still depend on codec generation, driver, source content, and hardware. Multipass accepts `0` (none), `1` (quarter resolution), or `2` (full resolution). `b_ref_mode` accepts `disabled`, `each`, or `middle`. `rc_lookahead` accepts `0` through `42`, and `spatial_aq` accepts `0` through `15`; zero disables either feature.
 
@@ -110,6 +110,8 @@ Auto Scale chooses an output profile from the source resolution. Selecting a sca
 | 1080p | `1760:-2` | 5000 kbps | CQ 28 |
 | 720p | `1320:-2` | 2500 kbps | CQ 29 |
 | 360p / Cellular | `720:-2` | 2500 kbps | CQ 32 |
+
+H.264 uses the High profile. Archive and Regular select H.264 by default. At 1080p, the H.264 maximum rates are 10000 kbps for Archive, 8000 kbps for Regular, 6500 kbps for Streaming, and 7000 kbps for Music Video. At 720p and 360p/Cellular, the H.264 maximum rate is 4000 kbps. Regular and Streaming use P4 for H.264 at 4K and 1080p, Music Video uses P6, and all three use P2 at 720p and 360p; Archive retains P6.
 
 ## System requirements
 

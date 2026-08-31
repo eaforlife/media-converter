@@ -50,6 +50,7 @@ type ProcessingSettings = Record<ProcessingSection, boolean>;
 type FolderSeriesLayout = { sourceRoot: string; showFolder: string };
 type JobSettings = {
   preset: string; format: OutputFormat; encoder: string; encoderSpeed: EncoderSpeed; encoderTune: string;
+  encoderProfile: string;
   resolution: string; quality: string; videoBitrate: string; maxRate: string; bufferMultiplier: number; bufferSize: string;
   audio: Record<number, AudioSetting>; subtitles: Record<number, SubtitleSetting>;
   processing: ProcessingSettings;
@@ -180,7 +181,7 @@ const outputDefaultsFor = (
   tier: ReturnType<typeof videoOutputProfile>['tier'],
   encoder: string,
 ) => resolvePresetOutputDefaults(
-  requiredBuiltInPresetConfiguration(), preset, tier, encoderFamily(encoder),
+  requiredBuiltInPresetConfiguration(), preset, tier, encoderFamily(encoder), preferredCodecForEncoder(encoder),
 );
 const deliveryQuality = (
   preset: BuiltInPresetDefinition,
@@ -338,7 +339,7 @@ const initialAudioSettings = (source: SourceFile): JobSettings => {
   const track = source.media?.audio[0];
   const preset = AUDIO_PRESETS.Streaming;
   return {
-    preset: 'Streaming', format: 'opus', encoder: '', encoderSpeed: 4, encoderTune: '', resolution: '', quality: '',
+    preset: 'Streaming', format: 'opus', encoder: '', encoderSpeed: 4, encoderTune: '', encoderProfile: '', resolution: '', quality: '',
     videoBitrate: '0', maxRate: '0', bufferMultiplier: 0, bufferSize: '0', deliveryMode: false,
     advancedVideo: emptyAdvancedVideo(),
     processing: { video: false, audio: true, subtitles: false },
@@ -411,6 +412,7 @@ const applyMusicVideoPreset = (source: SourceFile) => {
     preset: 'Music Video', format: preset.format, encoder,
     encoderSpeed: normalizeEncoderSpeed(outputDefaults.encoderSpeed),
     encoderTune: normalizeEncoderTune(encoder, presetTune(preset, encoder)),
+    encoderProfile: outputDefaults.encoderProfile,
     resolution: outputDefaults.resolution.join(':'), quality: outputDefaults.quality,
     videoBitrate: String(outputDefaults.videoBitrate), maxRate: String(outputDefaults.maxRate), bufferMultiplier: preset.bufferMultiplier,
     bufferSize: String(bufferSizeFor(outputDefaults.maxRate, preset.bufferMultiplier)),
@@ -441,7 +443,7 @@ const initialSettings = (source: SourceFile): JobSettings => {
   const profilePreset = outputDefaults.deliveryPreset;
   const selectedAudio = preferredAudioIndexes(source.media?.audio ?? []);
   const settings: JobSettings = {
-    preset: 'Streaming', format: preset.format, encoder, encoderSpeed: normalizeEncoderSpeed(outputDefaults.encoderSpeed), encoderTune: normalizeEncoderTune(encoder, presetTune(preset, encoder)),
+    preset: 'Streaming', format: preset.format, encoder, encoderSpeed: normalizeEncoderSpeed(outputDefaults.encoderSpeed), encoderTune: normalizeEncoderTune(encoder, presetTune(preset, encoder)), encoderProfile: outputDefaults.encoderProfile,
     resolution: outputDefaults.resolution.join(':'), quality: outputDefaults.quality,
     videoBitrate: String(outputDefaults.videoBitrate), maxRate: String(outputDefaults.maxRate), bufferMultiplier: preset.bufferMultiplier,
     bufferSize: String(bufferSizeFor(outputDefaults.maxRate, preset.bufferMultiplier)),
@@ -512,6 +514,7 @@ const applyPreset = (source: SourceFile, preset: string, persist = true) => {
     encoder,
     encoderSpeed: normalizeEncoderSpeed(defaults ? outputDefaults!.encoderSpeed : saved!.encoderSpeed),
     encoderTune: normalizeEncoderTune(encoder, defaults ? presetTune(defaults, encoder) : saved!.encoderTune),
+    encoderProfile: defaults ? outputDefaults!.encoderProfile : saved!.encoderProfile,
     quality: defaults ? outputDefaults!.quality : normalizeQuality(saved!.quality),
     videoBitrate: defaults ? String(defaults.bitrateControl ? outputDefaults!.videoBitrate : 0) : saved!.videoBitrate,
     maxRate: defaults ? String(defaults.bitrateControl ? outputDefaults!.maxRate : 0) : saved!.maxRate,
@@ -567,6 +570,7 @@ const applyBuiltInScaleProfile = (
   settings.filters.scaleLocked = defaults.scaleLocked;
   settings.resolution = scale === 'disabled' ? defaults.resolution : outputDefaults.resolution.join(':');
   settings.encoderSpeed = normalizeEncoderSpeed(outputDefaults.encoderSpeed);
+  settings.encoderProfile = outputDefaults.encoderProfile;
   settings.quality = outputDefaults.quality;
   settings.videoBitrate = String(defaults.bitrateControl ? outputDefaults.videoBitrate : 0);
   settings.maxRate = String(defaults.bitrateControl ? outputDefaults.maxRate : 0);
@@ -670,6 +674,7 @@ const snapshotPreset = (settings: JobSettings, name: string): SavedPreset => {
     encoder: settings.encoder,
     encoderSpeed: settings.encoderSpeed,
     encoderTune: settings.encoderTune,
+    encoderProfile: settings.encoderProfile,
     quality: settings.quality,
     videoBitrate: settings.videoBitrate,
     maxRate: settings.maxRate,
@@ -999,10 +1004,9 @@ const getCommandArguments = (source: SourceFile, requestedOutputPath?: string, f
     video?.hasHdr || video?.hasDolbyVision || video?.isHevcMain10 || musicVideoMain10,
   );
   const main10Output = Boolean((settings.filters.pixelFormat10Bit || musicVideoMain10) && canUse10Bit);
-  if (isMusicVideoWorkflow(source)) {
-    const profile = musicVideoEncoderProfile(outputCodec, main10Output);
-    if (profile) args.push('-profile:v:0', profile);
-  }
+  const profile = settings.encoderProfile
+    || (isMusicVideoWorkflow(source) ? musicVideoEncoderProfile(outputCodec, main10Output) : null);
+  if (profile) args.push('-profile:v:0', profile);
   const toneMapFormat: 'nv12' | 'p010le' = main10Output ? 'p010le' : 'nv12';
   const dimensions = hardwareScaleDimensions(source, settings);
   const crop = detectedCropForSource(source);
@@ -1830,8 +1834,8 @@ const renderAdvancedVideoPanel = (settings: JobSettings) => {
 
 const renderVideoSettings = (source: SourceFile, settings: JobSettings) => {
   const delivery = isDeliveryPreset(settings);
-  const archive = settings.preset === 'Archive';
   const fixedPreset = builtInPreset(settings.preset);
+  const bitrateControl = fixedPreset?.bitrateControl ?? true;
   const bufferEditable = settings.preset === 'Regular' || !fixedPreset;
   const mode = qualityLabel(settings.encoder);
   const metadataOnly = isMetadataOnly(settings);
@@ -1848,10 +1852,10 @@ const renderVideoSettings = (source: SourceFile, settings: JobSettings) => {
     <label>Video encoder<select id="encoder"${appSettings.hardwareAcceleration && hardwareCapabilities.encoders.length ? '' : ' disabled'}>${encoderOptions(settings)}</select><small class="field-help">${!appSettings.hardwareAcceleration ? 'CPU software encode and decode are active.' : hardwareCapabilities.encoders.length ? `${hardwareCapabilities.adapters.join(', ') || 'Hardware'} · ${hardwareAccelerationSummary()}` : 'No hardware encoder passed the device test.'}</small></label>
     <label>Source duration<select disabled><option>${formatDuration(source.media?.duration ?? null)}</option></select></label></div>${encoderControls}
     <div class="quality-control"><div><label for="quality">Constant quality</label><span>Lower values produce higher quality</span></div><output id="quality-value">${mode} ${settings.quality}</output><input id="quality" type="range" min="12" max="38" value="${settings.quality}"/><div class="range-labels"><span>Higher quality</span><span>Smaller file</span></div></div>
-    <div class="video-bitrate-control ${archive ? 'disabled' : ''}"><div class="bitrate-heading"><div><strong>Bitrate control</strong><small>${archive ? 'Archive preset active — CQ/RF only.' : 'Bitrate 0 uses variable bitrate with a quality target.'}</small></div></div><div class="form-grid three-fields">
-      <label>Bitrate (kbps)<input type="number" min="0" step="100" data-video-rate="videoBitrate" value="${settings.videoBitrate}"${archive ? ' disabled' : ''}/><small class="field-help">0 = VBR</small></label>
-      <label>Max Rate (kbps)<input type="number" min="0" step="100" data-video-rate="maxRate" value="${settings.maxRate}"${archive ? ' disabled' : ''}/></label>
-      <label>Buffer size (kbps)<input type="number" min="0" step="100" data-video-rate="bufferSize" value="${settings.bufferSize}"${bufferEditable ? '' : ' disabled'}/><small class="field-help">${archive ? 'Disabled for Archive' : bufferEditable ? 'Editable for Regular and Custom presets' : `${settings.bufferMultiplier}× Max Rate, calculated automatically`}</small></label>
+    <div class="video-bitrate-control ${bitrateControl ? '' : 'disabled'}"><div class="bitrate-heading"><div><strong>Bitrate control</strong><small>${bitrateControl ? 'Bitrate 0 uses variable bitrate with a quality target.' : 'Disabled by this preset in presets.ini.'}</small></div></div><div class="form-grid three-fields">
+      <label>Bitrate (kbps)<input type="number" min="0" step="100" data-video-rate="videoBitrate" value="${settings.videoBitrate}"${bitrateControl ? '' : ' disabled'}/><small class="field-help">0 = VBR</small></label>
+      <label>Max Rate (kbps)<input type="number" min="0" step="100" data-video-rate="maxRate" value="${settings.maxRate}"${bitrateControl ? '' : ' disabled'}/></label>
+      <label>Buffer size (kbps)<input type="number" min="0" step="100" data-video-rate="bufferSize" value="${settings.bufferSize}"${bitrateControl && bufferEditable ? '' : ' disabled'}/><small class="field-help">${!bitrateControl ? 'Disabled by preset' : bufferEditable ? 'Editable for Regular and Custom presets' : `${settings.bufferMultiplier}× Max Rate, calculated automatically`}</small></label>
     </div></div></fieldset><section class="settings-card metadata-card"><div class="card-title"><div><span>VIDEO METADATA</span><h3>Language and dispositions</h3></div><span class="read-only-badge">${metadataOnly ? 'EDITING' : 'METADATA MODE ONLY'}</span></div>${renderMetadataEditor('video', 0, settings.videoMetadata, metadataOnly)}</section><div class="${processing ? '' : 'processing-disabled'}">${renderAdvancedVideoPanel(settings)}</div>
     <section class="command-card"><div class="command-heading"><div><span>COMMAND PREVIEW</span><strong>Metadata cleaned</strong></div><button id="copy-command">${icon('copy', 15)} Copy command</button></div><code id="command-preview">${escapeHtml(getCommand())}</code></section></div>`;
 };
@@ -2085,7 +2089,13 @@ const bindContentEvents = () => {
       settings[field] = value;
       settings.encoderTune = normalizeEncoderTune(value, defaults ? presetTune(defaults, value) : settings.encoderTune);
       if (defaults) {
-        settings.quality = deliveryQuality(defaults, outputProfileFor(source, settings.filters.scale, defaults.name).tier, value);
+        const outputDefaults = outputDefaultsFor(defaults, outputProfileFor(source, settings.filters.scale, defaults.name).tier, value);
+        settings.encoderSpeed = normalizeEncoderSpeed(outputDefaults.encoderSpeed);
+        settings.encoderProfile = outputDefaults.encoderProfile;
+        settings.quality = outputDefaults.quality;
+        settings.videoBitrate = String(defaults.bitrateControl ? outputDefaults.videoBitrate : 0);
+        settings.maxRate = String(defaults.bitrateControl ? outputDefaults.maxRate : 0);
+        settings.bufferSize = String(bufferSizeFor(defaults.bitrateControl ? outputDefaults.maxRate : 0, defaults.bufferMultiplier));
       }
       markCustom(settings);
       renderWorkspace();

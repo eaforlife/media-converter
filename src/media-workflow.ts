@@ -24,4 +24,4 @@ export const isH264HighSource = (video: VideoStreamInfo | null | undefined) =>
 export const musicVideoEncoderProfile = (
   outputCodec: PreferredVideoCodec,
   main10Output: boolean,
-) => outputCodec === 'H.264' ? 'high' : outputCodec === 'HEVC' && main10Output ? 'main10' : null;
+) => outputCodec === 'HEVC' && main10Output ? 'main10' : null;
