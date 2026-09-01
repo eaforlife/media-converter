@@ -3,6 +3,9 @@ import type { AdvancedVideoSettings } from './shared-types';
 export type AdvancedVideoField = keyof AdvancedVideoSettings;
 
 export const supportedAdvancedVideoFields = (encoder: string): readonly AdvancedVideoField[] => {
+  if (encoder === 'av1_nvenc') {
+    return ['multipass', 'bRefMode', 'adaptiveBFrames', 'sceneCutDetection', 'rcLookahead', 'nonReferenceP', 'spatialAq', 'temporalAq'];
+  }
   if (encoder.endsWith('_nvenc')) {
     return ['bFrames', 'multipass', 'bRefMode', 'adaptiveBFrames', 'sceneCutDetection', 'rcLookahead', 'nonReferenceP', 'spatialAq', 'temporalAq'];
   }
@@ -26,7 +29,8 @@ export const advancedVideoArguments = (encoder: string, settings: AdvancedVideoS
   if (encoder.endsWith('_nvenc')) {
     const bFrames = settings.bFrames ? encoder === 'hevc_nvenc' ? '5' : '4' : '0';
     const args = [
-      '-multipass', String(settings.multipass), '-bf', bFrames,
+      '-multipass', String(settings.multipass),
+      ...(encoder === 'av1_nvenc' ? [] : ['-bf', bFrames]),
       '-b_ref_mode', settings.bRefMode, '-b_adapt', settings.adaptiveBFrames ? '1' : '0',
       '-no-scenecut', settings.sceneCutDetection ? '0' : '1', '-rc-lookahead', String(settings.rcLookahead),
       '-nonref_p', settings.nonReferenceP ? '1' : '0', '-spatial-aq', settings.spatialAq > 0 ? '1' : '0',

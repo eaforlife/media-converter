@@ -21,6 +21,15 @@ export const attachedCoverArtArguments = (streamIndexes: readonly number[]) =>
 export const isH264HighSource = (video: VideoStreamInfo | null | undefined) =>
   Boolean(video && /^(?:h\.?264|avc)$/i.test(video.codec.trim()) && /\bhigh\b/i.test(video.profile));
 
+export const shouldDefaultToHevcMain10 = (video: VideoStreamInfo | null | undefined) =>
+  Boolean(video && (video.isHevcMain10 || video.hasHdr || video.hasDolbyVision));
+
+export const outputEncoderProfile = (
+  outputCodec: PreferredVideoCodec,
+  configuredProfile: string,
+  main10Output: boolean,
+) => outputCodec === 'HEVC' && main10Output ? 'main10' : configuredProfile || null;
+
 export const musicVideoEncoderProfile = (
   outputCodec: PreferredVideoCodec,
   main10Output: boolean,

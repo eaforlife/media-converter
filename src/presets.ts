@@ -15,6 +15,7 @@ const CODEC_KEYS: Readonly<Record<PreferredVideoCodec, string>> = {
 
 type AudioRates = Record<PresetAudioCodec, { stereo: string; surround: string }>;
 type OutputTierDefaults = {
+  preferredVideoCodec?: PreferredVideoCodec;
   encoderSpeed?: number;
   resolution?: readonly [string, string];
   videoBitrate?: number;
@@ -48,6 +49,7 @@ export type BuiltInPresetDefinition = {
   audioRates: AudioRates;
   dynamicRangeCompression: boolean;
   advancedVideo: AdvancedVideoSettings;
+  advancedVideoCodec: Partial<Record<PreferredVideoCodec, Partial<AdvancedVideoSettings>>>;
 };
 
 export type BuiltInPresetCatalog = Readonly<Record<string, BuiltInPresetDefinition>>;
@@ -147,6 +149,24 @@ export const parseBuiltInPresetConfiguration = (ini: string): BuiltInPresetConfi
     };
     const optional = (key: string) => values.get(key) ?? '';
     const label = (key: string) => `[${name}] ${key}`;
+    const optionalBooleanValue = (key: string) => optional(key) === ''
+      ? undefined
+      : booleanValue(optional(key), label(key));
+    const optionalAdvancedVideo = (codecKey: string): Partial<AdvancedVideoSettings> => Object.fromEntries(
+      Object.entries({
+        bFrames: optionalBooleanValue(`b_frames_${codecKey}`),
+        multipass: optionalNumberValue(optional(`multipass_${codecKey}`), label(`multipass_${codecKey}`), 0, 2) as AdvancedVideoSettings['multipass'] | undefined,
+        bRefMode: optional(`b_ref_mode_${codecKey}`)
+          ? enumValue(optional(`b_ref_mode_${codecKey}`), ['disabled', 'each', 'middle'], label(`b_ref_mode_${codecKey}`))
+          : undefined,
+        adaptiveBFrames: optionalBooleanValue(`adaptive_b_frames_${codecKey}`),
+        sceneCutDetection: optionalBooleanValue(`scene_cut_detection_${codecKey}`),
+        rcLookahead: optionalNumberValue(optional(`rc_lookahead_${codecKey}`), label(`rc_lookahead_${codecKey}`), 0, 42),
+        nonReferenceP: optionalBooleanValue(`non_reference_p_${codecKey}`),
+        spatialAq: optionalNumberValue(optional(`spatial_aq_${codecKey}`), label(`spatial_aq_${codecKey}`), 0, 15),
+        temporalAq: optionalBooleanValue(`temporal_aq_${codecKey}`),
+      }).filter(([, value]) => value !== undefined),
+    );
     parsed[name] = {
       name,
       description: get('description'),
@@ -157,6 +177,9 @@ export const parseBuiltInPresetConfiguration = (ini: string): BuiltInPresetConfi
         codec, optional(`profile_${key}`) || undefined,
       ])) as Partial<Record<PreferredVideoCodec, string>>,
       outputTierDefaults: Object.fromEntries(OUTPUT_TIERS.map((tier) => [tier, {
+        preferredVideoCodec: optional(`preferred_video_codec_${tier}`)
+          ? enumValue(optional(`preferred_video_codec_${tier}`), ['H.264', 'HEVC', 'AV1'], label(`preferred_video_codec_${tier}`))
+          : undefined,
         encoderSpeed: optionalNumberValue(optional(`encoder_speed_${tier}`), label(`encoder_speed_${tier}`), 1, 7),
         resolution: optional(`resolution_${tier}`)
           ? resolutionValue(optional(`resolution_${tier}`), label(`resolution_${tier}`))
@@ -207,6 +230,9 @@ export const parseBuiltInPresetConfiguration = (ini: string): BuiltInPresetConfi
         spatialAq: numberValue(get('spatial_aq'), label('spatial_aq'), 0, 15),
         temporalAq: booleanValue(get('temporal_aq'), label('temporal_aq')),
       },
+      advancedVideoCodec: Object.fromEntries(Object.entries(CODEC_KEYS).map(([codec, key]) => [
+        codec, optionalAdvancedVideo(key),
+      ])) as Partial<Record<PreferredVideoCodec, Partial<AdvancedVideoSettings>>>,
     };
   }
   for (const preset of Object.values(parsed)) {
@@ -226,6 +252,19 @@ export const parseBuiltInPresetConfiguration = (ini: string): BuiltInPresetConfi
 
 export const parseBuiltInPresets = (ini: string): BuiltInPresetCatalog =>
   parseBuiltInPresetConfiguration(ini).presets;
+
+export const preferredVideoCodecForPreset = (
+  preset: BuiltInPresetDefinition,
+  tier: OutputTier,
+) => preset.outputTierDefaults[tier].preferredVideoCodec ?? preset.preferredVideoCodec;
+
+export const resolvePresetAdvancedVideo = (
+  preset: BuiltInPresetDefinition,
+  codec: PreferredVideoCodec,
+): AdvancedVideoSettings => ({
+  ...preset.advancedVideo,
+  ...preset.advancedVideoCodec[codec],
+});
 
 export const resolvePresetOutputDefaults = (
   configuration: BuiltInPresetConfiguration,

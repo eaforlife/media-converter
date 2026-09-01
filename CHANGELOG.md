@@ -4,6 +4,24 @@ All notable changes to EA Media Tools are documented here.
 
 ## [Unreleased]
 
+## [2.6.0] - 2026-09-01
+
+### Added
+
+- Add a Filters-tab H.264 High-profile toggle that defaults on whenever an H.264 encoder is selected.
+- Add validated per-output-tier codec defaults and codec-specific advanced-video overrides to `presets.ini`.
+
+### Changed
+
+- Use HEVC Main for normal 4K/1080p Streaming output and HEVC Main10 by default for HEVC Main10, HDR, and Dolby Vision sources when the selected output path supports 10-bit encoding.
+- Switch Streaming output to AV1 for automatic or explicitly scaled 720p and 360p tiers.
+- Hide unsupported controls for the active encoder and prevent stale preset values from emitting unsupported FFmpeg arguments.
+- Disable AV1 B-frame-count defaults and stop emitting `-bf` for AV1 NVENC while retaining its supported multipass, B-reference, lookahead, scene-cut, non-reference-P, and AQ controls.
+
+### Compatibility
+
+- Align AV1 NVENC controls with the encoder options exposed by Jellyfin FFmpeg 7.1 and 8.1.
+
 ## [2.5.1] - 2026-08-31
 
 ### Changed

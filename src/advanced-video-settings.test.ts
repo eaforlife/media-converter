@@ -17,6 +17,18 @@ test('maps every requested advanced setting to NVENC options', () => {
   assert.equal(advancedVideoArguments('h264_nvenc', settings)[3], '4');
 });
 
+test('hides and omits the unsupported AV1 NVENC B-frame count', () => {
+  assert.deepEqual(supportedAdvancedVideoFields('av1_nvenc'), [
+    'multipass', 'bRefMode', 'adaptiveBFrames', 'sceneCutDetection', 'rcLookahead',
+    'nonReferenceP', 'spatialAq', 'temporalAq',
+  ]);
+  assert.deepEqual(advancedVideoArguments('av1_nvenc', settings), [
+    '-multipass', '2', '-b_ref_mode', 'middle', '-b_adapt', '1',
+    '-no-scenecut', '0', '-rc-lookahead', '27', '-nonref_p', '1',
+    '-spatial-aq', '1', '-temporal-aq', '1', '-aq-strength', '10',
+  ]);
+});
+
 test('maps only supported semantic settings to QSV options', () => {
   assert.deepEqual(supportedAdvancedVideoFields('hevc_qsv'), [
     'bFrames', 'adaptiveBFrames', 'sceneCutDetection', 'rcLookahead',

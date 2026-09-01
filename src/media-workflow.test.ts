@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   attachedCoverArtArguments, classifyMediaWorkflow, isH264HighSource, musicVideoEncoderProfile,
+  outputEncoderProfile, shouldDefaultToHevcMain10,
 } from './media-workflow.ts';
 import type { MediaInfo } from './shared-types.ts';
 
@@ -41,4 +42,15 @@ test('music-video output profiles map HEVC to Main10 and leave other codecs unse
   assert.equal(musicVideoEncoderProfile('HEVC', false), null);
   assert.equal(musicVideoEncoderProfile('H.264', false), null);
   assert.equal(musicVideoEncoderProfile('AV1', true), null);
+});
+
+test('streaming HEVC defaults to Main or Main10 from the source characteristics', () => {
+  assert.equal(shouldDefaultToHevcMain10(video), false);
+  assert.equal(shouldDefaultToHevcMain10({ ...video, isHevcMain10: true }), true);
+  assert.equal(shouldDefaultToHevcMain10({ ...video, hasHdr: true }), true);
+  assert.equal(shouldDefaultToHevcMain10({ ...video, hasDolbyVision: true }), true);
+  assert.equal(outputEncoderProfile('HEVC', 'main', false), 'main');
+  assert.equal(outputEncoderProfile('HEVC', 'main', true), 'main10');
+  assert.equal(outputEncoderProfile('H.264', 'high', false), 'high');
+  assert.equal(outputEncoderProfile('H.264', '', false), null);
 });

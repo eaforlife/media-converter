@@ -89,7 +89,7 @@ test('resolves H.264-only rates, profiles, and speed tiers from presets.ini', ()
   const streamingHevc = resolvePresetOutputDefaults(
     configuration, configuration.presets.Streaming, '1080p', 'nvenc', 'HEVC',
   );
-  equal(streamingHevc.encoderProfile, '');
+  equal(streamingHevc.encoderProfile, 'main');
   equal(streamingHevc.encoderSpeed, 2);
   equal(streamingHevc.maxRate, 5000);
 });
