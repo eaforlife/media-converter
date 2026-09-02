@@ -26,6 +26,7 @@ contextBridge.exposeInMainWorld('mediaAPI', {
   showCustomPresetFile: (): Promise<boolean> => ipcRenderer.invoke('custom-presets:show'),
   releasePreviews: (ids: string[]): Promise<void> => ipcRenderer.invoke('source:release-previews', ids),
   minimizeWindow: (): Promise<void> => ipcRenderer.invoke('window:minimize'),
+  invalidateWindow: (): void => ipcRenderer.send('window:invalidate'),
   closeWindow: (): Promise<void> => ipcRenderer.invoke('window:close'),
   finishAndClose: (): Promise<void> => ipcRenderer.invoke('app:finish-and-close'),
   checkForUpdates: (): Promise<string> => ipcRenderer.invoke('app:check-update'),
@@ -77,6 +78,7 @@ declare global {
       showCustomPresetFile: () => Promise<boolean>;
       releasePreviews: (ids: string[]) => Promise<void>;
       minimizeWindow: () => Promise<void>;
+      invalidateWindow: () => void;
       closeWindow: () => Promise<void>;
       finishAndClose: () => Promise<void>;
       checkForUpdates: () => Promise<string>;

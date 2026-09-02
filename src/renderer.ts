@@ -39,6 +39,7 @@ import {
 } from './media-workflow';
 import { mp4PlaybackArguments } from './mp4-playback';
 import { consolidatePrimaryDispositions, setPrimaryDisposition } from './stream-dispositions';
+import { shouldInvalidateUiAfterInputType } from './ui-rendering';
 import type {
   AdvancedVideoSettings, AppSettings, AudioStreamInfo, EncodeJob, EncodeProgress, FilterSettings, HardwareCapabilities, RuntimeState, SavedPreset,
   OutputFormat, ScaleMode, SourceFile, SourceScanProgress, StreamFlags, SubtitleStreamInfo,
@@ -92,6 +93,16 @@ const iconPaths: Record<IconName, string> = {
 const icon = (name: IconName, size = 18) => `<svg class="icon" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${iconPaths[name]}</svg>`;
 const app = document.querySelector<HTMLDivElement>('#app');
 if (!app) throw new Error('App root was not found');
+
+// A checked-state paint can leave a software-rendered frameless Chromium window
+// visually blank on Windows even though the renderer remains responsive. Request
+// a complete window repaint after the state and any synchronous DOM replacement
+// have both settled.
+document.addEventListener('change', (event) => {
+  const control = event.target;
+  if (!(control instanceof HTMLInputElement) || !shouldInvalidateUiAfterInputType(control.type)) return;
+  window.requestAnimationFrame(() => window.mediaAPI.invalidateWindow());
+});
 
 const AAC_BITRATES = ['128k', '144k', '160k', '192k', '224k', '256k', '320k'];
 const OPUS_BITRATES = ['32k', '48k', '64k', '80k', '96k', '112k', '128k'];

@@ -4,6 +4,11 @@ All notable changes to EA Media Tools are documented here.
 
 ## [Unreleased]
 
+### Fixed
+
+- Force a complete Windows window repaint after checkbox and radio state changes, preventing a responsive frameless renderer from remaining visually blank.
+- Keep custom toggle inputs visually hidden without a transparent native-control layer that can invalidate the software-rendered window surface.
+
 ## [2.6.6] - 2026-09-02
 
 ### Fixed
