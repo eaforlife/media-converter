@@ -4,6 +4,8 @@ All notable changes to EA Media Tools are documented here.
 
 ## [Unreleased]
 
+## [2.6.8] - 2026-09-03
+
 ### Fixed
 
 - Replace Video, Filters, and audio custom switches with button-backed ARIA switches so changing options such as Temporal AQ never enters the native checkbox paint path that could blank the Windows window.
@@ -424,6 +426,7 @@ All notable changes to EA Media Tools are documented here.
 - Convert crop offsets to CUVID edge values with division by two and floor rounding.
 - Cancel all active parallel encodes and interrupt pending cooldowns when the queue is stopped or a job fails.
 
+[2.6.8]: https://github.com/eaforlife/media-converter/compare/v2.6.7...v2.6.8
 [2.6.7]: https://github.com/eaforlife/media-converter/compare/v2.6.6...v2.6.7
 [2.6.6]: https://github.com/eaforlife/media-converter/compare/v2.6.5...v2.6.6
 [2.6.5]: https://github.com/eaforlife/media-converter/compare/v2.6.4...v2.6.5
