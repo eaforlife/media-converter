@@ -2,14 +2,37 @@ import type { MediaInfo, MediaWorkflow, VideoStreamInfo } from './shared-types';
 import type { PreferredVideoCodec, PresetFrameRate } from './presets';
 
 export const NTSC_FILM_FRAME_RATE = '24000/1001';
+export const FRAME_RATE_MATCH_TOLERANCE = 0.01;
+
+const numericFrameRate = (frameRate: string | null | undefined) => {
+  const parsed = Number.parseFloat(frameRate ?? '');
+  return Number.isFinite(parsed) ? parsed : null;
+};
+
+export const frameRateOverrideState = (
+  sourceFrameRate: string | null | undefined,
+  configuredFrameRate: PresetFrameRate,
+) => {
+  const sourceRate = numericFrameRate(sourceFrameRate);
+  if (configuredFrameRate === 'passthrough' || sourceRate === null) {
+    return { enabled: false, disabled: true };
+  }
+  if (sourceRate < configuredFrameRate - FRAME_RATE_MATCH_TOLERANCE) {
+    return { enabled: false, disabled: true };
+  }
+  if (Math.abs(sourceRate - configuredFrameRate) <= FRAME_RATE_MATCH_TOLERANCE) {
+    return { enabled: false, disabled: false };
+  }
+  return { enabled: true, disabled: false };
+};
 
 export const frameRateConversionArguments = (
   sourceFrameRate: string | null | undefined,
   configuredFrameRate: PresetFrameRate,
 ) => {
   if (configuredFrameRate === 'passthrough') return [];
-  const sourceRate = Number.parseFloat(sourceFrameRate ?? '');
-  if (!Number.isFinite(sourceRate) || sourceRate <= 24 || sourceRate <= configuredFrameRate) return [];
+  const sourceRate = numericFrameRate(sourceFrameRate);
+  if (sourceRate === null || sourceRate < configuredFrameRate - FRAME_RATE_MATCH_TOLERANCE) return [];
   const outputRate = Math.abs(configuredFrameRate - 23.976) < 0.0005
     ? NTSC_FILM_FRAME_RATE
     : String(configuredFrameRate);

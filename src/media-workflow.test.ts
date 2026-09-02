@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   attachedCoverArtArguments, classifyMediaWorkflow, isH264HighSource, musicVideoEncoderProfile,
-  frameRateConversionArguments, outputEncoderProfile, shouldDefaultToHevcMain10,
+  frameRateConversionArguments, frameRateOverrideState, outputEncoderProfile, shouldDefaultToHevcMain10,
 } from './media-workflow.ts';
 import type { MediaInfo } from './shared-types.ts';
 
@@ -62,8 +62,19 @@ test('configured frame rate only converts faster sources and uses exact NTSC fil
   assert.deepEqual(frameRateConversionArguments('60 fps', 23.976), [
     '-fps_mode:v:0', 'cfr', '-r:v:0', '24000/1001',
   ]);
-  assert.deepEqual(frameRateConversionArguments('23.976 fps', 23.976), []);
-  assert.deepEqual(frameRateConversionArguments('24 fps', 23.976), []);
+  assert.deepEqual(frameRateConversionArguments('23.5 fps', 23.976), []);
+  assert.deepEqual(frameRateConversionArguments('24 fps', 23.976), [
+    '-fps_mode:v:0', 'cfr', '-r:v:0', '24000/1001',
+  ]);
   assert.deepEqual(frameRateConversionArguments('29.97 fps', 'passthrough'), []);
   assert.deepEqual(frameRateConversionArguments('Unknown', 23.976), []);
+});
+
+test('frame rate override defaults reflect source timing and keep passthrough available', () => {
+  assert.deepEqual(frameRateOverrideState('23.5 fps', 23.976), { enabled: false, disabled: true });
+  assert.deepEqual(frameRateOverrideState('23.976 fps', 23.976), { enabled: false, disabled: false });
+  assert.deepEqual(frameRateOverrideState('23.98 fps', 23.976), { enabled: false, disabled: false });
+  assert.deepEqual(frameRateOverrideState('24 fps', 23.976), { enabled: true, disabled: false });
+  assert.deepEqual(frameRateOverrideState('29.97 fps', 23.976), { enabled: true, disabled: false });
+  assert.deepEqual(frameRateOverrideState('29.97 fps', 'passthrough'), { enabled: false, disabled: true });
 });

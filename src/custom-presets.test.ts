@@ -5,7 +5,7 @@ import type { SavedPreset } from './shared-types';
 
 const preset: SavedPreset = {
   name: 'Living Room', description: 'Living Room', workflow: 'video', format: 'mp4', encoder: 'hevc_nvenc',
-  encoderSpeed: 6, encoderTune: 'hq', encoderProfile: 'main', quality: '24', videoBitrate: '0', maxRate: '8000',
+  encoderSpeed: 6, encoderTune: 'hq', encoderProfile: 'main', frameRate: 23.976, quality: '24', videoBitrate: '0', maxRate: '8000',
   bufferMultiplier: 2, bufferSize: '16000', deliveryMode: true,
   advancedVideo: { bFrames: true, multipass: 2, bRefMode: 'middle', adaptiveBFrames: true, sceneCutDetection: true, rcLookahead: 32, nonReferenceP: true, spatialAq: 8, temporalAq: true },
   audioCodec: 'libopus', audioBitrate: '96k',
@@ -24,4 +24,13 @@ test('validates INI-safe custom preset names', () => {
   assert.equal(isValidCustomPresetName('Living Room'), true);
   assert.equal(isValidCustomPresetName('bad]name'), false);
   assert.equal(isValidCustomPresetName(''), false);
+});
+
+test('older custom presets default to frame-rate passthrough and invalid rates are rejected', () => {
+  const ini = serializeCustomPresets([preset]);
+  assert.equal(parseCustomPresets(ini.replace('frame_rate=23.976\n', ''))[0].frameRate, 'passthrough');
+  assert.throws(
+    () => parseCustomPresets(ini.replace('frame_rate=23.976', 'frame_rate=0')),
+    /frame_rate must be passthrough or a number from 1 to 240/,
+  );
 });

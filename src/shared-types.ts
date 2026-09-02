@@ -152,6 +152,7 @@ export type SavedPreset = {
   encoderSpeed: number;
   encoderTune: string;
   encoderProfile: string;
+  frameRate: 'passthrough' | number;
   quality: string;
   videoBitrate: string;
   maxRate: string;

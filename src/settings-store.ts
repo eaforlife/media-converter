@@ -2,6 +2,7 @@ import { app } from 'electron';
 import fs from 'node:fs';
 import path from 'node:path';
 import type { AdvancedVideoSettings, AppSettings, FilterSettings, SavedPreset, ScaleMode } from './shared-types';
+import { presetFrameRateValue } from './presets';
 
 const DEFAULT_SETTINGS: AppSettings = {
   hardwareAcceleration: true,
@@ -62,6 +63,7 @@ const parsePresets = (xml: string): SavedPreset[] => {
         || Number((tag(body, 'encoderPreset') || '').replace(/^p/i, '')) || 4)),
       encoderTune: xmlUnescape(tag(body, 'encoderTune') || ''),
       encoderProfile: xmlUnescape(tag(body, 'encoderProfile') || ''),
+      frameRate: presetFrameRateValue(tag(body, 'frameRate') || 'passthrough', 'frameRate'),
       quality: tag(body, 'quality') || '20',
       videoBitrate: tag(body, 'videoBitrate') || '0',
       maxRate: tag(body, 'maxRate') || '0',
@@ -110,6 +112,7 @@ ${indent}  <encoder>${xmlEscape(preset.encoder)}</encoder>
 ${indent}  <encoderSpeed>${preset.encoderSpeed}</encoderSpeed>
 ${indent}  <encoderTune>${xmlEscape(preset.encoderTune)}</encoderTune>
 ${indent}  <encoderProfile>${xmlEscape(preset.encoderProfile)}</encoderProfile>
+${indent}  <frameRate>${preset.frameRate}</frameRate>
 ${indent}  <quality>${xmlEscape(preset.quality)}</quality>
 ${indent}  <videoBitrate>${xmlEscape(preset.videoBitrate)}</videoBitrate>
 ${indent}  <maxRate>${xmlEscape(preset.maxRate)}</maxRate>

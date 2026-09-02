@@ -22,6 +22,7 @@ type OutputTierDefaults = {
   videoBitrate?: number;
   maxRate?: number;
   deliveryPreset?: string;
+  multipass?: AdvancedVideoSettings['multipass'];
   quality: Partial<Record<EncoderFamily, string>>;
   codec: Partial<Record<PreferredVideoCodec, {
     encoderSpeed?: number;
@@ -95,7 +96,7 @@ const enumValue = <T extends string>(value: string, allowed: readonly T[], label
   throw new Error(`${label} must be one of: ${allowed.join(', ')}`);
 };
 
-const frameRateValue = (value: string, label: string): PresetFrameRate => {
+export const presetFrameRateValue = (value: string, label: string): PresetFrameRate => {
   if (value === 'passthrough') return value;
   const parsed = Number(value);
   if (!Number.isFinite(parsed) || parsed < 1 || parsed > 240) {
@@ -181,7 +182,7 @@ export const parseBuiltInPresetConfiguration = (ini: string): BuiltInPresetConfi
     parsed[name] = {
       name,
       description: get('description'),
-      frameRate: frameRateValue(optional('frame_rate') || 'passthrough', label('frame_rate')),
+      frameRate: presetFrameRateValue(optional('frame_rate') || 'passthrough', label('frame_rate')),
       format: enumValue(get('format'), ['mp4', 'mkv'], label('format')),
       preferredVideoCodec: enumValue(get('preferred_video_codec'), ['H.264', 'HEVC', 'AV1'], label('preferred_video_codec')),
       encoderSpeed: numberValue(get('encoder_speed'), label('encoder_speed'), 1, 7),
@@ -199,6 +200,7 @@ export const parseBuiltInPresetConfiguration = (ini: string): BuiltInPresetConfi
         videoBitrate: optionalNumberValue(optional(`video_bitrate_${tier}`), label(`video_bitrate_${tier}`), 0, 1_000_000),
         maxRate: optionalNumberValue(optional(`max_rate_${tier}`), label(`max_rate_${tier}`), 1, 1_000_000),
         deliveryPreset: optional(`delivery_preset_${tier}`) || undefined,
+        multipass: optionalNumberValue(optional(`multipass_${tier}`), label(`multipass_${tier}`), 0, 2) as AdvancedVideoSettings['multipass'] | undefined,
         quality: Object.fromEntries(ENCODER_FAMILIES.map((family) => [
           family, optional(`quality_${family}_${tier}`) || undefined,
         ])) as Partial<Record<EncoderFamily, string>>,
@@ -273,9 +275,13 @@ export const preferredVideoCodecForPreset = (
 export const resolvePresetAdvancedVideo = (
   preset: BuiltInPresetDefinition,
   codec: PreferredVideoCodec,
+  tier?: OutputTier,
 ): AdvancedVideoSettings => ({
   ...preset.advancedVideo,
   ...preset.advancedVideoCodec[codec],
+  ...(tier !== undefined && preset.outputTierDefaults[tier].multipass !== undefined
+    ? { multipass: preset.outputTierDefaults[tier].multipass }
+    : {}),
 });
 
 export const resolvePresetOutputDefaults = (

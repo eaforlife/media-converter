@@ -4,6 +4,21 @@ All notable changes to EA Media Tools are documented here.
 
 ## [Unreleased]
 
+### Added
+
+- Add a Video-tab frame-rate override switch driven by the active preset's `frame_rate`: sources below the target are off and locked, matching sources are off and editable, faster sources are on and editable, and off always means passthrough.
+- Add validated per-output-tier `multipass_<tier>` preset overrides.
+
+### Changed
+
+- Set Streaming multipass to disabled for 4K output and quarter-resolution for 1080p, 720p, and 360p output; Cellular uses quarter-resolution multipass at 360p.
+- Preserve frame-rate targets in saved custom presets while defaulting older custom preset files to passthrough.
+
+### Fixed
+
+- Recursively remove every obsolete Windows `app-<version>` directory at startup and during update installation, with retries for partially locked `app.asar` remnants while preserving only the running version.
+- Keep splash initialization paused after an update is detected until its download completes and the Restart/Later prompt is answered; deferred updates install when the app exits.
+
 ## [2.6.2] - 2026-09-02
 
 ### Added

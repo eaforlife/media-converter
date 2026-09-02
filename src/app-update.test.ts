@@ -9,6 +9,7 @@ import {
   manualUpdateUnavailableMessage,
   releaseChangelogUrl,
   shouldInitializeAppUpdater,
+  startupUpdateShouldContinue,
   UpdateCheckState,
 } from './app-update.ts';
 
@@ -62,4 +63,12 @@ test('recognizes Squirrel already-running failures as a concurrent check', () =>
     'AutoUpdater process with arguments --checkForUpdate,https://example.test is already running',
   ), true);
   equal(isUpdateCheckAlreadyRunningError('The update service returned HTTP 500'), false);
+});
+
+test('startup remains blocked through download and resumes only after a terminal update choice', () => {
+  equal(startupUpdateShouldContinue('available'), false);
+  equal(startupUpdateShouldContinue('downloaded'), false);
+  equal(startupUpdateShouldContinue('not-available'), true);
+  equal(startupUpdateShouldContinue('deferred'), true);
+  equal(startupUpdateShouldContinue('error'), true);
 });

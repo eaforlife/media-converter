@@ -107,6 +107,10 @@ test('streaming tiers retain their own speed and CQ around the shared UHQ-compat
   assert.equal(resolvePresetAdvancedVideo(presets.Cellular, 'AV1').bFrames, false);
   assert.equal(presets.Cellular.advancedVideo.spatialAq, 12);
   assert.equal(presets['Music Video'].advancedVideo.spatialAq, 12);
+  assert.equal(resolvePresetAdvancedVideo(presets.Streaming, 'HEVC', '4k').multipass, 0);
+  assert.equal(resolvePresetAdvancedVideo(presets.Streaming, 'HEVC', '1080p').multipass, 1);
+  assert.equal(resolvePresetAdvancedVideo(presets.Streaming, 'AV1', '720p').multipass, 1);
+  assert.equal(resolvePresetAdvancedVideo(presets.Cellular, 'AV1', '360p').multipass, 1);
 });
 
 test('loads codec-specific H.264 tier overrides from presets.ini', () => {
@@ -150,6 +154,10 @@ test('rejects out-of-range editable preset values', () => {
   assert.throws(
     () => parseBuiltInPresets(presetFile.replace('frame_rate=23.976', 'frame_rate=0')),
     /frame_rate must be passthrough or a number from 1 to 240/,
+  );
+  assert.throws(
+    () => parseBuiltInPresets(presetFile.replace('multipass_4k=0', 'multipass_4k=3')),
+    /multipass_4k must be an integer from 0 to 2/,
   );
   assert.throws(
     () => parseBuiltInPresets(presetFile.replace('preferred_video_codec_720p=AV1', 'preferred_video_codec_720p=VP9')),

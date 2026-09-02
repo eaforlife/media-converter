@@ -7,7 +7,8 @@ import { updateElectronApp, UpdateSourceType } from 'update-electron-app';
 import { APP_NAME, APP_UPDATE_REPOSITORY } from './config';
 import {
   APP_UPDATE_INTERVAL, electronUpdateFeedUrl, friendlyUpdateError, isUpdateCheckAlreadyRunningError,
-  manualUpdateUnavailableMessage, releaseChangelogUrl, shouldInitializeAppUpdater, UpdateCheckState,
+  manualUpdateUnavailableMessage, releaseChangelogUrl, shouldInitializeAppUpdater,
+  startupUpdateShouldContinue, UpdateCheckState,
 } from './app-update';
 import { initializeLogger, logActivity, readLog, rotateLogForUpdate } from './app-logger';
 import { cleanupPreviousInstall } from './install-cleanup';
@@ -99,6 +100,38 @@ const activeFfmpeg = () => runtimeState?.ffmpegPath || developmentFfmpeg();
 const activeFfprobe = () => runtimeState?.ffprobePath || developmentFfprobe();
 
 let startupUpdateCheck: Promise<void> | null = null;
+let installUpdateOnExit = false;
+let updateInstallationStarted = false;
+
+const cleanupInstalledVersions = async () => {
+  if (!app.isPackaged || process.platform !== 'win32') return [];
+  return cleanupPreviousInstall(path.dirname(process.execPath));
+};
+
+const installDownloadedUpdate = async (reason: 'restart-now' | 'app-exit') => {
+  if (updateInstallationStarted) return;
+  updateInstallationStarted = true;
+  logActivity('INFO', 'update.installing', { reason, version: app.getVersion() });
+  const cleanupResults = await Promise.allSettled([
+    cancelEncodingAndWait(),
+    cleanupPreviews(),
+    cleanupInstalledVersions(),
+  ]);
+  const cleanupFailures = cleanupResults.flatMap((result) => result.status === 'rejected'
+    ? [result.reason instanceof Error ? result.reason.message : String(result.reason)]
+    : []);
+  if (cleanupFailures.length) logActivity('ERROR', 'update.preinstall-cleanup.failed', { reason, cleanupFailures });
+  try {
+    autoUpdater.quitAndInstall();
+  } catch (error) {
+    logActivity('ERROR', 'update.install.failed', {
+      reason,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    app.exit(0);
+  }
+};
+
 const initializeStartupAppUpdate = (webContents: Electron.WebContents) => {
   if (startupUpdateCheck) return startupUpdateCheck;
   if (!app.isPackaged || !shouldInitializeAppUpdater(process.platform, process.arch)) {
@@ -160,24 +193,44 @@ const initializeStartupAppUpdate = (webContents: Electron.WebContents) => {
       cleanup();
       setTimeout(resolve, delayMs);
     };
+    const handleSignal = (
+      signal: Parameters<typeof startupUpdateShouldContinue>[0],
+      message: string,
+      delayMs: number,
+      phase: RuntimeState['phase'] = 'checking-release',
+    ) => {
+      if (startupUpdateShouldContinue(signal)) {
+        finish(message, delayMs, phase);
+        return;
+      }
+      if (signal === 'available') clearTimeout(timeout);
+      notify(message, phase);
+    };
     const onChecking = () => notify('Checking for EA Media Tools updates');
-    const onAvailable = () => finish(
+    const onAvailable = () => handleSignal(
+      'available',
       'A new version is available · downloading in the background',
-      500,
+      0,
       'downloading',
     );
-    const onNotAvailable = () => finish(
+    const onNotAvailable = () => handleSignal(
+      'not-available',
       `EA Media Tools ${app.getVersion()} is up to date`,
       500,
     );
-    const onDownloaded = () => notify('Update downloaded · waiting for restart confirmation', 'verifying');
+    const onDownloaded = () => handleSignal(
+      'downloaded',
+      'Update downloaded · waiting for restart confirmation',
+      0,
+      'verifying',
+    );
     const onError = (error: Error) => {
       if (isUpdateCheckAlreadyRunningError(error.message)) {
         updateCheckState.markChecking();
         notify('An update check is already running · waiting for its result');
         return;
       }
-      finish(`Update check failed · ${friendlyUpdateError(error.message)}`, 900, 'error');
+      handleSignal('error', `Update check failed · ${friendlyUpdateError(error.message)}`, 900, 'error');
     };
 
     autoUpdater.on('checking-for-update', onChecking);
@@ -185,7 +238,8 @@ const initializeStartupAppUpdate = (webContents: Electron.WebContents) => {
     autoUpdater.on('update-not-available', onNotAvailable);
     autoUpdater.on('update-downloaded', onDownloaded);
     autoUpdater.on('error', onError);
-    const timeout = setTimeout(() => finish(
+    const timeout = setTimeout(() => handleSignal(
+      'error',
       'Update check timed out · continuing with the installed version',
       900,
       'error',
@@ -209,22 +263,26 @@ const initializeStartupAppUpdate = (webContents: Electron.WebContents) => {
             cancelId: 1,
             title: 'EA Media Tools Update',
             message: `${info.releaseName || 'A new version'} is ready to install`,
-            detail: 'Restart EA Media Tools now to finish installing the update.',
+            detail: 'Restart now, or choose Later to continue loading the app and install the update when you exit.',
           };
           const result = owner
             ? await dialog.showMessageBox(owner, options)
             : await dialog.showMessageBox(options);
           if (result.response === 0) {
             logActivity('INFO', 'update.startup.restart-requested', { releaseName: info.releaseName });
-            finish('Restarting to install the update', 0, 'verifying');
-            await cancelEncodingAndWait();
-            await cleanupPreviews().catch(() => undefined);
-            autoUpdater.quitAndInstall();
+            if (!settled) {
+              settled = true;
+              notify('Restarting to install the update', 'verifying');
+              cleanup();
+            }
+            await installDownloadedUpdate('restart-now');
             return;
           }
+          installUpdateOnExit = true;
           logActivity('INFO', 'update.startup.deferred', { releaseName: info.releaseName });
-          finish('Update ready · it will install when the app restarts', 500, 'ready');
-        })().catch((error: unknown) => finish(
+          handleSignal('deferred', 'Update ready · it will install when the app exits', 500, 'ready');
+        })().catch((error: unknown) => handleSignal(
+          'error',
           `Unable to show the update prompt · ${error instanceof Error ? error.message : String(error)}`,
           900,
           'error',
@@ -708,10 +766,17 @@ const createWindow = () => {
 };
 
 if (!handlingSquirrelEvent) app.whenReady().then(async () => {
-  if (app.isPackaged && process.platform === 'win32') {
-    await cleanupPreviousInstall(path.dirname(process.execPath)).catch(() => undefined);
-  }
   await initializeLogger();
+  if (app.isPackaged && process.platform === 'win32') {
+    try {
+      const removed = await cleanupInstalledVersions();
+      logActivity('INFO', 'install.cleanup.completed', { removed });
+    } catch (error) {
+      logActivity('ERROR', 'install.cleanup.failed', {
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
   logActivity('INFO', 'application.started', {
     version: app.getVersion(),
     packaged: app.isPackaged,
@@ -735,5 +800,9 @@ app.on('before-quit', (event) => {
   if (handlingSquirrelEvent || cleaningUp) return;
   cleaningUp = true;
   event.preventDefault();
+  if (installUpdateOnExit) {
+    void installDownloadedUpdate('app-exit');
+    return;
+  }
   void Promise.all([cancelEncodingAndWait(), cleanupPreviews()]).finally(() => app.exit(0));
 });

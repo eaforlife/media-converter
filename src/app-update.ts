@@ -16,6 +16,10 @@ export const shouldInitializeAppUpdater = (platform: NodeJS.Platform, arch: stri
   platform === 'win32' && arch === 'x64';
 
 export type UpdateCheckPhase = 'idle' | 'checking' | 'downloading' | 'downloaded';
+export type StartupUpdateSignal = 'available' | 'downloaded' | 'not-available' | 'deferred' | 'error';
+
+export const startupUpdateShouldContinue = (signal: StartupUpdateSignal) =>
+  signal === 'not-available' || signal === 'deferred' || signal === 'error';
 
 export class UpdateCheckState {
   phase: UpdateCheckPhase = 'idle';

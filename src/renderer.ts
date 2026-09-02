@@ -11,7 +11,7 @@ import {
   predefinedPresetNames, preferredVideoCodecForPreset, REQUIRED_BUILT_IN_PRESET_NAMES,
   resolvePresetAdvancedVideo, resolvePresetOutputDefaults,
 } from './presets';
-import type { BuiltInPresetConfiguration, BuiltInPresetDefinition, BuiltInPresetName, EncoderFamily, PreferredVideoCodec, PresetAudioCodec } from './presets';
+import type { BuiltInPresetConfiguration, BuiltInPresetDefinition, BuiltInPresetName, EncoderFamily, PreferredVideoCodec, PresetAudioCodec, PresetFrameRate } from './presets';
 import { advancedVideoArguments, supportedAdvancedVideoFields } from './advanced-video-settings';
 import type { AdvancedVideoField } from './advanced-video-settings';
 import {
@@ -35,7 +35,7 @@ import { applyStreamMetadataPatch, metadataTemporaryPath, streamMetadataChanged,
 import type { EditableStreamMetadata } from './metadata-edit';
 import {
   attachedCoverArtArguments, isH264HighSource, musicVideoEncoderProfile, outputEncoderProfile,
-  frameRateConversionArguments, shouldDefaultToHevcMain10,
+  frameRateConversionArguments, frameRateOverrideState, shouldDefaultToHevcMain10,
 } from './media-workflow';
 import { mp4PlaybackArguments } from './mp4-playback';
 import { consolidatePrimaryDispositions, setPrimaryDisposition } from './stream-dispositions';
@@ -58,6 +58,8 @@ type JobSettings = {
   preset: string; format: OutputFormat; encoder: string; encoderSpeed: EncoderSpeed; encoderTune: string;
   encoderProfile: string;
   resolution: string; quality: string; videoBitrate: string; maxRate: string; bufferMultiplier: number; bufferSize: string;
+  frameRate: PresetFrameRate;
+  frameRateOverride: boolean;
   audio: Record<number, AudioSetting>; subtitles: Record<number, SubtitleSetting>;
   processing: ProcessingSettings;
   videoMetadata: EditableStreamMetadata;
@@ -347,6 +349,7 @@ const initialAudioSettings = (source: SourceFile): JobSettings => {
   return {
     preset: 'Streaming', format: 'opus', encoder: '', encoderSpeed: 4, encoderTune: '', encoderProfile: '', resolution: '', quality: '',
     videoBitrate: '0', maxRate: '0', bufferMultiplier: 0, bufferSize: '0', deliveryMode: false,
+    frameRate: 'passthrough', frameRateOverride: false,
     advancedVideo: emptyAdvancedVideo(),
     processing: { video: false, audio: true, subtitles: false },
     videoMetadata: copyMetadata('und', { default: false, forced: false, hearingImpaired: false }),
@@ -422,8 +425,9 @@ const applyMusicVideoPreset = (source: SourceFile) => {
     resolution: outputDefaults.resolution.join(':'), quality: outputDefaults.quality,
     videoBitrate: String(outputDefaults.videoBitrate), maxRate: String(outputDefaults.maxRate), bufferMultiplier: preset.bufferMultiplier,
     bufferSize: String(bufferSizeFor(outputDefaults.maxRate, preset.bufferMultiplier)),
+    frameRate: preset.frameRate, frameRateOverride: false,
     deliveryMode: preset.deliveryMode,
-    advancedVideo: resolvePresetAdvancedVideo(preset, preferredCodecForEncoder(encoder)),
+    advancedVideo: resolvePresetAdvancedVideo(preset, preferredCodecForEncoder(encoder), outputProfile.tier),
     processing: { video: true, audio: true, subtitles: true },
   });
   settings.filters = {
@@ -454,7 +458,9 @@ const initialSettings = (source: SourceFile): JobSettings => {
     resolution: outputDefaults.resolution.join(':'), quality: outputDefaults.quality,
     videoBitrate: String(outputDefaults.videoBitrate), maxRate: String(outputDefaults.maxRate), bufferMultiplier: preset.bufferMultiplier,
     bufferSize: String(bufferSizeFor(outputDefaults.maxRate, preset.bufferMultiplier)),
-    advancedVideo: resolvePresetAdvancedVideo(profilePreset, preferredCodecForEncoder(encoder)),
+    frameRate: preset.frameRate,
+    frameRateOverride: frameRateOverrideState(source.media?.video?.frameRate, preset.frameRate).enabled,
+    advancedVideo: resolvePresetAdvancedVideo(profilePreset, preferredCodecForEncoder(encoder), outputProfile.tier),
     processing: { video: true, audio: true, subtitles: true },
     videoMetadata: copyMetadata(source.media?.video?.language ?? 'und', source.media?.video?.flags ?? { default: false, forced: false, hearingImpaired: false }),
     audio: Object.fromEntries((source.media?.audio ?? []).map((track) => [track.index, {
@@ -527,9 +533,13 @@ const applyPreset = (source: SourceFile, preset: string, persist = true) => {
     maxRate: defaults ? String(defaults.bitrateControl ? outputDefaults!.maxRate : 0) : saved!.maxRate,
     bufferMultiplier: defaults ? defaults.bufferMultiplier : saved!.bufferMultiplier,
     bufferSize: defaults ? String(bufferSizeFor(defaults.bitrateControl ? outputDefaults!.maxRate : 0, defaults.bufferMultiplier)) : saved!.bufferSize,
+    frameRate: defaults ? defaults.frameRate : saved!.frameRate,
+    frameRateOverride: defaults
+      ? frameRateOverrideState(source.media?.video?.frameRate, defaults.frameRate).enabled
+      : frameRateOverrideState(source.media?.video?.frameRate, saved!.frameRate).enabled,
     deliveryMode: selectedPreset.deliveryMode,
     advancedVideo: defaults
-      ? resolvePresetAdvancedVideo(profileDefaults!, preferredCodecForEncoder(encoder))
+      ? resolvePresetAdvancedVideo(profileDefaults!, preferredCodecForEncoder(encoder), outputProfile!.tier)
       : copyAdvancedVideo(saved!.advancedVideo),
   });
   if (defaults) settings.resolution = defaults.scale === 'disabled' ? defaults.resolution : outputDefaults!.resolution.join(':');
@@ -589,7 +599,7 @@ const applyBuiltInScaleProfile = (
   settings.bufferMultiplier = defaults.bufferMultiplier;
   settings.bufferSize = String(bufferSizeFor(defaults.bitrateControl ? outputDefaults.maxRate : 0, defaults.bufferMultiplier));
   settings.deliveryMode = profileDefaults.deliveryMode;
-  settings.advancedVideo = resolvePresetAdvancedVideo(profileDefaults, preferredCodecForEncoder(encoder));
+  settings.advancedVideo = resolvePresetAdvancedVideo(profileDefaults, preferredCodecForEncoder(encoder), outputProfile.tier);
   for (const track of source.media?.audio ?? []) {
     const audio = settings.audio[track.index];
     if (audio && audio.codec !== 'copy') {
@@ -687,6 +697,7 @@ const snapshotPreset = (settings: JobSettings, name: string): SavedPreset => {
     encoderSpeed: settings.encoderSpeed,
     encoderTune: settings.encoderTune,
     encoderProfile: settings.encoderProfile,
+    frameRate: settings.frameRate,
     quality: settings.quality,
     videoBitrate: settings.videoBitrate,
     maxRate: settings.maxRate,
@@ -1085,7 +1096,10 @@ const getCommandArguments = (source: SourceFile, requestedOutputPath?: string, f
     else if (main10Output) filters.push('format=p010le');
   }
     if (filters.length) args.push('-filter:v:0', filters.join(','));
-    args.push(...frameRateConversionArguments(video?.frameRate, builtInPreset(settings.preset)?.frameRate ?? 'passthrough'));
+    args.push(...frameRateConversionArguments(
+      video?.frameRate,
+      settings.frameRateOverride ? settings.frameRate : 'passthrough',
+    ));
     addStreamMetadataArguments(args, 'v', 0, settings.videoMetadata);
   } else if (source.media?.video) {
     args.push('-map', `0:${source.media.video.index}`, '-c:v', 'copy');
@@ -1893,6 +1907,15 @@ const renderVideoSettings = (source: SourceFile, settings: JobSettings) => {
   const processing = settings.processing.video;
   const speedSupported = supportsEncoderSpeed(settings.encoder);
   const tuneOptions = encoderTuneOptions(settings.encoder);
+  const configuredFrameRate = settings.frameRate;
+  const frameRateState = frameRateOverrideState(source.media?.video?.frameRate, configuredFrameRate);
+  const frameRateLabel = configuredFrameRate === 'passthrough'
+    ? 'This preset preserves the source frame rate.'
+    : frameRateState.disabled
+      ? `Source ${source.media?.video?.frameRate ?? 'rate'} is below the ${configuredFrameRate} fps target.`
+      : frameRateState.enabled
+        ? `Output ${configuredFrameRate} fps instead of source ${source.media?.video?.frameRate ?? 'rate'}.`
+        : `Source ${source.media?.video?.frameRate ?? 'rate'} already matches the ${configuredFrameRate} fps target.`;
   const encoderControls = speedSupported || tuneOptions.length
     ? `<div class="encoder-controls">${speedSupported ? `<div class="quality-control encoder-speed-control"><div><label for="encoder-speed">Encoding speed</label><span>Encoder-specific mapping: ${escapeHtml(encoderSpeedLabel(settings.encoder, settings.encoderSpeed))}</span></div><output id="encoder-speed-value">${escapeHtml(encoderSpeedDisplay(settings.encoder, settings.encoderSpeed))}</output><input id="encoder-speed" type="range" min="1" max="7" step="1" value="${settings.encoderSpeed}"/><div class="range-labels"><span>P1 Fast</span><span>P7 Ultra slow</span></div></div>` : ''}${tuneOptions.length ? `<label class="encoder-tune-control">Tune<select id="encoder-tune">${tuneOptions.map((option) => `<option value="${option.value}"${selected(option.value === settings.encoderTune)}>${escapeHtml(option.label)}</option>`).join('')}</select><small class="field-help">Options are limited to the selected encoder.</small></label>` : ''}</div>`
     : '';
@@ -1901,7 +1924,8 @@ const renderVideoSettings = (source: SourceFile, settings: JobSettings) => {
     <div class="form-grid"><label><span class="label-row">Format ${formatTip}</span><select id="format"><option value="mp4"${selected(settings.format === 'mp4')}>MP4</option><option value="mkv"${selected(settings.format === 'mkv')}>MKV</option><option value="webm"${selected(settings.format === 'webm')}>WebM</option></select>${delivery ? '<small class="field-help">MP4 recommended for direct web playback; other formats may require remuxing.</small>' : ''}</label>
     <label>Scale<select disabled><option>${settings.filters.scale === 'disabled' ? 'Disabled' : settings.filters.scale === 'auto' ? 'Auto Scale' : settings.filters.scale}</option></select><small class="field-help">Configure scaling in the Filters tab.</small></label>
     <label>Video encoder<select id="encoder"${appSettings.hardwareAcceleration && hardwareCapabilities.encoders.length ? '' : ' disabled'}>${encoderOptions(settings)}</select><small class="field-help">${!appSettings.hardwareAcceleration ? 'CPU software encode and decode are active.' : hardwareCapabilities.encoders.length ? `${hardwareCapabilities.adapters.join(', ') || 'Hardware'} · ${hardwareAccelerationSummary()}` : 'No hardware encoder passed the device test.'}</small></label>
-    <label>Source duration<select disabled><option>${formatDuration(source.media?.duration ?? null)}</option></select></label></div>${encoderControls}
+    <label>Source duration<select disabled><option>${formatDuration(source.media?.duration ?? null)}</option></select></label></div>
+    <label class="toggle-row ${frameRateState.disabled ? 'disabled' : ''}"><span><strong>Frame rate override</strong><small>${escapeHtml(frameRateLabel)} Off is passthrough.</small></span><input type="checkbox" data-frame-rate-override${checked(settings.frameRateOverride)}${frameRateState.disabled ? ' disabled' : ''}/><i></i></label>${encoderControls}
     <div class="quality-control"><div><label for="quality">Constant quality</label><span>Lower values produce higher quality</span></div><output id="quality-value">${mode} ${settings.quality}</output><input id="quality" type="range" min="12" max="38" value="${settings.quality}"/><div class="range-labels"><span>Higher quality</span><span>Smaller file</span></div></div>
     <div class="video-bitrate-control ${bitrateControl ? '' : 'disabled'}"><div class="bitrate-heading"><div><strong>Bitrate control</strong><small>${bitrateControl ? 'Bitrate 0 uses variable bitrate with a quality target.' : 'Disabled by this preset in presets.ini.'}</small></div></div><div class="form-grid three-fields">
       <label>Bitrate (kbps)<input type="number" min="0" step="100" data-video-rate="videoBitrate" value="${settings.videoBitrate}"${bitrateControl ? '' : ' disabled'}/><small class="field-help">0 = VBR</small></label>
@@ -2066,6 +2090,10 @@ const bindContentEvents = () => {
     renderWorkspace();
   }));
   document.querySelector<HTMLInputElement>('#quality')?.addEventListener('input', (event) => { settings.quality = (event.currentTarget as HTMLInputElement).value; markCustom(settings); updateCommand(); });
+  document.querySelector<HTMLInputElement>('[data-frame-rate-override]')?.addEventListener('change', (event) => {
+    settings.frameRateOverride = (event.currentTarget as HTMLInputElement).checked;
+    updateCommand();
+  });
   document.querySelector<HTMLInputElement>('#encoder-speed')?.addEventListener('input', (event) => {
     settings.encoderSpeed = normalizeEncoderSpeed(Number((event.currentTarget as HTMLInputElement).value));
     const value = document.querySelector<HTMLOutputElement>('#encoder-speed-value');
@@ -2144,7 +2172,8 @@ const bindContentEvents = () => {
       settings[field] = value;
       settings.encoderTune = normalizeEncoderTune(value, defaults ? presetTune(defaults, value) : settings.encoderTune);
       if (defaults) {
-        const outputDefaults = outputDefaultsFor(defaults, outputProfileFor(source, settings.filters.scale, defaults.name).tier, value);
+        const outputProfile = outputProfileFor(source, settings.filters.scale, defaults.name);
+        const outputDefaults = outputDefaultsFor(defaults, outputProfile.tier, value);
         settings.encoderSpeed = normalizeEncoderSpeed(outputDefaults.encoderSpeed);
         settings.encoderProfile = outputDefaults.encoderProfile;
         settings.quality = outputDefaults.quality;
@@ -2154,6 +2183,7 @@ const bindContentEvents = () => {
         settings.advancedVideo = resolvePresetAdvancedVideo(
           outputDefaults.deliveryPreset,
           preferredCodecForEncoder(value),
+          outputProfile.tier,
         );
       } else {
         settings.encoderProfile = preferredCodecForEncoder(value) === 'H.264' ? 'high' : '';

@@ -1,4 +1,4 @@
-import { booleanValue, parseIniSections } from './presets.ts';
+import { booleanValue, parseIniSections, presetFrameRateValue } from './presets.ts';
 import type { AdvancedVideoSettings, OutputFormat, SavedPreset, ScaleMode } from './shared-types';
 
 const outputFormats: readonly OutputFormat[] = ['mp4', 'mkv', 'webm', 'm4a', 'opus', 'source'];
@@ -43,6 +43,7 @@ export const parseCustomPresets = (ini: string): SavedPreset[] => {
       encoderSpeed: integer(get('encoder_speed', '4'), label('encoder_speed'), 1, 7),
       encoderTune: get('encoder_tune', ''),
       encoderProfile: get('encoder_profile', ''),
+      frameRate: presetFrameRateValue(get('frame_rate', 'passthrough'), label('frame_rate')),
       quality: get('quality', '20'),
       videoBitrate: get('video_bitrate', '0'),
       maxRate: get('max_rate', '0'),
@@ -90,6 +91,7 @@ encoder=${preset.encoder}
 encoder_speed=${preset.encoderSpeed}
 encoder_tune=${preset.encoderTune}
 encoder_profile=${preset.encoderProfile}
+frame_rate=${preset.frameRate}
 quality=${preset.quality}
 video_bitrate=${preset.videoBitrate}
 max_rate=${preset.maxRate}
