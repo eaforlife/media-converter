@@ -25,7 +25,7 @@ import {
   externalSubtitleTracks, importedSubtitleTracks, isSupportedExternalSubtitle, isUtf8SubtitleData,
   UTF8_SUBTITLE_EXTENSIONS,
 } from './external-subtitles';
-import { shouldDisableUiHardwareAcceleration } from './ui-rendering';
+import { shouldDisableUiHardwareAcceleration, uiRenderingCommandLineSwitches } from './ui-rendering';
 import { boundedMap, FILE_INDEX_LIMIT, inspectionConcurrency } from './source-scanning';
 import type {
   AppSettings, EncodeJob, HardwareCapabilities, RuntimeState, SourceFile, SourceScanProgress, SubtitleImportResult,
@@ -33,7 +33,11 @@ import type {
 
 // Electron's UI compositor is independent of FFmpeg's CUDA/NVDEC/NVENC path.
 // Software UI rendering avoids Windows GPU-driver resets that can blank the frameless window.
-if (shouldDisableUiHardwareAcceleration(process.platform)) app.disableHardwareAcceleration();
+const uiRenderingSwitches = uiRenderingCommandLineSwitches(process.platform);
+if (shouldDisableUiHardwareAcceleration(process.platform)) {
+  app.disableHardwareAcceleration();
+  for (const commandLineSwitch of uiRenderingSwitches) app.commandLine.appendSwitch(commandLineSwitch);
+}
 
 const runSquirrel = (args: string[]) => {
   const updateExe = path.resolve(path.dirname(process.execPath), '..', 'Update.exe');
@@ -801,6 +805,7 @@ if (!handlingSquirrelEvent) app.whenReady().then(async () => {
     version: app.getVersion(),
     packaged: app.isPackaged,
     uiHardwareAcceleration: !shouldDisableUiHardwareAcceleration(process.platform),
+    uiRenderingSwitches,
   });
   await initializePreviewStorage();
   registerIpc();
