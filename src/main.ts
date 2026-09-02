@@ -50,10 +50,11 @@ const handleSquirrelEvent = () => {
     return true;
   }
   if (event === '--squirrel-updated') {
-    void Promise.all([
-      rotateLogForUpdate(app.getVersion()),
-      cleanupPreviousInstall(path.dirname(process.execPath)),
-    ]).catch(() => undefined).finally(() => runSquirrel([`--createShortcut=${target}`]));
+    // Squirrel still owns the install tree during this event. The normal first launch
+    // cleans older versions after its splash renderer is ready.
+    void rotateLogForUpdate(app.getVersion())
+      .catch(() => undefined)
+      .finally(() => runSquirrel([`--createShortcut=${target}`]));
     return true;
   }
   if (event === '--squirrel-uninstall') {
@@ -99,13 +100,60 @@ const developmentFfprobe = () => process.env.EA_FFPROBE_PATH || 'ffprobe';
 const activeFfmpeg = () => runtimeState?.ffmpegPath || developmentFfmpeg();
 const activeFfprobe = () => runtimeState?.ffprobePath || developmentFfprobe();
 
+const sendStartupProgress = (
+  webContents: Electron.WebContents,
+  message: string,
+  phase: RuntimeState['phase'] = 'checking-release',
+) => {
+  if (webContents.isDestroyed()) return;
+  webContents.send('runtime:progress', {
+    phase,
+    message,
+    progress: null,
+    appVersion: app.getVersion(),
+    isPackaged: app.isPackaged,
+    updateEnabled: app.isPackaged && shouldInitializeAppUpdater(process.platform, process.arch),
+    ffmpegAvailable: false,
+    ffmpegPath: activeFfmpeg(),
+    ffprobePath: activeFfprobe(),
+    ffmpegVersion: null,
+    releaseTag: null,
+    ffmpegChannel: 'stable',
+    rsgainAvailable: false,
+    rsgainPath: '',
+    rsgainVersion: null,
+    ccextractorAvailable: false,
+    ccextractorPath: '',
+    ccextractorVersion: null,
+  } satisfies RuntimeState);
+};
+
 let startupUpdateCheck: Promise<void> | null = null;
+let startupInstallCleanup: Promise<void> | null = null;
 let installUpdateOnExit = false;
 let updateInstallationStarted = false;
 
-const cleanupInstalledVersions = async () => {
-  if (!app.isPackaged || process.platform !== 'win32') return [];
-  return cleanupPreviousInstall(path.dirname(process.execPath));
+const initializeStartupInstallCleanup = (webContents: Electron.WebContents) => {
+  if (startupInstallCleanup) return startupInstallCleanup;
+  if (!app.isPackaged || process.platform !== 'win32') {
+    startupInstallCleanup = Promise.resolve();
+    return startupInstallCleanup;
+  }
+  startupInstallCleanup = (async () => {
+    try {
+      const removed = await cleanupPreviousInstall(path.dirname(process.execPath), ({ completed, total }) => {
+        const message = `Removing previous installation files · ${completed + 1} of ${total}`;
+        logActivity('INFO', 'install.cleanup.progress', { completed, total });
+        sendStartupProgress(webContents, message, 'verifying');
+      });
+      logActivity('INFO', 'install.cleanup.completed', { removed });
+    } catch (error) {
+      logActivity('ERROR', 'install.cleanup.failed', {
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  })();
+  return startupInstallCleanup;
 };
 
 const installDownloadedUpdate = async (reason: 'restart-now' | 'app-exit') => {
@@ -115,7 +163,6 @@ const installDownloadedUpdate = async (reason: 'restart-now' | 'app-exit') => {
   const cleanupResults = await Promise.allSettled([
     cancelEncodingAndWait(),
     cleanupPreviews(),
-    cleanupInstalledVersions(),
   ]);
   const cleanupFailures = cleanupResults.flatMap((result) => result.status === 'rejected'
     ? [result.reason instanceof Error ? result.reason.message : String(result.reason)]
@@ -153,27 +200,7 @@ const initializeStartupAppUpdate = (webContents: Electron.WebContents) => {
   logActivity('INFO', 'update.configured', { feedUrl });
   const notify = (message: string, phase: RuntimeState['phase'] = 'checking-release') => {
     logActivity('INFO', 'update.startup.progress', { phase, message });
-    if (webContents.isDestroyed()) return;
-    webContents.send('runtime:progress', {
-      phase,
-      message,
-      progress: null,
-      appVersion: app.getVersion(),
-      isPackaged: app.isPackaged,
-      updateEnabled: true,
-      ffmpegAvailable: false,
-      ffmpegPath: activeFfmpeg(),
-      ffprobePath: activeFfprobe(),
-      ffmpegVersion: null,
-      releaseTag: null,
-      ffmpegChannel: 'stable',
-      rsgainAvailable: false,
-      rsgainPath: '',
-      rsgainVersion: null,
-      ccextractorAvailable: false,
-      ccextractorPath: '',
-      ccextractorVersion: null,
-    } satisfies RuntimeState);
+    sendStartupProgress(webContents, message, phase);
   };
 
   startupUpdateCheck = new Promise<void>((resolve) => {
@@ -557,7 +584,10 @@ const readInstalledReleaseChangelog = async () => {
 };
 
 const registerIpc = () => {
-  ipcMain.handle('app:initialize-update', (event) => initializeStartupAppUpdate(event.sender));
+  ipcMain.handle('app:initialize-update', async (event) => {
+    await initializeStartupInstallCleanup(event.sender);
+    await initializeStartupAppUpdate(event.sender);
+  });
   ipcMain.handle('runtime:initialize', async (event, useStableFfmpeg?: boolean) => {
     runtimeState = await initializeRuntime(event.sender, useStableFfmpeg !== false);
     logActivity('INFO', 'runtime.initialized', runtimeState);
@@ -767,16 +797,6 @@ const createWindow = () => {
 
 if (!handlingSquirrelEvent) app.whenReady().then(async () => {
   await initializeLogger();
-  if (app.isPackaged && process.platform === 'win32') {
-    try {
-      const removed = await cleanupInstalledVersions();
-      logActivity('INFO', 'install.cleanup.completed', { removed });
-    } catch (error) {
-      logActivity('ERROR', 'install.cleanup.failed', {
-        error: error instanceof Error ? error.message : String(error),
-      });
-    }
-  }
   logActivity('INFO', 'application.started', {
     version: app.getVersion(),
     packaged: app.isPackaged,
