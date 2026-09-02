@@ -660,9 +660,6 @@ const registerIpc = () => {
   ipcMain.handle('log:read', () => readLog());
   ipcMain.handle('config:read', (_event, settings?: AppSettings) => readConfig(settings));
   ipcMain.handle('window:minimize', (event) => BrowserWindow.fromWebContents(event.sender)?.minimize());
-  ipcMain.on('window:invalidate', (event) => {
-    if (process.platform === 'win32') BrowserWindow.fromWebContents(event.sender)?.webContents.invalidate();
-  });
   ipcMain.handle('window:close', (event) => BrowserWindow.fromWebContents(event.sender)?.close());
   ipcMain.handle('app:finish-and-close', async () => {
     logActivity('INFO', 'app.done.requested');

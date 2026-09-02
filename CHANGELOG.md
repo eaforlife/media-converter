@@ -4,6 +4,11 @@ All notable changes to EA Media Tools are documented here.
 
 ## [Unreleased]
 
+### Fixed
+
+- Replace Video, Filters, and audio custom switches with button-backed ARIA switches so changing options such as Temporal AQ never enters the native checkbox paint path that could blank the Windows window.
+- Remove the ineffective full-window repaint IPC that could retrigger the same Chromium rendering failure after checkbox changes.
+
 ## [2.6.7] - 2026-09-03
 
 ### Fixed

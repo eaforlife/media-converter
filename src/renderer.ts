@@ -39,7 +39,6 @@ import {
 } from './media-workflow';
 import { mp4PlaybackArguments } from './mp4-playback';
 import { consolidatePrimaryDispositions, setPrimaryDisposition } from './stream-dispositions';
-import { shouldInvalidateUiAfterInputType } from './ui-rendering';
 import type {
   AdvancedVideoSettings, AppSettings, AudioStreamInfo, EncodeJob, EncodeProgress, FilterSettings, HardwareCapabilities, RuntimeState, SavedPreset,
   OutputFormat, ScaleMode, SourceFile, SourceScanProgress, StreamFlags, SubtitleStreamInfo,
@@ -94,16 +93,6 @@ const icon = (name: IconName, size = 18) => `<svg class="icon" width="${size}" h
 const app = document.querySelector<HTMLDivElement>('#app');
 if (!app) throw new Error('App root was not found');
 
-// A checked-state paint can leave a software-rendered frameless Chromium window
-// visually blank on Windows even though the renderer remains responsive. Request
-// a complete window repaint after the state and any synchronous DOM replacement
-// have both settled.
-document.addEventListener('change', (event) => {
-  const control = event.target;
-  if (!(control instanceof HTMLInputElement) || !shouldInvalidateUiAfterInputType(control.type)) return;
-  window.requestAnimationFrame(() => window.mediaAPI.invalidateWindow());
-});
-
 const AAC_BITRATES = ['128k', '144k', '160k', '192k', '224k', '256k', '320k'];
 const OPUS_BITRATES = ['32k', '48k', '64k', '80k', '96k', '112k', '128k'];
 let sources: SourceFile[] = [];
@@ -135,6 +124,12 @@ const encodeCancellingJobs = new Set<number>();
 const escapeHtml = (value: string) => value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#039;');
 const selected = (condition: boolean) => condition ? ' selected' : '';
 const checked = (condition: boolean) => condition ? ' checked' : '';
+const switchState = (condition: boolean) => ` aria-checked="${condition}"`;
+const toggleSwitch = (control: HTMLElement) => {
+  const enabled = control.getAttribute('aria-checked') !== 'true';
+  control.setAttribute('aria-checked', String(enabled));
+  return enabled;
+};
 const emptyAdvancedVideo = (): AdvancedVideoSettings => ({
   bFrames: false, multipass: 0, bRefMode: 'disabled', adaptiveBFrames: false,
   sceneCutDetection: false, rcLookahead: 0, nonReferenceP: false, spatialAq: 0, temporalAq: false,
@@ -1874,7 +1869,7 @@ const renderAdvancedToggle = (
   title: string,
   help: string,
   value: boolean,
-) => `<label class="toggle-row advanced-toggle"><span><strong>${title}</strong><small>${help}</small></span><input type="checkbox" data-advanced-toggle="${field}"${checked(value)}/><i></i></label>`;
+) => `<button type="button" class="toggle-row advanced-toggle" role="switch" data-advanced-toggle="${field}"${switchState(value)}><span><strong>${title}</strong><small>${help}</small></span><i aria-hidden="true"></i></button>`;
 
 const renderAdvancedRange = (
   field: 'rcLookahead' | 'spatialAq',
@@ -1932,7 +1927,7 @@ const renderVideoSettings = (source: SourceFile, settings: JobSettings) => {
     <label>Scale<select disabled><option>${settings.filters.scale === 'disabled' ? 'Disabled' : settings.filters.scale === 'auto' ? 'Auto Scale' : settings.filters.scale}</option></select><small class="field-help">Configure scaling in the Filters tab.</small></label>
     <label>Video encoder<select id="encoder"${appSettings.hardwareAcceleration && hardwareCapabilities.encoders.length ? '' : ' disabled'}>${encoderOptions(settings)}</select><small class="field-help">${!appSettings.hardwareAcceleration ? 'CPU software encode and decode are active.' : hardwareCapabilities.encoders.length ? `${hardwareCapabilities.adapters.join(', ') || 'Hardware'} · ${hardwareAccelerationSummary()}` : 'No hardware encoder passed the device test.'}</small></label>
     <label>Source duration<select disabled><option>${formatDuration(source.media?.duration ?? null)}</option></select></label></div>
-    <label class="toggle-row ${frameRateState.disabled ? 'disabled' : ''}"><span><strong>Frame rate override</strong><small>${escapeHtml(frameRateLabel)} Off is passthrough.</small></span><input type="checkbox" data-frame-rate-override${checked(settings.frameRateOverride)}${frameRateState.disabled ? ' disabled' : ''}/><i></i></label>${encoderControls}
+    <button type="button" class="toggle-row ${frameRateState.disabled ? 'disabled' : ''}" role="switch" data-frame-rate-override${switchState(settings.frameRateOverride)}${frameRateState.disabled ? ' disabled' : ''}><span><strong>Frame rate override</strong><small>${escapeHtml(frameRateLabel)} Off is passthrough.</small></span><i aria-hidden="true"></i></button>${encoderControls}
     <div class="quality-control"><div><label for="quality">Constant quality</label><span>Lower values produce higher quality</span></div><output id="quality-value">${mode} ${settings.quality}</output><input id="quality" type="range" min="12" max="38" value="${settings.quality}"/><div class="range-labels"><span>Higher quality</span><span>Smaller file</span></div></div>
     <div class="video-bitrate-control ${bitrateControl ? '' : 'disabled'}"><div class="bitrate-heading"><div><strong>Bitrate control</strong><small>${bitrateControl ? 'Bitrate 0 uses variable bitrate with a quality target.' : 'Disabled by this preset in presets.ini.'}</small></div></div><div class="form-grid three-fields">
       <label>Bitrate (kbps)<input type="number" min="0" step="100" data-video-rate="videoBitrate" value="${settings.videoBitrate}"${bitrateControl ? '' : ' disabled'}/><small class="field-help">0 = VBR</small></label>
@@ -1988,11 +1983,11 @@ const renderFilterSettings = (source: SourceFile, settings: JobSettings) => {
     const highFrequency = sources.some((item) => item.media?.audio.some((track) => track.isLossless && (track.sampleRate ?? 0) > 48_000));
     const normalizeReady = Boolean(runtimeState?.rsgainAvailable);
     return `<section class="settings-card"><div class="card-title"><div><span>AUDIO FILTERS</span><h3>Library processing</h3></div>${icon('sliders', 22)}</div><div class="filter-options">
-      <label class="toggle-row ${passthrough ? 'disabled' : ''}"><span><strong>Strip all metadata</strong><small>${passthrough ? 'Unavailable for Passthrough.' : 'Remove source container and stream metadata.'}</small></span><input type="checkbox" data-audio-filter="stripMetadata"${checked(settings.filters.stripMetadata)}${passthrough ? ' disabled' : ''}/><i></i></label>
-      <label class="toggle-row ${hasSurround && !passthrough ? '' : 'disabled'}"><span><strong>Downmix to stereo</strong><small>${passthrough ? 'Unavailable for Passthrough.' : hasSurround ? 'Apply the surround downmix filter to multichannel sources.' : 'No surround source was detected.'}</small></span><input type="checkbox" data-audio-filter="downmixToStereo"${checked(settings.filters.downmixToStereo)}${hasSurround && !passthrough ? '' : ' disabled'}/><i></i></label>
-      <label class="toggle-row ${hasSurround && settings.filters.downmixToStereo && !passthrough ? '' : 'disabled'}"><span><strong>Dynamic range compressor</strong><small>${passthrough ? 'Unavailable for Passthrough.' : !hasSurround ? 'No surround source was detected.' : !settings.filters.downmixToStereo ? 'Enable surround downmixing to use compression.' : 'Apply Feishin\'s Default compressor immediately after surround downmixing.'}</small></span><input type="checkbox" data-audio-filter="dynamicRangeCompression"${checked(settings.filters.dynamicRangeCompression)}${hasSurround && settings.filters.downmixToStereo && !passthrough ? '' : ' disabled'}/><i></i></label>
-      <label class="toggle-row ${hasLossless && !passthrough ? '' : 'disabled'}"><span><strong>Convert high-frequency lossless audio to 48 kHz</strong><small>${passthrough ? 'Unavailable for Passthrough.' : hasLossless ? highFrequency ? 'High-frequency lossless audio was detected.' : 'Lossless audio is already at or below 48 kHz.' : 'No ALAC, FLAC, PCM, or other lossless source was detected.'}</small></span><input type="checkbox" data-audio-filter="resampleLosslessTo48k"${checked(settings.filters.resampleLosslessTo48k)}${hasLossless && !passthrough ? '' : ' disabled'}/><i></i></label>
-      <label class="toggle-row ${normalizeReady ? '' : 'disabled'}"><span><strong>Normalize Audio</strong><small>${normalizeReady ? 'Runs rsgain once after every audio encode succeeds.' : 'The managed rsgain runtime is unavailable.'}</small></span><input type="checkbox" data-audio-filter="normalizeAudio"${checked(settings.filters.normalizeAudio)}${normalizeReady ? '' : ' disabled'}/><i></i></label>
+      <button type="button" class="toggle-row ${passthrough ? 'disabled' : ''}" role="switch" data-audio-filter="stripMetadata"${switchState(settings.filters.stripMetadata)}${passthrough ? ' disabled' : ''}><span><strong>Strip all metadata</strong><small>${passthrough ? 'Unavailable for Passthrough.' : 'Remove source container and stream metadata.'}</small></span><i aria-hidden="true"></i></button>
+      <button type="button" class="toggle-row ${hasSurround && !passthrough ? '' : 'disabled'}" role="switch" data-audio-filter="downmixToStereo"${switchState(settings.filters.downmixToStereo)}${hasSurround && !passthrough ? '' : ' disabled'}><span><strong>Downmix to stereo</strong><small>${passthrough ? 'Unavailable for Passthrough.' : hasSurround ? 'Apply the surround downmix filter to multichannel sources.' : 'No surround source was detected.'}</small></span><i aria-hidden="true"></i></button>
+      <button type="button" class="toggle-row ${hasSurround && settings.filters.downmixToStereo && !passthrough ? '' : 'disabled'}" role="switch" data-audio-filter="dynamicRangeCompression"${switchState(settings.filters.dynamicRangeCompression)}${hasSurround && settings.filters.downmixToStereo && !passthrough ? '' : ' disabled'}><span><strong>Dynamic range compressor</strong><small>${passthrough ? 'Unavailable for Passthrough.' : !hasSurround ? 'No surround source was detected.' : !settings.filters.downmixToStereo ? 'Enable surround downmixing to use compression.' : 'Apply Feishin\'s Default compressor immediately after surround downmixing.'}</small></span><i aria-hidden="true"></i></button>
+      <button type="button" class="toggle-row ${hasLossless && !passthrough ? '' : 'disabled'}" role="switch" data-audio-filter="resampleLosslessTo48k"${switchState(settings.filters.resampleLosslessTo48k)}${hasLossless && !passthrough ? '' : ' disabled'}><span><strong>Convert high-frequency lossless audio to 48 kHz</strong><small>${passthrough ? 'Unavailable for Passthrough.' : hasLossless ? highFrequency ? 'High-frequency lossless audio was detected.' : 'Lossless audio is already at or below 48 kHz.' : 'No ALAC, FLAC, PCM, or other lossless source was detected.'}</small></span><i aria-hidden="true"></i></button>
+      <button type="button" class="toggle-row ${normalizeReady ? '' : 'disabled'}" role="switch" data-audio-filter="normalizeAudio"${switchState(settings.filters.normalizeAudio)}${normalizeReady ? '' : ' disabled'}><span><strong>Normalize Audio</strong><small>${normalizeReady ? 'Runs rsgain once after every audio encode succeeds.' : 'The managed rsgain runtime is unavailable.'}</small></span><i aria-hidden="true"></i></button>
     </div></section>`;
   }
   const video = source.media?.video;
@@ -2010,13 +2005,13 @@ const renderFilterSettings = (source: SourceFile, settings: JobSettings) => {
     ? outputDefaultsFor(requiredBuiltInPreset('Music Video'), '4k', settings.encoder).resolution.join(':')
     : '';
   return `<div class="filter-layout"><fieldset class="settings-card processing-fieldset ${settings.processing.video ? '' : 'processing-disabled'}"${settings.processing.video ? '' : ' disabled'}><div class="card-title"><div><span>PICTURE FILTERS</span><h3>Automatic processing</h3></div>${icon('sliders', 22)}</div>
-    <div class="filter-options"><label class="toggle-row"><span><strong>Auto Crop</strong><small>${escapeHtml(cropDetail)}</small></span><input type="checkbox" data-filter="autoCrop"${checked(settings.filters.autoCrop)}/><i></i></label>
-    <label class="toggle-row ${isHdr ? '' : 'disabled'}"><span><strong>HDR to SDR</strong><small>${isHdr ? `Tone-map ${escapeHtml(hdrLabel(source))} to SDR` : 'Unavailable because the source is SDR'}</small></span><input type="checkbox" data-filter="toneMapHdrToSdr"${checked(settings.filters.toneMapHdrToSdr)}${isHdr ? '' : ' disabled'}/><i></i></label>
-    <label class="toggle-row ${allowMain10 ? '' : 'disabled'}"><span><strong>HEVC Main10 profile</strong><small>${allowMain10 ? settings.encoder.endsWith('_nvenc') ? 'Use HEVC Main10 and CUDA-native p010le output without leaving GPU memory' : 'Use the HEVC Main10 profile and a 10-bit output pixel format' : hevcOutput ? 'The detected HEVC encoder did not pass its 10-bit capability test' : 'Available only when an HEVC output encoder is selected'}</small></span><input type="checkbox" data-filter="pixelFormat10Bit"${checked(settings.filters.pixelFormat10Bit && hevcOutput)}${allowMain10 ? '' : ' disabled'}/><i></i></label>
-    ${h264Output ? `<label class="toggle-row"><span><strong>H.264 High profile</strong><small>Use the High output profile; enabled by default for H.264.</small></span><input type="checkbox" data-video-profile="h264-high"${checked(h264High)}/><i></i></label>` : ''}
+    <div class="filter-options"><button type="button" class="toggle-row" role="switch" data-filter="autoCrop"${switchState(settings.filters.autoCrop)}><span><strong>Auto Crop</strong><small>${escapeHtml(cropDetail)}</small></span><i aria-hidden="true"></i></button>
+    <button type="button" class="toggle-row ${isHdr ? '' : 'disabled'}" role="switch" data-filter="toneMapHdrToSdr"${switchState(settings.filters.toneMapHdrToSdr)}${isHdr ? '' : ' disabled'}><span><strong>HDR to SDR</strong><small>${isHdr ? `Tone-map ${escapeHtml(hdrLabel(source))} to SDR` : 'Unavailable because the source is SDR'}</small></span><i aria-hidden="true"></i></button>
+    <button type="button" class="toggle-row ${allowMain10 ? '' : 'disabled'}" role="switch" data-filter="pixelFormat10Bit"${switchState(settings.filters.pixelFormat10Bit && hevcOutput)}${allowMain10 ? '' : ' disabled'}><span><strong>HEVC Main10 profile</strong><small>${allowMain10 ? settings.encoder.endsWith('_nvenc') ? 'Use HEVC Main10 and CUDA-native p010le output without leaving GPU memory' : 'Use the HEVC Main10 profile and a 10-bit output pixel format' : hevcOutput ? 'The detected HEVC encoder did not pass its 10-bit capability test' : 'Available only when an HEVC output encoder is selected'}</small></span><i aria-hidden="true"></i></button>
+    ${h264Output ? `<button type="button" class="toggle-row" role="switch" data-video-profile="h264-high"${switchState(h264High)}><span><strong>H.264 High profile</strong><small>Use the High output profile; enabled by default for H.264.</small></span><i aria-hidden="true"></i></button>` : ''}
     <label class="scale-row"><span><strong>Auto scale</strong><small>${isMusicVideoWorkflow(source) ? `Music Video locks Auto Scale and only scales 4K sources to ${escapeHtml(musicVideoScale)}.` : settings.filters.scaleLocked ? 'Cellular locks scaling to 360p.' : 'Choose an automatic output height or leave scaling disabled.'}</small></span><select id="filter-scale"${settings.filters.scaleLocked ? ' disabled' : ''}><option value="auto"${selected(settings.filters.scale === 'auto')}>Auto Scale</option><option value="1080p"${selected(settings.filters.scale === '1080p')}>1080p</option><option value="720p"${selected(settings.filters.scale === '720p')}>720p</option><option value="360p"${selected(settings.filters.scale === '360p')}>360p</option><option value="disabled"${selected(settings.filters.scale === 'disabled')}>Disabled</option></select></label></div></fieldset>
     <fieldset class="settings-card processing-fieldset ${settings.processing.audio ? '' : 'processing-disabled'}"${settings.processing.audio ? '' : ' disabled'}><div class="card-title"><div><span>AUDIO FILTERS</span><h3>Surround processing</h3></div>${icon('audio', 22)}</div><div class="filter-options">
-      <label class="toggle-row ${hasSurround ? '' : 'disabled'}"><span><strong>Dynamic range compressor</strong><small>${hasSurround ? 'Apply Feishin\'s Default compressor immediately after each surround downmix.' : 'No enabled surround source was detected.'}</small></span><input type="checkbox" data-audio-filter="dynamicRangeCompression"${checked(settings.filters.dynamicRangeCompression)}${hasSurround ? '' : ' disabled'}/><i></i></label>
+      <button type="button" class="toggle-row ${hasSurround ? '' : 'disabled'}" role="switch" data-audio-filter="dynamicRangeCompression"${switchState(settings.filters.dynamicRangeCompression)}${hasSurround ? '' : ' disabled'}><span><strong>Dynamic range compressor</strong><small>${hasSurround ? 'Apply Feishin\'s Default compressor immediately after each surround downmix.' : 'No enabled surround source was detected.'}</small></span><i aria-hidden="true"></i></button>
     </div></fieldset>
     <section class="settings-card locked-options"><div class="card-title"><div><span>OUTPUT CONTENT</span><h3>Required job behavior</h3></div>${icon('check', 22)}</div><div class="job-options">
       <label class="locked-check"><input type="checkbox" checked disabled/> Remux audio into video output</label><label class="locked-check"><input type="checkbox" checked disabled/> Remux subtitles into video output</label><label class="locked-check"><input type="checkbox"${checked(settings.filters.stripMetadata)} disabled/> ${settings.filters.stripMetadata ? 'Strip title, group, and description metadata' : 'Preserve source metadata'}</label>
@@ -2094,8 +2089,8 @@ const bindContentEvents = () => {
     renderWorkspace();
   }));
   document.querySelector<HTMLInputElement>('#quality')?.addEventListener('input', (event) => { settings.quality = (event.currentTarget as HTMLInputElement).value; markCustom(settings); updateCommand(); });
-  document.querySelector<HTMLInputElement>('[data-frame-rate-override]')?.addEventListener('change', (event) => {
-    settings.frameRateOverride = (event.currentTarget as HTMLInputElement).checked;
+  document.querySelector<HTMLButtonElement>('[data-frame-rate-override]')?.addEventListener('click', (event) => {
+    settings.frameRateOverride = toggleSwitch(event.currentTarget as HTMLButtonElement);
     updateCommand();
   });
   document.querySelector<HTMLInputElement>('#encoder-speed')?.addEventListener('input', (event) => {
@@ -2110,9 +2105,9 @@ const bindContentEvents = () => {
     markCustom(settings);
     updateCommand();
   });
-  document.querySelectorAll<HTMLInputElement>('[data-advanced-toggle]').forEach((control) => control.addEventListener('change', () => {
+  document.querySelectorAll<HTMLButtonElement>('[data-advanced-toggle]').forEach((control) => control.addEventListener('click', () => {
     const field = control.dataset.advancedToggle as keyof Pick<AdvancedVideoSettings, 'bFrames' | 'adaptiveBFrames' | 'sceneCutDetection' | 'nonReferenceP' | 'temporalAq'>;
-    settings.advancedVideo[field] = control.checked;
+    settings.advancedVideo[field] = toggleSwitch(control);
     markCustom(settings);
     updateCommand();
   }));
@@ -2287,27 +2282,27 @@ const bindContentEvents = () => {
     }
     renderWorkspace();
   }));
-  document.querySelectorAll<HTMLInputElement>('[data-filter]').forEach((control) => control.addEventListener('change', () => {
+  document.querySelectorAll<HTMLButtonElement>('[data-filter]').forEach((control) => control.addEventListener('click', () => {
     const key = control.dataset.filter as 'autoCrop' | 'toneMapHdrToSdr' | 'pixelFormat10Bit';
-    settings.filters[key] = control.checked;
+    settings.filters[key] = toggleSwitch(control);
     markCustom(settings);
     renderWorkspace();
   }));
-  document.querySelectorAll<HTMLInputElement>('[data-audio-filter]').forEach((control) => control.addEventListener('change', () => {
+  document.querySelectorAll<HTMLButtonElement>('[data-audio-filter]').forEach((control) => control.addEventListener('click', () => {
     const key = control.dataset.audioFilter as 'stripMetadata' | 'downmixToStereo' | 'dynamicRangeCompression' | 'resampleLosslessTo48k' | 'normalizeAudio';
-    settings.filters[key] = control.checked;
+    settings.filters[key] = toggleSwitch(control);
     if (key === 'downmixToStereo') {
       for (const track of source.media?.audio ?? []) {
         const audio = settings.audio[track.index];
         if (!audio || audio.codec === 'copy') continue;
-        audio.bitrate = audioBitrate(audio.codec === 'libopus' ? 'Streaming' : 'Archive', track, control.checked);
+        audio.bitrate = audioBitrate(audio.codec === 'libopus' ? 'Streaming' : 'Archive', track, settings.filters.downmixToStereo);
       }
     }
     markCustom(settings);
     renderWorkspace();
   }));
-  document.querySelector<HTMLInputElement>('[data-video-profile="h264-high"]')?.addEventListener('change', (event) => {
-    settings.encoderProfile = (event.currentTarget as HTMLInputElement).checked ? 'high' : '';
+  document.querySelector<HTMLButtonElement>('[data-video-profile="h264-high"]')?.addEventListener('click', (event) => {
+    settings.encoderProfile = toggleSwitch(event.currentTarget as HTMLButtonElement) ? 'high' : '';
     markCustom(settings);
     renderWorkspace();
   });
