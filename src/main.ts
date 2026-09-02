@@ -11,7 +11,9 @@ import {
   startupUpdateShouldContinue, UpdateCheckState,
 } from './app-update';
 import { initializeLogger, logActivity, readLog, rotateLogForUpdate } from './app-logger';
-import { cleanupPreviousInstall } from './install-cleanup';
+import {
+  cleanupPreviousInstall, installCleanupTargets, scheduleInstallCleanupAfterExit,
+} from './install-cleanup';
 import { detectHardwareCapabilities } from './hardware-capabilities';
 import { cancelEncoding, cancelEncodingAndWait, isEncodingActive, startEncodeQueue } from './encode-runner';
 import { analyzeVisual, cleanupPreviews, initializePreviewStorage, releasePreviews } from './media-analysis';
@@ -54,11 +56,14 @@ const handleSquirrelEvent = () => {
     return true;
   }
   if (event === '--squirrel-updated') {
-    // Squirrel still owns the install tree during this event. The normal first launch
-    // cleans older versions after its splash renderer is ready.
-    void rotateLogForUpdate(app.getVersion())
-      .catch(() => undefined)
-      .finally(() => runSquirrel([`--createShortcut=${target}`]));
+    // Squirrel and Electron can retain app.asar handles throughout this event. Queue
+    // verified older versions for deletion by a detached helper after both have exited.
+    void (async () => {
+      const targets = await installCleanupTargets(path.dirname(process.execPath)).catch(() => []);
+      scheduleInstallCleanupAfterExit(targets);
+      await rotateLogForUpdate(app.getVersion()).catch(() => undefined);
+      runSquirrel([`--createShortcut=${target}`]);
+    })();
     return true;
   }
   if (event === '--squirrel-uninstall') {
@@ -145,12 +150,21 @@ const initializeStartupInstallCleanup = (webContents: Electron.WebContents) => {
   }
   startupInstallCleanup = (async () => {
     try {
-      const removed = await cleanupPreviousInstall(path.dirname(process.execPath), ({ completed, total }) => {
+      const result = await cleanupPreviousInstall(path.dirname(process.execPath), ({ completed, total }) => {
         const message = `Removing previous installation files · ${completed + 1} of ${total}`;
         logActivity('INFO', 'install.cleanup.progress', { completed, total });
         sendStartupProgress(webContents, message, 'verifying');
       });
-      logActivity('INFO', 'install.cleanup.completed', { removed });
+      const failedTargets = result.failures.map(({ target }) => target);
+      const deferred = scheduleInstallCleanupAfterExit(failedTargets);
+      for (const failure of result.failures) {
+        logActivity('ERROR', 'install.cleanup.deferred', { ...failure, deferred });
+      }
+      logActivity('INFO', 'install.cleanup.completed', {
+        removed: result.removed,
+        deferred,
+        deferredTargets: deferred ? failedTargets : [],
+      });
     } catch (error) {
       logActivity('ERROR', 'install.cleanup.failed', {
         error: error instanceof Error ? error.message : String(error),
