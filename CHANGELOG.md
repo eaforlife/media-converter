@@ -4,6 +4,14 @@ All notable changes to EA Media Tools are documented here.
 
 ## [Unreleased]
 
+## [2.6.4] - 2026-09-02
+
+### Fixed
+
+- Never remove application directories while Squirrel owns an update transaction, preventing cleanup from racing the updater or deleting a newly staged version.
+- Delete only `app-<version>` directories older than the running application, preserving the current directory and every newer staged directory.
+- Run first-start cleanup after the splash renderer is visible, process old directories sequentially, and use short bounded lock retries so cleanup cannot hide the UI or create prolonged parallel disk activity.
+
 ## [2.6.3] - 2026-09-02
 
 ### Added
@@ -386,6 +394,7 @@ All notable changes to EA Media Tools are documented here.
 - Convert crop offsets to CUVID edge values with division by two and floor rounding.
 - Cancel all active parallel encodes and interrupt pending cooldowns when the queue is stopped or a job fails.
 
+[2.6.4]: https://github.com/eaforlife/media-converter/compare/v2.6.3...v2.6.4
 [2.6.3]: https://github.com/eaforlife/media-converter/compare/v2.6.2...v2.6.3
 [2.6.2]: https://github.com/eaforlife/media-converter/compare/v2.6.1...v2.6.2
 [2.6.1]: https://github.com/eaforlife/media-converter/compare/v2.6.0...v2.6.1
