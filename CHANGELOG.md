@@ -4,6 +4,11 @@ All notable changes to EA Media Tools are documented here.
 
 ## [Unreleased]
 
+### Changed
+
+- Set the Streaming bitrate buffer multiplier to 1x.
+- Disable spatial AQ and enable temporal AQ for Streaming sources at 720p and below, including the inherited 360p Cellular delivery stack, while preserving direct Cellular HEVC defaults.
+
 ## [2.6.8] - 2026-09-03
 
 ### Fixed
