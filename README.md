@@ -2,7 +2,7 @@
 
 EA Media Tools is a desktop video and audio converter powered by Jellyfin FFmpeg. It inspects video, audio, subtitle, chapter, HDR, and Dolby Vision metadata; selects hardware or CPU processing; and runs queued conversions with live progress information.
 
-Version 2.6.4, codename **jaguar**, is the current stable release. It supports video files, short music videos with attached artwork, and recursive audio libraries. Hardware acceleration is enabled by default but can be disabled for CPU video encoding and decoding.
+Version 2.6.5, codename **jaguar**, is the current stable release. It supports video files, short music videos with attached artwork, and recursive audio libraries. Hardware acceleration is enabled by default but can be disabled for CPU video encoding and decoding.
 
 ## Download
 
@@ -12,7 +12,7 @@ Choose the asset that matches your operating system and CPU:
 
 | System | Intel/AMD 64-bit | ARM 64-bit |
 | --- | --- | --- |
-| Windows | `EA-Media-Tools-2.6.4-x64-Setup.exe` | `EA-Media-Tools-2.6.4-arm64-Setup.exe` |
+| Windows | `EA-Media-Tools-2.6.5-x64-Setup.exe` | Not supported |
 | macOS | ZIP containing `darwin-x64` | ZIP containing `darwin-arm64` for Apple silicon |
 | Debian/Ubuntu | `.deb` containing `amd64` | `.deb` containing `arm64` |
 
@@ -41,7 +41,7 @@ The macOS app is not signed or notarized. To uninstall it, quit the app and move
 Install the downloaded package from a terminal. Replace the filename with the asset you downloaded:
 
 ```bash
-sudo apt install ./ea-media-tools_2.6.4_amd64.deb
+sudo apt install ./ea-media-tools_2.6.5_amd64.deb
 ```
 
 ARM64 systems use the package ending in `arm64.deb`. Launch **EA Media Tools** from the desktop application menu. Remove it with:
@@ -98,9 +98,9 @@ Open the gear menu and choose **View Change Log** to read the installed version'
 
 ### Application updates
 
-Windows x64 builds check the public Squirrel feed at startup and every 15 minutes in the background. When startup detects a new version, all other initialization remains paused on the splash screen through the download and until the update prompt is visible and answered. **Restart and update** installs immediately after cleanly cancelling active work. **Later** continues loading the app and installs the downloaded update when the app exits. **Versions 0.3.0 and 0.3.1 use the repository's former URL and must be upgraded manually once.** Windows ARM64 and unsigned macOS builds should download new releases manually; Linux updates are provided through the installed package manager.
+Windows x64 builds check the public Squirrel feed at startup and every 15 minutes in the background. When startup detects a new version, all other initialization remains paused on the splash screen through the download and until the update prompt is visible and answered. **Restart and update** installs immediately after cleanly cancelling active work. **Later** continues loading the app and installs the downloaded update when the app exits. **Versions 0.3.0 and 0.3.1 use the repository's former URL and must be upgraded manually once.** Windows ARM64 builds are no longer produced. Unsigned macOS builds should download new releases manually; Linux updates are provided through the installed package manager.
 
-Every packaged Windows startup and update installation recursively removes obsolete `app-<version>` directories and retries locked remnants up to ten times. Only the running version is preserved, including when an older directory contains nothing except `resources/app.asar`. Logs archived by an earlier version are deleted, and the active runtime log is reset when its recorded application version differs from the current release.
+On every normal packaged Windows startup, the splash renderer becomes visible before obsolete `app-<version>` directories are removed sequentially. Only versions older than the running application are eligible; the current and any newer staged versions are preserved. Locked remnants receive two short retries and are otherwise left for a later launch so cleanup cannot hold startup indefinitely. Cleanup does not run while Squirrel owns an update transaction. Logs archived by an earlier version are deleted, and the active runtime log is reset when its recorded application version differs from the current release.
 
 Auto Scale chooses an output profile from the source resolution. Selecting a scale explicitly applies that output profile's dimensions, bitrate limits, and buffer to the active built-in preset. When auto-crop removes black bars, the app derives an even output height from the cropped display aspect ratio before sending the dimensions to CUDA, QSV, AMF, VA-API, VideoToolbox, or a CPU encoder. On NVIDIA, a matching CUVID decoder crops in-place without leaving GPU memory. If decoder-side crop is unavailable, generic NVDEC uses the protected download, CPU crop, and CUDA upload bridge before CUDA scaling, optional tone mapping, and NVENC output. A genuine hardware-decode failure still retries once with software decoding and the selected NVENC encoder.
 
@@ -121,14 +121,14 @@ The operating-system floor was reviewed on August 18, 2026. Use a release that s
 
 | Operating system | Minimum supported release | Architecture |
 | --- | --- | --- |
-| Windows | Windows 11 24H2 | x64 or ARM64 |
+| Windows | Windows 11 24H2 | x64 |
 | macOS | macOS Sonoma 14 | Intel x64 or Apple silicon ARM64 |
 | Debian | Debian 12 Bookworm LTS | amd64 or arm64 |
 | Ubuntu | Ubuntu 24.04 LTS | amd64 or arm64 |
 
 Windows 11 24H2 Home and Pro receive updates through October 13, 2026, so upgrade to a newer serviced Windows release before that date. Microsoft publishes current dates on the [Windows 11 lifecycle page](https://learn.microsoft.com/en-us/lifecycle/products/windows-11-home-and-pro). Apple was still publishing Sonoma 14 security updates when this requirement was reviewed; see [Apple security releases](https://support.apple.com/100100). Debian 12 LTS is supported through June 30, 2028 according to the [Debian LTS announcement](https://www.debian.org/News/2026/20260712), and Ubuntu 24.04 LTS receives standard security maintenance through May 2029 according to the [Ubuntu release cycle](https://ubuntu.com/about/release-cycle).
 
-ARM64 describes the application and Jellyfin FFmpeg runtime architecture, not guaranteed GPU support. If no supported accelerator is available, disable **Hardware Acceleration** to use CPU video encoding and decoding. Apple silicon can use VideoToolbox when detected.
+On macOS and Linux, ARM64 describes the application and Jellyfin FFmpeg runtime architecture, not guaranteed GPU support. If no supported accelerator is available, disable **Hardware Acceleration** to use CPU video encoding and decoding. Apple silicon can use VideoToolbox when detected.
 
 Also required:
 

@@ -4,6 +4,16 @@ All notable changes to EA Media Tools are documented here.
 
 ## [Unreleased]
 
+## [2.6.5] - 2026-09-02
+
+### Changed
+
+- Build and publish Windows releases for x64 only, removing the Windows ARM64 workflow job to shorten release builds.
+
+### Fixed
+
+- Disable Chromium GPU compositing and the Windows DirectComposition surface path in addition to Electron UI hardware acceleration, preventing the frameless interface from blanking after encoder and advanced-video toggle changes while leaving FFmpeg GPU acceleration available.
+
 ## [2.6.4] - 2026-09-02
 
 ### Fixed
@@ -394,6 +404,7 @@ All notable changes to EA Media Tools are documented here.
 - Convert crop offsets to CUVID edge values with division by two and floor rounding.
 - Cancel all active parallel encodes and interrupt pending cooldowns when the queue is stopped or a job fails.
 
+[2.6.5]: https://github.com/eaforlife/media-converter/compare/v2.6.4...v2.6.5
 [2.6.4]: https://github.com/eaforlife/media-converter/compare/v2.6.3...v2.6.4
 [2.6.3]: https://github.com/eaforlife/media-converter/compare/v2.6.2...v2.6.3
 [2.6.2]: https://github.com/eaforlife/media-converter/compare/v2.6.1...v2.6.2
