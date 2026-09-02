@@ -1,5 +1,20 @@
 import type { MediaInfo, MediaWorkflow, VideoStreamInfo } from './shared-types';
-import type { PreferredVideoCodec } from './presets';
+import type { PreferredVideoCodec, PresetFrameRate } from './presets';
+
+export const NTSC_FILM_FRAME_RATE = '24000/1001';
+
+export const frameRateConversionArguments = (
+  sourceFrameRate: string | null | undefined,
+  configuredFrameRate: PresetFrameRate,
+) => {
+  if (configuredFrameRate === 'passthrough') return [];
+  const sourceRate = Number.parseFloat(sourceFrameRate ?? '');
+  if (!Number.isFinite(sourceRate) || sourceRate <= 24 || sourceRate <= configuredFrameRate) return [];
+  const outputRate = Math.abs(configuredFrameRate - 23.976) < 0.0005
+    ? NTSC_FILM_FRAME_RATE
+    : String(configuredFrameRate);
+  return ['-fps_mode:v:0', 'cfr', '-r:v:0', outputRate];
+};
 
 export const classifyMediaWorkflow = (media: MediaInfo): MediaWorkflow | null => {
   if (!media.video) return media.audio.length ? 'audio' : null;

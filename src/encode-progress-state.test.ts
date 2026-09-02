@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { applyEncodeProgress, canFinishEncodeQueue, createEncodeQueueProgress } from './encode-progress-state.ts';
+import { applyEncodeProgress, canFinishEncodeQueue, createEncodeQueueProgress, rollingBitrateLabel } from './encode-progress-state.ts';
 import type { EncodeJob, EncodeProgress } from './shared-types';
 
 const jobs: EncodeJob[] = [1, 2, 3].map((index) => ({
@@ -76,4 +76,13 @@ test('Done is available only after every job has completed or cancelled', () => 
   }
   completed = applyEncodeProgress(completed, progress('queue-completed', jobs.length));
   assert.equal(canFinishEncodeQueue(completed), true);
+});
+
+test('reports rolling bitrate from consecutive FFmpeg size and timestamp samples', () => {
+  assert.equal(
+    rollingBitrateLabel({ bytes: 1_000_000, seconds: 2 }, { bytes: 2_000_000, seconds: 4 }),
+    '4000kbits/s',
+  );
+  assert.equal(rollingBitrateLabel({ bytes: 10, seconds: 2 }, { bytes: 9, seconds: 4 }), null);
+  assert.equal(rollingBitrateLabel({ bytes: 10, seconds: 2 }, { bytes: 20, seconds: 2 }), null);
 });

@@ -35,13 +35,13 @@ import { applyStreamMetadataPatch, metadataTemporaryPath, streamMetadataChanged,
 import type { EditableStreamMetadata } from './metadata-edit';
 import {
   attachedCoverArtArguments, isH264HighSource, musicVideoEncoderProfile, outputEncoderProfile,
-  shouldDefaultToHevcMain10,
+  frameRateConversionArguments, shouldDefaultToHevcMain10,
 } from './media-workflow';
 import { mp4PlaybackArguments } from './mp4-playback';
 import { consolidatePrimaryDispositions, setPrimaryDisposition } from './stream-dispositions';
 import type {
   AdvancedVideoSettings, AppSettings, AudioStreamInfo, EncodeJob, EncodeProgress, FilterSettings, HardwareCapabilities, RuntimeState, SavedPreset,
-  OutputFormat, ScaleMode, SourceFile, StreamFlags, SubtitleStreamInfo,
+  OutputFormat, ScaleMode, SourceFile, SourceScanProgress, StreamFlags, SubtitleStreamInfo,
 } from './shared-types';
 
 type IconName = 'app' | 'file' | 'folder' | 'plus' | 'queue' | 'play' | 'chevron' |
@@ -111,7 +111,7 @@ let pickerBusy = false;
 let customPresetDraftName = '';
 let sourceMode: 'file' | 'folder' | null = null;
 let folderSeriesLayout: FolderSeriesLayout | null = null;
-let appSettings: AppSettings = { hardwareAcceleration: true, useStableFfmpeg: true, smartFileNaming: true, lastPreset: 'Streaming', lastSourceDirectory: '', customPresets: [], workingPreset: null, separateAudioDirectory: true };
+let appSettings: AppSettings = { hardwareAcceleration: true, useStableFfmpeg: true, simultaneousEncoding: true, smartFileNaming: true, lastPreset: 'Streaming', lastSourceDirectory: '', customPresets: [], workingPreset: null, separateAudioDirectory: true };
 const settingsByPath = new Map<string, JobSettings>();
 let encodeQueueProgress: EncodeQueueProgressState | null = null;
 let encodePageIndex = 0;
@@ -1085,6 +1085,7 @@ const getCommandArguments = (source: SourceFile, requestedOutputPath?: string, f
     else if (main10Output) filters.push('format=p010le');
   }
     if (filters.length) args.push('-filter:v:0', filters.join(','));
+    args.push(...frameRateConversionArguments(video?.frameRate, builtInPreset(settings.preset)?.frameRate ?? 'passthrough'));
     addStreamMetadataArguments(args, 'v', 0, settings.videoMetadata);
   } else if (source.media?.video) {
     args.push('-map', `0:${source.media.video.index}`, '-c:v', 'copy');
@@ -1203,6 +1204,7 @@ const createEncodeJob = (source: SourceFile, queueIndex: number): EncodeJob | nu
     })
     : undefined;
   return {
+    workflow: workflowOf(source),
     sourceName: source.name,
     sourcePath: source.path,
     outputPath,
@@ -1400,7 +1402,7 @@ const showEncodeDialog = (jobs: EncodeJob[]) => {
   modal.className = 'encode-modal';
   modal.innerHTML = `<section><header><div><span id="encode-position"></span><h2 id="encode-source"></h2></div><div class="encode-title-status"><small id="encode-title-elapsed">ELAPSED 00:00:00</small><strong id="encode-percent"></strong></div></header>
     <div class="encode-progress indeterminate" id="encode-progress"><span></span></div>
-    <div class="encode-stats"><div><span>BITRATE</span><strong id="encode-bitrate">—</strong></div><div><span>FPS</span><strong id="encode-fps">—</strong></div><div><span>RUN TIME</span><strong id="encode-runtime">00:00:00</strong></div><div><span>ETA</span><strong id="encode-eta">Calculating…</strong></div></div>
+    <div class="encode-stats"><div><span>CURRENT BITRATE</span><strong id="encode-bitrate">—</strong></div><div><span>FPS</span><strong id="encode-fps">—</strong></div><div><span>RUN TIME</span><strong id="encode-runtime">00:00:00</strong></div><div><span>ETA</span><strong id="encode-eta">Calculating…</strong></div></div>
     <div class="encode-output"><div><span>OUTPUT FILE</span><strong id="encode-output-file"></strong></div><div><span>DIRECTORY</span><strong id="encode-output-directory"></strong></div></div>
     <pre class="encode-error" id="encode-error" hidden></pre>
     <div class="encode-live-console" id="encode-live-console" hidden><div class="encode-live-title"><span><i></i> LIVE FFMPEG OUTPUT</span><small>Current encoding session · paths redacted</small></div><div class="encode-live-output" id="encode-live-output"></div></div>
@@ -1511,7 +1513,7 @@ const startEncoding = async () => {
   if (!jobs.length) { showToast('There are no media files to process'); return; }
   encodingActive = true;
   showEncodeDialog(jobs);
-  const result = await window.mediaAPI.startEncode(jobs).catch((error: unknown) => ({
+  const result = await window.mediaAPI.startEncode(jobs, appSettings.simultaneousEncoding).catch((error: unknown) => ({
     started: false,
     message: error instanceof Error ? error.message : 'Unable to start encoding.',
   }));
@@ -1550,7 +1552,10 @@ const showAppMenu = () => {
   const runtimeSelector = sources.length === 0 && Boolean(document.querySelector('.welcome-shell'))
     ? `<label class="menu-check runtime-channel-toggle"><input id="stable-ffmpeg" type="checkbox"${checked(appSettings.useStableFfmpeg)}/><span><strong>Stable</strong><small>Use the stable Jellyfin FFmpeg runtime</small></span></label>`
     : '';
-  menu.innerHTML = `<div class="menu-identity"><strong>EA Media Tools</strong><span>Version ${escapeHtml(runtimeState?.appVersion ?? '2.5.0')} · ${APP_CODENAME}</span></div>${runtimeSelector}<label class="menu-check"><input id="hardware-acceleration" type="checkbox"${checked(appSettings.hardwareAcceleration)}/><span>Hardware Acceleration</span></label><button id="view-logs">View Logs</button><button id="view-config">View Running Config</button><button id="view-changelog">View Change Log</button><button id="check-update">Check for update</button><button class="danger" id="exit-app">Exit</button>`;
+  const simultaneousSelector = sources.length > 1 && !document.querySelector('.welcome-shell')
+    ? `<label class="menu-check simultaneous-encoding-toggle"><input id="simultaneous-encoding" type="checkbox"${checked(appSettings.simultaneousEncoding)}/><span><strong>Simultaneous encoding</strong><small>Process compatible batch files in parallel</small></span></label>`
+    : '';
+  menu.innerHTML = `<div class="menu-identity"><strong>EA Media Tools</strong><span>Version ${escapeHtml(runtimeState?.appVersion ?? '2.5.0')} · ${APP_CODENAME}</span></div>${runtimeSelector}${simultaneousSelector}<label class="menu-check"><input id="hardware-acceleration" type="checkbox"${checked(appSettings.hardwareAcceleration)}/><span>Hardware Acceleration</span></label><button id="view-logs">View Logs</button><button id="view-config">View Running Config</button><button id="view-changelog">View Change Log</button><button id="check-update">Check for update</button><button class="danger" id="exit-app">Exit</button>`;
   document.body.appendChild(menu);
   menu.addEventListener('click', (event) => event.stopPropagation());
   menu.querySelector<HTMLInputElement>('#stable-ffmpeg')?.addEventListener('change', async (event) => {
@@ -1587,6 +1592,11 @@ const showAppMenu = () => {
       control.disabled = false;
       showToast(error instanceof Error ? error.message : 'Unable to change FFmpeg runtime');
     }
+  });
+  menu.querySelector<HTMLInputElement>('#simultaneous-encoding')?.addEventListener('change', (event) => {
+    appSettings.simultaneousEncoding = (event.currentTarget as HTMLInputElement).checked;
+    void persistAppSettings();
+    showToast(appSettings.simultaneousEncoding ? 'Simultaneous encoding enabled' : 'Encodes will run one at a time');
   });
   menu.querySelector<HTMLInputElement>('#hardware-acceleration')?.addEventListener('change', async (event) => {
     appSettings.hardwareAcceleration = (event.currentTarget as HTMLInputElement).checked;
@@ -1675,7 +1685,7 @@ const setPickerBusy = (busy: boolean, type?: 'file' | 'folder') => {
     progress.className = 'picker-progress';
     progress.setAttribute('role', 'status');
     progress.setAttribute('aria-live', 'polite');
-    progress.innerHTML = `<div class="picker-progress-orbit"><span>${icon(type === 'folder' ? 'folder' : 'file', 28)}</span></div><strong>Inspecting selected ${type === 'folder' ? 'folder' : 'media'}</strong><small>Reading streams, metadata, and conversion details&hellip;</small>`;
+    progress.innerHTML = `<div class="picker-progress-orbit"><span>${icon(type === 'folder' ? 'folder' : 'file', 28)}</span></div><strong id="picker-progress-title">Inspecting selected ${type === 'folder' ? 'folder' : 'media'}</strong><small id="picker-progress-detail">Reading streams, metadata, and conversion details&hellip;</small>`;
     document.body.appendChild(progress);
   }
   document.querySelectorAll<HTMLButtonElement>('button').forEach((button) => {
@@ -1683,9 +1693,27 @@ const setPickerBusy = (busy: boolean, type?: 'file' | 'folder') => {
     else { button.disabled = button.dataset.pickerWasDisabled === 'true'; delete button.dataset.pickerWasDisabled; }
   });
 };
+const updatePickerProgress = (progress: SourceScanProgress) => {
+  if (!pickerBusy) return;
+  const title = document.querySelector<HTMLElement>('#picker-progress-title');
+  const detail = document.querySelector<HTMLElement>('#picker-progress-detail');
+  if (!title || !detail) return;
+  if (progress.phase === 'discovering') {
+    title.textContent = `Scanning folder · ${progress.completed.toLocaleString()} media files found`;
+    detail.textContent = 'Searching subfolders while keeping the app responsive…';
+    return;
+  }
+  const count = `${progress.completed.toLocaleString()} of ${(progress.total ?? 0).toLocaleString()}`;
+  title.textContent = progress.phase === 'indexing' ? `Preparing files · ${count}` : `Inspecting media · ${count}`;
+  detail.textContent = progress.currentName ?? (progress.phase === 'indexing'
+    ? 'Reading file details…'
+    : 'Reading streams, metadata, and conversion details…');
+};
 const requestSources = async (type: 'file' | 'folder') => {
   if (pickerBusy) return [];
   setPickerBusy(true, type);
+  await new Promise<void>((resolve) => window.requestAnimationFrame(() =>
+    window.requestAnimationFrame(() => resolve())));
   try { return type === 'file'
     ? await window.mediaAPI.openFile(appSettings.lastSourceDirectory)
     : await window.mediaAPI.openFolder(appSettings.lastSourceDirectory); }
@@ -2379,6 +2407,7 @@ const addSources = async () => {
 };
 const startApplication = async () => {
   window.mediaAPI.onEncodeProgress(updateEncodeDialog);
+  window.mediaAPI.onSourceScanProgress(updatePickerProgress);
   renderBootstrap();
   const removeProgressListener = window.mediaAPI.onRuntimeProgress((state) => { runtimeState = state; renderBootstrap(state); });
   try {

@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   attachedCoverArtArguments, classifyMediaWorkflow, isH264HighSource, musicVideoEncoderProfile,
-  outputEncoderProfile, shouldDefaultToHevcMain10,
+  frameRateConversionArguments, outputEncoderProfile, shouldDefaultToHevcMain10,
 } from './media-workflow.ts';
 import type { MediaInfo } from './shared-types.ts';
 
@@ -53,4 +53,17 @@ test('streaming HEVC defaults to Main or Main10 from the source characteristics'
   assert.equal(outputEncoderProfile('HEVC', 'main', true), 'main10');
   assert.equal(outputEncoderProfile('H.264', 'high', false), 'high');
   assert.equal(outputEncoderProfile('H.264', '', false), null);
+});
+
+test('configured frame rate only converts faster sources and uses exact NTSC film timing', () => {
+  assert.deepEqual(frameRateConversionArguments('29.97 fps', 23.976), [
+    '-fps_mode:v:0', 'cfr', '-r:v:0', '24000/1001',
+  ]);
+  assert.deepEqual(frameRateConversionArguments('60 fps', 23.976), [
+    '-fps_mode:v:0', 'cfr', '-r:v:0', '24000/1001',
+  ]);
+  assert.deepEqual(frameRateConversionArguments('23.976 fps', 23.976), []);
+  assert.deepEqual(frameRateConversionArguments('24 fps', 23.976), []);
+  assert.deepEqual(frameRateConversionArguments('29.97 fps', 'passthrough'), []);
+  assert.deepEqual(frameRateConversionArguments('Unknown', 23.976), []);
 });

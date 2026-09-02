@@ -2,8 +2,10 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   averageAggregateFps,
+  AUDIO_ENCODE_LIMIT,
   cancelAdaptiveQueueActivity,
   canAddEncodeJob,
+  encodeConcurrencyPlan,
   encoderConcurrencyLimit,
   forceCloseOwnedProcesses,
   initialThroughputConcurrencyLimit,
@@ -46,6 +48,16 @@ test('adaptive concurrency is limited to supported NVENC sessions', () => {
   assert.equal(encoderConcurrencyLimit(Array.from({ length: 20 }, () => job('hevc_nvenc'))), NVENC_SESSION_LIMIT);
   assert.equal(encoderConcurrencyLimit([job('hevc_nvenc'), job('libx265')]), 1);
   assert.equal(encoderConcurrencyLimit([job('h264_qsv'), job('h264_qsv')]), 1);
+});
+
+test('simultaneous encoding runs audio batches at a fixed safe limit and can be disabled', () => {
+  const audioJobs = Array.from({ length: 20 }, (_, index): EncodeJob => ({
+    ...job('libopus'), workflow: 'audio', sourceName: `track-${index}.flac`, args: ['-c:a', 'libopus'],
+  }));
+  assert.deepEqual(encodeConcurrencyPlan(audioJobs, true), { limit: AUDIO_ENCODE_LIMIT, adaptive: false });
+  assert.deepEqual(encodeConcurrencyPlan(audioJobs.slice(0, 2), true), { limit: 2, adaptive: false });
+  assert.deepEqual(encodeConcurrencyPlan(audioJobs, false), { limit: 1, adaptive: false });
+  assert.equal(encoderConcurrencyLimit(Array.from({ length: 20 }, () => job('hevc_nvenc')), false), 1);
 });
 
 test('the ten-second sample uses each active encode average', () => {

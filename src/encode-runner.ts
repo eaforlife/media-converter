@@ -7,11 +7,12 @@ import { BrowserWindow, type WebContents } from 'electron';
 import { logActivity } from './app-logger';
 import { ccextractorArguments, injectClosedCaptionInput } from './closed-caption';
 import {
-  ADAPTIVE_SAMPLE_MS, averageAggregateFps, canAddEncodeJob, cancelAdaptiveQueueActivity, encoderConcurrencyLimit,
+  ADAPTIVE_SAMPLE_MS, averageAggregateFps, canAddEncodeJob, cancelAdaptiveQueueActivity, encodeConcurrencyPlan,
   forceCloseOwnedProcesses, lockThroughputConcurrencyLimit,
 } from './encode-concurrency';
 import { rsgainArguments, successfulNormalizationRoots } from './audio-workflow';
 import { replaceSourceWithMetadataOutput } from './metadata-replacement';
+import { rollingBitrateLabel, type EncodeSizeSample } from './encode-progress-state';
 import type { EncodeJob, EncodeProgress, EncodeStartResult } from './shared-types';
 
 const activeProcesses = new Map<number, ChildProcessWithoutNullStreams>();
@@ -168,6 +169,7 @@ const runRsgain = (
   emit(webContents, {
     phase: 'starting', jobIndex, totalJobs, sourceName: job.sourceName, outputPath: root,
     percent: null, bitrate: '—', fps: '—', runTimeSeconds: 0, etaSeconds: null, speed: '—',
+    command: [rsgainPath, ...args],
     message: 'Normalizing the completed audio library with rsgain.',
   });
   logActivity('INFO', 'rsgain.started', { executable: rsgainPath, args, root });
@@ -231,6 +233,8 @@ const runJob = (
   let stderr = '';
   let block: Record<string, string> = {};
   let settled = false;
+  let previousBitrateSample: EncodeSizeSample | null = null;
+  let intervalBitrate: string | null = null;
 
   const status = (phase: EncodeProgress['phase'], message?: string): EncodeProgress => {
     const encodedSeconds = Number(block.out_time_us) > 0
@@ -246,7 +250,7 @@ const runJob = (
       sourceName: job.sourceName,
       outputPath: job.replaceSourcePath ?? job.outputPath,
       percent: phase === 'completed' ? 100 : percent,
-      bitrate: block.bitrate && block.bitrate !== 'N/A' ? block.bitrate : '—',
+      bitrate: intervalBitrate ?? (block.bitrate && block.bitrate !== 'N/A' ? block.bitrate : '—'),
       fps: block.fps && block.fps !== 'N/A' ? block.fps : '—',
       runTimeSeconds: Math.max(0, (Date.now() - startedAt) / 1000),
       etaSeconds: duration && speed ? Math.max(0, (duration - encodedSeconds) / speed) : null,
@@ -284,6 +288,19 @@ const runJob = (
       const key = line.slice(0, separator);
       block[key] = line.slice(separator + 1);
       if (key === 'progress') {
+        const currentBitrateSample = {
+          bytes: Number(block.total_size),
+          seconds: Number(block.out_time_us) > 0
+            ? Number(block.out_time_us) / 1_000_000
+            : parseClock(block.out_time),
+        };
+        if (Number.isFinite(currentBitrateSample.bytes) && currentBitrateSample.bytes >= 0
+          && Number.isFinite(currentBitrateSample.seconds) && currentBitrateSample.seconds >= 0) {
+          if (previousBitrateSample) {
+            intervalBitrate = rollingBitrateLabel(previousBitrateSample, currentBitrateSample) ?? intervalBitrate;
+          }
+          previousBitrateSample = currentBitrateSample;
+        }
         const fps = Number(block.fps);
         if (block.progress !== 'end' && Number.isFinite(fps) && fps > 0) onFps?.(fps);
         emit(webContents, status(block.progress === 'end' ? 'completed' : 'encoding'));
@@ -373,6 +390,7 @@ export const startEncodeQueue = async (
   rsgainPath: string,
   jobs: EncodeJob[],
   webContents: WebContents,
+  simultaneousEncoding = true,
 ): Promise<EncodeStartResult> => {
   if (queueRunning) return { started: false, message: 'An encoding queue is already running.' };
   if (!ffmpegPath) return { started: false, message: 'FFmpeg is unavailable.' };
@@ -417,10 +435,12 @@ export const startEncodeQueue = async (
   queueFailureMessage = undefined;
   cancelledJobs.clear();
   const queueStartedAt = Date.now();
-  const concurrencyLimit = encoderConcurrencyLimit(jobs);
+  const concurrency = encodeConcurrencyPlan(jobs, simultaneousEncoding);
+  const concurrencyLimit = concurrency.limit;
   const useCooldown = jobs.some((job) => job.args.includes('-c:v'));
   logActivity('INFO', 'ffmpeg.queue.started', {
-    jobs: jobs.length, concurrency: 1, concurrencyLimit, adaptiveSampleSeconds: 10,
+    jobs: jobs.length, concurrency: concurrency.adaptive ? 1 : concurrencyLimit, concurrencyLimit,
+    simultaneousEncoding, adaptive: concurrency.adaptive, adaptiveSampleSeconds: concurrency.adaptive ? 10 : 0,
     minimumFpsPerJob: 200, cooldownSeconds: useCooldown ? 10 : 0,
   });
 
@@ -428,7 +448,7 @@ export const startEncodeQueue = async (
     try {
       let nextIndex = 0;
       let queueHadCancelledJob = false;
-      let targetConcurrency = 1;
+      let targetConcurrency = concurrency.adaptive ? 1 : concurrencyLimit;
       let throughputConcurrencyLimit: number | null = null;
       let hardwareDecodeFallbackRequested = false;
       const fpsWindows = new Map<number, number[]>();
@@ -542,9 +562,9 @@ export const startEncodeQueue = async (
         }
       };
       const launchWorker = () => { workers.push(runWorker()); };
-      launchWorker();
+      for (let workerIndex = 0; workerIndex < targetConcurrency; workerIndex += 1) launchWorker();
       while (
-        concurrencyLimit > 1 && nextIndex < jobs.length
+        concurrency.adaptive && concurrencyLimit > 1 && nextIndex < jobs.length
         && targetConcurrency < (throughputConcurrencyLimit ?? concurrencyLimit)
         && !hardwareDecodeFallbackRequested && !cancellationRequested && !queueFailureRequested
       ) {

@@ -447,10 +447,10 @@ button, input, select, .app-menu { -webkit-app-region: no-drag; }
 .app-menu > button:hover, .menu-check:hover { background: #20252d; }
 .app-menu > button.danger { color: #ee9a8c; }
 .menu-check input { width: 18px; height: 18px; flex: 0 0 auto; accent-color: var(--accent); }
-.runtime-channel-toggle { border-bottom: 1px solid #292f38; }
-.runtime-channel-toggle > span { display: flex; flex-direction: column; gap: 3px; }
-.runtime-channel-toggle strong { color: #e3e7ed; font-size: 15px; }
-.runtime-channel-toggle small { color: #747e8b; font-size: 11px; }
+.runtime-channel-toggle, .simultaneous-encoding-toggle { border-bottom: 1px solid #292f38; }
+.runtime-channel-toggle > span, .simultaneous-encoding-toggle > span { display: flex; flex-direction: column; gap: 3px; }
+.runtime-channel-toggle strong, .simultaneous-encoding-toggle strong { color: #e3e7ed; font-size: 15px; }
+.runtime-channel-toggle small, .simultaneous-encoding-toggle small { color: #747e8b; font-size: 11px; }
 
 .media-preview img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
 .save-preset { padding: 10px 13px; border: 1px solid #343b46; border-radius: 7px; color: #aeb6c1; background: #191e25; font-size: 15px; }

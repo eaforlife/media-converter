@@ -6,6 +6,7 @@ export const REQUIRED_BUILT_IN_PRESET_NAMES = ['Archive', 'Regular', 'Streaming'
 export type BuiltInPresetName = typeof REQUIRED_BUILT_IN_PRESET_NAMES[number];
 export type PreferredVideoCodec = 'H.264' | 'HEVC' | 'AV1';
 export type PresetAudioCodec = 'aac' | 'opus';
+export type PresetFrameRate = 'passthrough' | number;
 export type EncoderFamily = 'nvenc' | 'amf' | 'qsv' | 'vaapi' | 'videotoolbox' | 'software';
 export const OUTPUT_TIERS: readonly OutputTier[] = ['4k', '1080p', '720p', '360p'];
 export const ENCODER_FAMILIES: readonly EncoderFamily[] = ['nvenc', 'amf', 'qsv', 'vaapi', 'videotoolbox', 'software'];
@@ -32,6 +33,7 @@ type OutputTierDefaults = {
 export type BuiltInPresetDefinition = {
   name: string;
   description: string;
+  frameRate: PresetFrameRate;
   format: 'mp4' | 'mkv';
   preferredVideoCodec: PreferredVideoCodec;
   encoderSpeed: number;
@@ -91,6 +93,15 @@ const resolutionValue = (value: string, label: string): readonly [string, string
 const enumValue = <T extends string>(value: string, allowed: readonly T[], label: string): T => {
   if (allowed.includes(value as T)) return value as T;
   throw new Error(`${label} must be one of: ${allowed.join(', ')}`);
+};
+
+const frameRateValue = (value: string, label: string): PresetFrameRate => {
+  if (value === 'passthrough') return value;
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed < 1 || parsed > 240) {
+    throw new Error(`${label} must be passthrough or a number from 1 to 240`);
+  }
+  return parsed;
 };
 
 export const parseIniSections = (ini: string) => {
@@ -170,6 +181,7 @@ export const parseBuiltInPresetConfiguration = (ini: string): BuiltInPresetConfi
     parsed[name] = {
       name,
       description: get('description'),
+      frameRate: frameRateValue(optional('frame_rate') || 'passthrough', label('frame_rate')),
       format: enumValue(get('format'), ['mp4', 'mkv'], label('format')),
       preferredVideoCodec: enumValue(get('preferred_video_codec'), ['H.264', 'HEVC', 'AV1'], label('preferred_video_codec')),
       encoderSpeed: numberValue(get('encoder_speed'), label('encoder_speed'), 1, 7),

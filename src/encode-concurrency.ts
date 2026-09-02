@@ -6,14 +6,27 @@ type OwnedProcess = { exitCode: number | null; signalCode: NodeJS.Signals | null
 export const ADAPTIVE_SAMPLE_MS = 10_000;
 export const MINIMUM_JOB_FPS = 200;
 export const NVENC_SESSION_LIMIT = 12;
+export const AUDIO_ENCODE_LIMIT = 4;
 
 export const isNvencJob = (job: EncodeJob) => job.args.some((argument, index) =>
   argument === '-c:v' && job.args[index + 1]?.endsWith('_nvenc'));
 
-export const encoderConcurrencyLimit = (jobs: readonly EncodeJob[]) =>
-  jobs.length > 1 && jobs.every(isNvencJob)
-    ? Math.min(jobs.length, NVENC_SESSION_LIMIT)
-    : 1;
+export const encodeConcurrencyPlan = (
+  jobs: readonly EncodeJob[],
+  simultaneousEncoding = true,
+): { limit: number; adaptive: boolean } => {
+  if (!simultaneousEncoding || jobs.length <= 1) return { limit: 1, adaptive: false };
+  if (jobs.every(isNvencJob)) {
+    return { limit: Math.min(jobs.length, NVENC_SESSION_LIMIT), adaptive: true };
+  }
+  if (jobs.every((job) => job.workflow === 'audio')) {
+    return { limit: Math.min(jobs.length, AUDIO_ENCODE_LIMIT), adaptive: false };
+  }
+  return { limit: 1, adaptive: false };
+};
+
+export const encoderConcurrencyLimit = (jobs: readonly EncodeJob[], simultaneousEncoding = true) =>
+  encodeConcurrencyPlan(jobs, simultaneousEncoding).limit;
 
 export const averageAggregateFps = (windows: Iterable<readonly number[]>) => {
   let total = 0;

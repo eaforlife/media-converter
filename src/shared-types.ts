@@ -167,6 +167,7 @@ export type SavedPreset = {
 export type AppSettings = {
   hardwareAcceleration: boolean;
   useStableFfmpeg: boolean;
+  simultaneousEncoding: boolean;
   smartFileNaming: boolean;
   lastPreset: string;
   lastSourceDirectory: string;
@@ -206,7 +207,15 @@ export type RuntimeState = {
   ccextractorVersion: string | null;
 };
 
+export type SourceScanProgress = {
+  phase: 'discovering' | 'indexing' | 'inspecting';
+  completed: number;
+  total: number | null;
+  currentName?: string;
+};
+
 export type EncodeJob = {
+  workflow?: MediaWorkflow;
   sourceName: string;
   sourcePath: string;
   outputPath: string;

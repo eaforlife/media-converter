@@ -1,7 +1,7 @@
 import { contextBridge, ipcRenderer } from 'electron';
 import type {
   AppSettings, EncodeJob, EncodeProgress, EncodeStartResult, HardwareCapabilities, RuntimeState, SavedPreset, SourceFile,
-  SubtitleImportResult,
+  SourceScanProgress, SubtitleImportResult,
 } from './shared-types';
 import type { BuiltInPresetConfiguration } from './presets';
 
@@ -38,7 +38,8 @@ contextBridge.exposeInMainWorld('mediaAPI', {
     ipcRenderer.invoke('runtime:initialize', useStableFfmpeg),
   selectRuntimeChannel: (useStableFfmpeg: boolean): Promise<RuntimeState> =>
     ipcRenderer.invoke('runtime:select-channel', useStableFfmpeg),
-  startEncode: (jobs: EncodeJob[]): Promise<EncodeStartResult> => ipcRenderer.invoke('encode:start', jobs),
+  startEncode: (jobs: EncodeJob[], simultaneousEncoding: boolean): Promise<EncodeStartResult> =>
+    ipcRenderer.invoke('encode:start', jobs, simultaneousEncoding),
   cancelEncode: (jobIndex?: number): Promise<boolean> => ipcRenderer.invoke('encode:cancel', jobIndex),
   onEncodeProgress: (callback: (progress: EncodeProgress) => void) => {
     const listener = (_event: Electron.IpcRendererEvent, progress: EncodeProgress) => callback(progress);
@@ -49,6 +50,11 @@ contextBridge.exposeInMainWorld('mediaAPI', {
     const listener = (_event: Electron.IpcRendererEvent, state: RuntimeState) => callback(state);
     ipcRenderer.on('runtime:progress', listener);
     return () => ipcRenderer.removeListener('runtime:progress', listener);
+  },
+  onSourceScanProgress: (callback: (progress: SourceScanProgress) => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, progress: SourceScanProgress) => callback(progress);
+    ipcRenderer.on('source:scan-progress', listener);
+    return () => ipcRenderer.removeListener('source:scan-progress', listener);
   },
 });
 
@@ -81,10 +87,11 @@ declare global {
       initializeAppUpdate: () => Promise<void>;
       initializeRuntime: (useStableFfmpeg: boolean) => Promise<RuntimeState>;
       selectRuntimeChannel: (useStableFfmpeg: boolean) => Promise<RuntimeState>;
-      startEncode: (jobs: EncodeJob[]) => Promise<EncodeStartResult>;
+      startEncode: (jobs: EncodeJob[], simultaneousEncoding: boolean) => Promise<EncodeStartResult>;
       cancelEncode: (jobIndex?: number) => Promise<boolean>;
       onEncodeProgress: (callback: (progress: EncodeProgress) => void) => () => void;
       onRuntimeProgress: (callback: (state: RuntimeState) => void) => () => void;
+      onSourceScanProgress: (callback: (progress: SourceScanProgress) => void) => () => void;
     };
   }
 }

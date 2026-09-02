@@ -34,6 +34,18 @@ export type EncodeQueueProgressState = {
 
 const EMPTY_STAT = '—';
 
+export type EncodeSizeSample = { bytes: number; seconds: number };
+
+export const rollingBitrateLabel = (previous: EncodeSizeSample, current: EncodeSizeSample) => {
+  const elapsedSeconds = current.seconds - previous.seconds;
+  const encodedBytes = current.bytes - previous.bytes;
+  if (!Number.isFinite(elapsedSeconds) || !Number.isFinite(encodedBytes) || elapsedSeconds <= 0 || encodedBytes < 0) {
+    return null;
+  }
+  const kilobitsPerSecond = (encodedBytes * 8) / elapsedSeconds / 1000;
+  return `${kilobitsPerSecond >= 100 ? kilobitsPerSecond.toFixed(0) : kilobitsPerSecond.toFixed(1)}kbits/s`;
+};
+
 export const createEncodeQueueProgress = (jobs: EncodeJob[]): EncodeQueueProgressState => ({
   status: 'running',
   jobs: jobs.map((job, index) => ({

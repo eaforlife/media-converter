@@ -1,6 +1,7 @@
-import { app, autoUpdater, BrowserWindow, dialog, ipcMain, net, shell } from 'electron';
+import { app, autoUpdater, BrowserWindow, dialog, ipcMain, net, shell, type WebContents } from 'electron';
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { updateElectronApp, UpdateSourceType } from 'update-electron-app';
 import { APP_NAME, APP_UPDATE_REPOSITORY } from './config';
@@ -24,7 +25,10 @@ import {
   UTF8_SUBTITLE_EXTENSIONS,
 } from './external-subtitles';
 import { shouldDisableUiHardwareAcceleration } from './ui-rendering';
-import type { AppSettings, EncodeJob, HardwareCapabilities, RuntimeState, SourceFile, SubtitleImportResult } from './shared-types';
+import { boundedMap, FILE_INDEX_LIMIT, inspectionConcurrency } from './source-scanning';
+import type {
+  AppSettings, EncodeJob, HardwareCapabilities, RuntimeState, SourceFile, SourceScanProgress, SubtitleImportResult,
+} from './shared-types';
 
 // Electron's UI compositor is independent of FFmpeg's CUDA/NVDEC/NVENC path.
 // Software UI rendering avoids Windows GPU-driver resets that can blank the frameless window.
@@ -231,15 +235,15 @@ const initializeStartupAppUpdate = (webContents: Electron.WebContents) => {
   return startupUpdateCheck;
 };
 
-const lyricFilesFor = (filePath: string) => {
+const lyricFilesFor = async (filePath: string) => {
   const parsed = path.parse(filePath);
   const candidate = path.join(parsed.dir, `${parsed.name}.lrc`);
-  return fs.existsSync(candidate) ? [candidate] : [];
+  return fs.promises.access(candidate).then(() => [candidate], () => [] as string[]);
 };
 
-const toSourceFile = (filePath: string, sourceRoot?: string): SourceFile | null => {
+const toSourceFile = async (filePath: string, sourceRoot?: string): Promise<SourceFile | null> => {
   try {
-    const stat = fs.statSync(filePath);
+    const [stat, lyricPaths] = await Promise.all([fs.promises.stat(filePath), lyricFilesFor(filePath)]);
     if (!stat.isFile() || !MEDIA_EXTENSIONS.has(path.extname(filePath).toLowerCase())) return null;
     const resolvedRoot = sourceRoot ? path.resolve(sourceRoot) : path.dirname(path.resolve(filePath));
     return {
@@ -250,14 +254,14 @@ const toSourceFile = (filePath: string, sourceRoot?: string): SourceFile | null 
       media: null,
       sourceRoot: resolvedRoot,
       relativePath: path.relative(resolvedRoot, filePath),
-      lyricPaths: lyricFilesFor(filePath),
+      lyricPaths,
     };
   } catch {
     return null;
   }
 };
 
-const inspectSource = async (file: SourceFile): Promise<SourceFile | null> => {
+const inspectSource = async (file: SourceFile, detailedLogging: boolean): Promise<SourceFile | null> => {
   const ffprobePath = activeFfprobe();
   const ffmpegPath = activeFfmpeg();
   if (!ffprobePath) {
@@ -269,20 +273,22 @@ const inspectSource = async (file: SourceFile): Promise<SourceFile | null> => {
     const workflow = classifyMediaWorkflow(media);
     if (!workflow) return null;
     const preview = media.video && ffmpegPath ? await analyzeVisual(ffmpegPath, file.path, media) : {};
-    logActivity('INFO', 'ffprobe.output', {
-      path: file.path,
-      format: media.format,
-      duration: media.duration,
-      video: media.video,
-      audioTracks: media.audio,
-      subtitleTracks: media.subtitles,
-      chapters: media.chapterCount,
-    });
-    logActivity('INFO', 'ffmpeg.visual-analysis.output', {
-      path: file.path,
-      suggestedCrop: media.suggestedCrop,
-      previewCreated: 'previewId' in preview && Boolean(preview.previewId),
-    });
+    if (detailedLogging) {
+      logActivity('INFO', 'ffprobe.output', {
+        path: file.path,
+        format: media.format,
+        duration: media.duration,
+        video: media.video,
+        audioTracks: media.audio,
+        subtitleTracks: media.subtitles,
+        chapters: media.chapterCount,
+      });
+      logActivity('INFO', 'ffmpeg.visual-analysis.output', {
+        path: file.path,
+        suggestedCrop: media.suggestedCrop,
+        previewCreated: 'previewId' in preview && Boolean(preview.previewId),
+      });
+    }
     return { ...file, media, workflow, ...preview };
   } catch (error) {
     logActivity('ERROR', 'ffprobe.error', {
@@ -296,19 +302,20 @@ const inspectSource = async (file: SourceFile): Promise<SourceFile | null> => {
   }
 };
 
-const inspectSources = async (files: SourceFile[]) => {
-  const inspected = new Array<SourceFile | null>(files.length).fill(null);
-  let nextIndex = 0;
-  const worker = async () => {
-    while (nextIndex < files.length) {
-      const index = nextIndex;
-      nextIndex += 1;
-      inspected[index] = await inspectSource(files[index]);
-    }
-  };
-  const workerCount = Math.min(2, files.length);
-  await Promise.all(Array.from({ length: workerCount }, worker));
-  return inspected.filter((file): file is SourceFile => file !== null);
+const inspectSources = async (
+  files: SourceFile[],
+  onProgress?: (completed: number, total: number, file: SourceFile) => void,
+) => {
+  const audioOnly = files.every((file) => AUDIO_EXTENSIONS.has(path.extname(file.path).toLowerCase()));
+  const concurrency = inspectionConcurrency(files.length, audioOnly, os.availableParallelism());
+  const detailedLogging = files.length <= 100;
+  logActivity('INFO', 'source.inspection.started', { files: files.length, audioOnly, concurrency });
+  const inspected = await boundedMap(
+    files, concurrency, (file) => inspectSource(file, detailedLogging), onProgress,
+  );
+  const valid = inspected.filter((file): file is SourceFile => file !== null);
+  logActivity('INFO', 'source.inspection.completed', { requested: files.length, accepted: valid.length, concurrency });
+  return valid;
 };
 
 const attachExternalSubtitles = (files: SourceFile[], subtitlePaths: readonly string[]) => files.map((file) => {
@@ -325,25 +332,27 @@ const attachExternalSubtitles = (files: SourceFile[], subtitlePaths: readonly st
   return { ...file, media: { ...file.media, subtitles: [...file.media.subtitles, ...external] } };
 });
 
-const readableUtf8SubtitlePaths = (subtitlePaths: readonly string[]) => subtitlePaths.filter((subtitlePath) => {
-  try {
-    return isSupportedExternalSubtitle(subtitlePath) && isUtf8SubtitleData(fs.readFileSync(subtitlePath));
-  } catch {
-    return false;
-  }
-});
-
-const subtitlesBeside = (filePaths: readonly string[]) => {
-  const paths: string[] = [];
-  for (const directory of new Set(filePaths.map((filePath) => path.dirname(filePath)))) {
+const readableUtf8SubtitlePaths = async (subtitlePaths: readonly string[]) => {
+  const checkedPaths = await boundedMap(subtitlePaths, 16, async (subtitlePath) => {
     try {
-      for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
-        if (entry.isFile() && isSupportedExternalSubtitle(entry.name)) paths.push(path.join(directory, entry.name));
-      }
+      return isSupportedExternalSubtitle(subtitlePath) && isUtf8SubtitleData(await fs.promises.readFile(subtitlePath))
+        ? subtitlePath
+        : null;
     } catch {
-      continue;
+      return null;
     }
-  }
+  });
+  return checkedPaths.filter((subtitlePath): subtitlePath is string => subtitlePath !== null);
+};
+
+const subtitlesBeside = async (filePaths: readonly string[]) => {
+  const paths: string[] = [];
+  await Promise.all([...new Set(filePaths.map((filePath) => path.dirname(filePath)))].map(async (directory) => {
+    const entries = await fs.promises.readdir(directory, { withFileTypes: true }).catch(() => []);
+    for (const entry of entries) {
+      if (entry.isFile() && isSupportedExternalSubtitle(entry.name)) paths.push(path.join(directory, entry.name));
+    }
+  }));
   return readableUtf8SubtitlePaths(paths);
 };
 
@@ -352,21 +361,33 @@ const keepOneWorkflow = (files: SourceFile[]) => {
   return workflow ? files.filter((file) => file.workflow === workflow) : files;
 };
 
-const recursivelyFindMedia = (root: string) => {
+const recursivelyFindMedia = async (root: string, onProgress?: (discovered: number) => void) => {
   const videos: string[] = [];
   const audio: string[] = [];
   const subtitles: string[] = [];
-  const visit = (directory: string) => {
-    for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
-      const fullPath = path.join(directory, entry.name);
-      if (entry.isDirectory() && entry.name.toLowerCase() !== 'converted') visit(fullPath);
-      else if (entry.isFile() && VIDEO_EXTENSIONS.has(path.extname(entry.name).toLowerCase())) videos.push(fullPath);
-      else if (entry.isFile() && AUDIO_EXTENSIONS.has(path.extname(entry.name).toLowerCase())) audio.push(fullPath);
-      else if (entry.isFile() && isSupportedExternalSubtitle(entry.name)) subtitles.push(fullPath);
+  const directories = [root];
+  while (directories.length) {
+    const batch = directories.splice(0, 16);
+    const listings = await Promise.all(batch.map(async (directory) => ({
+      directory,
+      entries: await fs.promises.readdir(directory, { withFileTypes: true }).catch(() => []),
+    })));
+    for (const { directory, entries } of listings) {
+      for (const entry of entries) {
+        const fullPath = path.join(directory, entry.name);
+        if (entry.isDirectory() && entry.name.toLowerCase() !== 'converted') directories.push(fullPath);
+        else if (entry.isFile() && VIDEO_EXTENSIONS.has(path.extname(entry.name).toLowerCase())) videos.push(fullPath);
+        else if (entry.isFile() && AUDIO_EXTENSIONS.has(path.extname(entry.name).toLowerCase())) audio.push(fullPath);
+        else if (entry.isFile() && isSupportedExternalSubtitle(entry.name)) subtitles.push(fullPath);
+      }
     }
-  };
-  visit(root);
-  return { videos, audio, subtitles: readableUtf8SubtitlePaths(subtitles) };
+    onProgress?.(videos.length + audio.length);
+  }
+  return { videos, audio, subtitles: await readableUtf8SubtitlePaths(subtitles) };
+};
+
+const emitSourceScanProgress = (webContents: WebContents, progress: SourceScanProgress) => {
+  if (!webContents.isDestroyed()) webContents.send('source:scan-progress', progress);
 };
 
 const checkForAppUpdate = () => {
@@ -557,9 +578,18 @@ const registerIpc = () => {
       : await dialog.showOpenDialog(options);
     if (result.canceled) return [];
     logActivity('INFO', 'source.file-selection', { count: result.filePaths.length });
-    const files = result.filePaths.map((filePath) => toSourceFile(filePath)).filter((file): file is SourceFile => file !== null);
-    const inspected = keepOneWorkflow(await inspectSources(files));
-    return attachExternalSubtitles(inspected, subtitlesBeside(result.filePaths));
+    const indexed = await boundedMap(
+      result.filePaths,
+      FILE_INDEX_LIMIT,
+      (filePath) => toSourceFile(filePath),
+      (completed, total, filePath) => emitSourceScanProgress(event.sender, {
+        phase: 'indexing', completed, total, currentName: path.basename(filePath),
+      }),
+    );
+    const files = indexed.filter((file): file is SourceFile => file !== null);
+    const inspected = keepOneWorkflow(await inspectSources(files, (completed, total, file) =>
+      emitSourceScanProgress(event.sender, { phase: 'inspecting', completed, total, currentName: file.name })));
+    return attachExternalSubtitles(inspected, await subtitlesBeside(result.filePaths));
   });
 
   ipcMain.handle('source:open-folder', async (event, initialDirectory?: string) => {
@@ -577,12 +607,20 @@ const registerIpc = () => {
 
     try {
       const sourceRoot = result.filePaths[0];
-      const discovered = recursivelyFindMedia(sourceRoot);
+      const discovered = await recursivelyFindMedia(sourceRoot, (completed) =>
+        emitSourceScanProgress(event.sender, { phase: 'discovering', completed, total: null }));
       const selectedPaths = discovered.videos.length ? discovered.videos : discovered.audio;
-      const files = selectedPaths
-        .map((filePath) => toSourceFile(filePath, sourceRoot))
-        .filter((file): file is SourceFile => file !== null);
-      const inspected = keepOneWorkflow(await inspectSources(files));
+      const indexed = await boundedMap(
+        selectedPaths,
+        FILE_INDEX_LIMIT,
+        (filePath) => toSourceFile(filePath, sourceRoot),
+        (completed, total, filePath) => emitSourceScanProgress(event.sender, {
+          phase: 'indexing', completed, total, currentName: path.basename(filePath),
+        }),
+      );
+      const files = indexed.filter((file): file is SourceFile => file !== null);
+      const inspected = keepOneWorkflow(await inspectSources(files, (completed, total, file) =>
+        emitSourceScanProgress(event.sender, { phase: 'inspecting', completed, total, currentName: file.name })));
       return discovered.videos.length ? attachExternalSubtitles(inspected, discovered.subtitles) : inspected;
     } catch {
       return [];
@@ -601,13 +639,13 @@ const registerIpc = () => {
       : await dialog.showOpenDialog(options);
     return result.canceled ? null : result.filePaths[0] ?? null;
   });
-  ipcMain.handle('encode:start', (event, jobs: EncodeJob[]) => {
+  ipcMain.handle('encode:start', (event, jobs: EncodeJob[], simultaneousEncoding = true) => {
     const ffmpegPath = activeFfmpeg();
     const ccextractorPath = runtimeState?.ccextractorAvailable
       ? runtimeState.ccextractorPath
       : '';
     const rsgainPath = runtimeState?.rsgainAvailable ? runtimeState.rsgainPath : '';
-    return startEncodeQueue(ffmpegPath, ccextractorPath, rsgainPath, jobs, event.sender);
+    return startEncodeQueue(ffmpegPath, ccextractorPath, rsgainPath, jobs, event.sender, simultaneousEncoding);
   });
 
   ipcMain.handle('subtitle:import', async (event, sourcePath: string, firstIndex: number): Promise<SubtitleImportResult> => {
@@ -622,7 +660,7 @@ const registerIpc = () => {
       ? await dialog.showOpenDialog(parent, options)
       : await dialog.showOpenDialog(options);
     if (result.canceled) return { tracks: [], rejectedPaths: [] };
-    const validPaths = readableUtf8SubtitlePaths(result.filePaths);
+    const validPaths = await readableUtf8SubtitlePaths(result.filePaths);
     const valid = new Set(validPaths.map((subtitlePath) => path.resolve(subtitlePath).toLocaleLowerCase()));
     const rejectedPaths = result.filePaths.filter((subtitlePath) =>
       !valid.has(path.resolve(subtitlePath).toLocaleLowerCase()));

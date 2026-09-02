@@ -6,6 +6,7 @@ import type { AdvancedVideoSettings, AppSettings, FilterSettings, SavedPreset, S
 const DEFAULT_SETTINGS: AppSettings = {
   hardwareAcceleration: true,
   useStableFfmpeg: true,
+  simultaneousEncoding: true,
   smartFileNaming: true,
   lastPreset: 'Streaming',
   lastSourceDirectory: '',
@@ -125,6 +126,7 @@ const serialize = (settings: AppSettings) => `<?xml version="1.0" encoding="UTF-
 <eaMediaToolsSettings version="11">
   <hardwareAcceleration>${Number(settings.hardwareAcceleration)}</hardwareAcceleration>
   <useStableFfmpeg>${Number(settings.useStableFfmpeg)}</useStableFfmpeg>
+  <simultaneousEncoding>${Number(settings.simultaneousEncoding)}</simultaneousEncoding>
   <smartFileNaming>${Number(settings.smartFileNaming)}</smartFileNaming>
   <lastPreset>${xmlEscape(settings.lastPreset)}</lastPreset>
   <lastSourceDirectory>${xmlEscape(settings.lastSourceDirectory)}</lastSourceDirectory>
@@ -144,6 +146,7 @@ export const loadSettings = async (): Promise<AppSettings> => {
     return {
       hardwareAcceleration: bool(tag(xml, 'hardwareAcceleration'), true),
       useStableFfmpeg: bool(tag(xml, 'useStableFfmpeg'), true),
+      simultaneousEncoding: bool(tag(xml, 'simultaneousEncoding'), true),
       smartFileNaming: bool(tag(xml, 'smartFileNaming'), true),
       lastPreset: xmlUnescape(tag(xml, 'lastPreset') || 'Streaming'),
       lastSourceDirectory: xmlUnescape(tag(xml, 'lastSourceDirectory') || ''),

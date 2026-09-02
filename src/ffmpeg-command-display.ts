@@ -5,7 +5,15 @@ const displayArgument = (value: string) => /^[A-Za-z0-9_./:@=+\\-]+$/.test(value
 export const formatSessionFfmpegCommand = (command: string[]) => {
   if (!command.length) return '';
   const displayCommand = [...command];
-  displayCommand[0] = 'ffmpeg';
+  const executable = command[0].split(/[\\/]/).at(-1)?.replace(/\.exe$/i, '') ?? 'ffmpeg';
+  const isRsgain = /^rsgain$/i.test(executable);
+  displayCommand[0] = isRsgain ? 'rsgain' : 'ffmpeg';
+  if (isRsgain) {
+    if (displayCommand.length > 1) displayCommand[displayCommand.length - 1] = '<library>';
+    return displayCommand.map((argument) => argument === '<library>'
+      ? argument
+      : displayArgument(argument)).join(' ');
+  }
   for (let index = 1; index < displayCommand.length - 1; index += 1) {
     if (displayCommand[index] === '-i' && displayCommand[index + 1]) {
       displayCommand[index + 1] = '<input>';

@@ -28,3 +28,12 @@ test('redacts every ffmpeg input while retaining non-path arguments', () => {
     'ffmpeg -i <input> -i <input> -filter_complex "[0:v]scale=1760:-2[v]" -map "[v]" <output>',
   );
 });
+
+test('shows rsgain-only work while redacting the library path', () => {
+  assert.equal(
+    formatSessionFfmpegCommand([
+      'C:\\Tools\\rsgain.exe', 'easy', '-m', 'MAX', '-S', 'C:\\Music Library',
+    ]),
+    'rsgain easy -m MAX -S <library>',
+  );
+});

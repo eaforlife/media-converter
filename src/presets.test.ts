@@ -16,6 +16,11 @@ test('loads ordered built-in preset values from presets.ini', () => {
   assert.equal(configuration.version, '08ebd75');
   assert.deepEqual(Object.keys(presets), ['Archive', 'Regular', 'Streaming', 'Cellular', 'Music Video']);
   assert.equal(presets.Streaming.audioCodec, 'opus');
+  assert.equal(presets.Streaming.frameRate, 23.976);
+  assert.equal(presets.Cellular.frameRate, 23.976);
+  assert.equal(presets.Archive.frameRate, 'passthrough');
+  assert.equal(presets.Regular.frameRate, 'passthrough');
+  assert.equal(presets['Music Video'].frameRate, 'passthrough');
   assert.equal(presets.Streaming.audioRates.opus.stereo, '96k');
   assert.equal(presets.Streaming.audioRates.opus.surround, '128k');
   assert.equal(presets.Streaming.encoderSpeed, 2);
@@ -141,6 +146,10 @@ test('rejects out-of-range editable preset values', () => {
   assert.throws(
     () => parseBuiltInPresets(presetFile.replace('dynamic_range_compression=0', 'dynamic_range_compression=2')),
     /dynamic_range_compression must be 0 or 1/,
+  );
+  assert.throws(
+    () => parseBuiltInPresets(presetFile.replace('frame_rate=23.976', 'frame_rate=0')),
+    /frame_rate must be passthrough or a number from 1 to 240/,
   );
   assert.throws(
     () => parseBuiltInPresets(presetFile.replace('preferred_video_codec_720p=AV1', 'preferred_video_codec_720p=VP9')),
