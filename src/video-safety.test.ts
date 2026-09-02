@@ -1,10 +1,19 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
-  cudaCropBridgeFilters, cudaHardwareDecodeArguments, cuvidDecoderCropArguments, cuvidDecoderName,
+  cudaCropBridgeFilters, cudaHardwareDecodeArguments, cudaScaleFilter, cuvidDecoderCropArguments, cuvidDecoderName,
   EXTRA_HARDWARE_DECODE_FRAMES, hardwareUploadFilter,
   protectedHardwareDecodeArguments, strictVideoTranscodeArguments,
 } from './video-safety.ts';
+
+test('converts SDR CUDA frames to Main10 surfaces without leaving GPU memory', () => {
+  assert.equal(
+    cudaScaleFilter('1760', '-2', true),
+    'scale_cuda=1760:-2:format=p010le:passthrough=0',
+  );
+  assert.equal(cudaScaleFilter('1320', '-2', false), 'scale_cuda=1320:-2');
+  assert.equal(cudaScaleFilter('iw', 'ih', true).includes(',format='), false);
+});
 
 test('uses expanded decoder and filter pools without unsafe hardware output', () => {
   assert.equal(EXTRA_HARDWARE_DECODE_FRAMES, '64');

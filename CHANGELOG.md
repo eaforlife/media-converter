@@ -8,11 +8,13 @@ All notable changes to EA Media Tools are documented here.
 
 - Add a Video-tab frame-rate override switch driven by the active preset's `frame_rate`: sources below the target are off and locked, matching sources are off and editable, faster sources are on and editable, and off always means passthrough.
 - Add validated per-output-tier `multipass_<tier>` preset overrides.
+- Add an independent HEVC Main10 toggle for every HEVC encoder that passes its 10-bit capability test, while preserving automatic source-based defaults.
 
 ### Changed
 
 - Set Streaming multipass to disabled for 4K output and quarter-resolution for 1080p, 720p, and 360p output; Cellular uses quarter-resolution multipass at 360p.
 - Preserve frame-rate targets in saved custom presets while defaulting older custom preset files to passthrough.
+- Convert SDR frames to CUDA-native `p010le` surfaces inside `scale_cuda` when HEVC Main10 is enabled, retaining the zero-copy NVDEC-to-NVENC path.
 
 ### Fixed
 

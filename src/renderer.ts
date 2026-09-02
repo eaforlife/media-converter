@@ -23,7 +23,7 @@ import { isValidCustomPresetName } from './custom-presets';
 import { externalSubtitleInputArguments, subtitleInputSpecifier } from './external-subtitles';
 import { aspectPreservingDimensions, cuvidCropMargins, detectedCrop } from './video-crop';
 import {
-  cudaCropBridgeFilters, cudaHardwareDecodeArguments, cuvidDecoderCropArguments, cuvidDecoderName, hardwareUploadFilter,
+  cudaCropBridgeFilters, cudaHardwareDecodeArguments, cudaScaleFilter, cuvidDecoderCropArguments, cuvidDecoderName, hardwareUploadFilter,
   protectedHardwareDecodeArguments, strictVideoTranscodeArguments,
 } from './video-safety';
 import { bufferSizeFor, scaleDimensionsFor, videoOutputProfile } from './video-output-profile';
@@ -1027,11 +1027,8 @@ const getCommandArguments = (source: SourceFile, requestedOutputPath?: string, f
   const toneMap = Boolean(settings.filters.toneMapHdrToSdr && (video?.hasHdr || video?.hasDolbyVision));
   const outputCodec = preferredCodecForEncoder(settings.encoder);
   const hevcOutput = outputCodec === 'HEVC';
-  const musicVideoMain10 = isMusicVideoWorkflow(source) && hevcOutput && isH264HighSource(video);
-  const canUse10Bit = hevcOutput && encoderCanOutput10Bit(settings.encoder) && Boolean(
-    video?.hasHdr || video?.hasDolbyVision || video?.isHevcMain10 || musicVideoMain10,
-  );
-  const main10Output = Boolean((settings.filters.pixelFormat10Bit || musicVideoMain10) && canUse10Bit);
+  const canUse10Bit = hevcOutput && encoderCanOutput10Bit(settings.encoder);
+  const main10Output = settings.filters.pixelFormat10Bit && canUse10Bit;
   const profile = outputEncoderProfile(
     outputCodec,
     settings.encoderProfile || (isMusicVideoWorkflow(source) ? musicVideoEncoderProfile(outputCodec, main10Output) ?? '' : ''),
@@ -1052,8 +1049,7 @@ const getCommandArguments = (source: SourceFile, requestedOutputPath?: string, f
       filters.push(...cudaCropBridgeFilters(cudaCrop.filter, Boolean(video?.pixelFormat.includes('10'))));
     }
     if (dimensions) {
-      const format = !toneMap && main10Output ? ':format=p010le:passthrough=0' : '';
-      filters.push(`scale_cuda=${dimensions[0]}:${dimensions[1]}${format}`);
+      filters.push(cudaScaleFilter(dimensions[0], dimensions[1], !toneMap && main10Output));
     }
     if (toneMap) {
       if (video?.hasDolbyVision) {
@@ -1061,9 +1057,9 @@ const getCommandArguments = (source: SourceFile, requestedOutputPath?: string, f
       }
       filters.push(`tonemap_cuda=format=${toneMapFormat}:p=bt709:t=bt709:m=bt709:tonemap=bt2390:peak=100:desat=0`);
     } else if (main10Output && !dimensions) {
-      filters.push('scale_cuda=iw:ih:format=p010le:passthrough=0');
+      filters.push(cudaScaleFilter('iw', 'ih', true));
     } else if (!dimensions && !toneMap && !cudaCrop) {
-      filters.push('scale_cuda=iw:ih:passthrough=0');
+      filters.push(`${cudaScaleFilter('iw', 'ih', false)}:passthrough=0`);
     }
   } else if (hardwareInput.backend === 'qsv' && (dimensions || toneMap || main10Output)) {
     if (toneMap && video?.hasDolbyVision) {
@@ -1994,11 +1990,8 @@ const renderFilterSettings = (source: SourceFile, settings: JobSettings) => {
   const h264Output = outputCodec === 'H.264';
   const h264High = h264Output && settings.encoderProfile.toLowerCase() === 'high';
   const hevcOutput = outputCodec === 'HEVC';
-  const forcedMusicMain10 = hevcOutput && isMusicVideoWorkflow(source) && isH264HighSource(video);
-  const allow10Bit = hevcOutput && (
-    isHdr || Boolean(video?.isHevcMain10) || forcedMusicMain10
-  );
   const supports10Bit = encoderCanOutput10Bit(settings.encoder);
+  const allowMain10 = hevcOutput && supports10Bit;
   const hasSurround = Boolean(source.media?.audio.some((track) => settings.audio[track.index]?.enabled && track.channels > 2));
   const crop = detectedCropForSource(source);
   const cropDetail = crop ? `Detected ${crop.filter}` : 'No crop detected; full frame will be retained';
@@ -2008,7 +2001,7 @@ const renderFilterSettings = (source: SourceFile, settings: JobSettings) => {
   return `<div class="filter-layout"><fieldset class="settings-card processing-fieldset ${settings.processing.video ? '' : 'processing-disabled'}"${settings.processing.video ? '' : ' disabled'}><div class="card-title"><div><span>PICTURE FILTERS</span><h3>Automatic processing</h3></div>${icon('sliders', 22)}</div>
     <div class="filter-options"><label class="toggle-row"><span><strong>Auto Crop</strong><small>${escapeHtml(cropDetail)}</small></span><input type="checkbox" data-filter="autoCrop"${checked(settings.filters.autoCrop)}/><i></i></label>
     <label class="toggle-row ${isHdr ? '' : 'disabled'}"><span><strong>HDR to SDR</strong><small>${isHdr ? `Tone-map ${escapeHtml(hdrLabel(source))} to SDR` : 'Unavailable because the source is SDR'}</small></span><input type="checkbox" data-filter="toneMapHdrToSdr"${checked(settings.filters.toneMapHdrToSdr)}${isHdr ? '' : ' disabled'}/><i></i></label>
-    <label class="toggle-row sub-option ${allow10Bit && supports10Bit ? '' : 'disabled'}"><span><strong>Pixel Format: 10-bit</strong><small>${forcedMusicMain10 && supports10Bit ? 'Required Main10 output for this H.264 High music-video source' : allow10Bit && supports10Bit ? 'Output as yuv420p10le' : hevcOutput && !supports10Bit ? 'The detected HEVC hardware path did not pass the Main10 test' : hevcOutput ? 'Requires HDR/DV, HEVC Main10, or an H.264 High music-video source' : 'Requires an HEVC output encoder'}</small></span><input type="checkbox" data-filter="pixelFormat10Bit"${checked(forcedMusicMain10 && supports10Bit || settings.filters.pixelFormat10Bit && hevcOutput)}${allow10Bit && supports10Bit && !forcedMusicMain10 ? '' : ' disabled'}/><i></i></label>
+    <label class="toggle-row ${allowMain10 ? '' : 'disabled'}"><span><strong>HEVC Main10 profile</strong><small>${allowMain10 ? settings.encoder.endsWith('_nvenc') ? 'Use HEVC Main10 and CUDA-native p010le output without leaving GPU memory' : 'Use the HEVC Main10 profile and a 10-bit output pixel format' : hevcOutput ? 'The detected HEVC encoder did not pass its 10-bit capability test' : 'Available only when an HEVC output encoder is selected'}</small></span><input type="checkbox" data-filter="pixelFormat10Bit"${checked(settings.filters.pixelFormat10Bit && hevcOutput)}${allowMain10 ? '' : ' disabled'}/><i></i></label>
     ${h264Output ? `<label class="toggle-row"><span><strong>H.264 High profile</strong><small>Use the High output profile; enabled by default for H.264.</small></span><input type="checkbox" data-video-profile="h264-high"${checked(h264High)}/><i></i></label>` : ''}
     <label class="scale-row"><span><strong>Auto scale</strong><small>${isMusicVideoWorkflow(source) ? `Music Video locks Auto Scale and only scales 4K sources to ${escapeHtml(musicVideoScale)}.` : settings.filters.scaleLocked ? 'Cellular locks scaling to 360p.' : 'Choose an automatic output height or leave scaling disabled.'}</small></span><select id="filter-scale"${settings.filters.scaleLocked ? ' disabled' : ''}><option value="auto"${selected(settings.filters.scale === 'auto')}>Auto Scale</option><option value="1080p"${selected(settings.filters.scale === '1080p')}>1080p</option><option value="720p"${selected(settings.filters.scale === '720p')}>720p</option><option value="360p"${selected(settings.filters.scale === '360p')}>360p</option><option value="disabled"${selected(settings.filters.scale === 'disabled')}>Disabled</option></select></label></div></fieldset>
     <fieldset class="settings-card processing-fieldset ${settings.processing.audio ? '' : 'processing-disabled'}"${settings.processing.audio ? '' : ' disabled'}><div class="card-title"><div><span>AUDIO FILTERS</span><h3>Surround processing</h3></div>${icon('audio', 22)}</div><div class="filter-options">

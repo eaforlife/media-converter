@@ -6,6 +6,9 @@ export const protectedHardwareDecodeArguments = () => [
 
 export const hardwareUploadFilter = () => `hwupload=extra_hw_frames=${EXTRA_HARDWARE_DECODE_FRAMES}`;
 
+export const cudaScaleFilter = (width: string, height: string, main10Output: boolean) =>
+  `scale_cuda=${width}:${height}${main10Output ? ':format=p010le:passthrough=0' : ''}`;
+
 export const cudaCropBridgeFilters = (crop: string, tenBit: boolean) => [
   'hwdownload',
   `format=${tenBit ? 'p010le' : 'nv12'}`,
