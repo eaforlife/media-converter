@@ -4,6 +4,8 @@ All notable changes to EA Media Tools are documented here.
 
 ## [Unreleased]
 
+## [2.6.3] - 2026-09-02
+
 ### Added
 
 - Add a Video-tab frame-rate override switch driven by the active preset's `frame_rate`: sources below the target are off and locked, matching sources are off and editable, faster sources are on and editable, and off always means passthrough.
@@ -384,6 +386,7 @@ All notable changes to EA Media Tools are documented here.
 - Convert crop offsets to CUVID edge values with division by two and floor rounding.
 - Cancel all active parallel encodes and interrupt pending cooldowns when the queue is stopped or a job fails.
 
+[2.6.3]: https://github.com/eaforlife/media-converter/compare/v2.6.2...v2.6.3
 [2.6.2]: https://github.com/eaforlife/media-converter/compare/v2.6.1...v2.6.2
 [2.6.1]: https://github.com/eaforlife/media-converter/compare/v2.6.0...v2.6.1
 [2.6.0]: https://github.com/eaforlife/media-converter/compare/v2.5.1...v2.6.0
