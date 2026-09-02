@@ -4,6 +4,8 @@ All notable changes to EA Media Tools are documented here.
 
 ## [Unreleased]
 
+## [2.6.7] - 2026-09-03
+
 ### Fixed
 
 - Force a complete Windows window repaint after checkbox and radio state changes, preventing a responsive frameless renderer from remaining visually blank.
@@ -417,6 +419,7 @@ All notable changes to EA Media Tools are documented here.
 - Convert crop offsets to CUVID edge values with division by two and floor rounding.
 - Cancel all active parallel encodes and interrupt pending cooldowns when the queue is stopped or a job fails.
 
+[2.6.7]: https://github.com/eaforlife/media-converter/compare/v2.6.6...v2.6.7
 [2.6.6]: https://github.com/eaforlife/media-converter/compare/v2.6.5...v2.6.6
 [2.6.5]: https://github.com/eaforlife/media-converter/compare/v2.6.4...v2.6.5
 [2.6.4]: https://github.com/eaforlife/media-converter/compare/v2.6.3...v2.6.4
