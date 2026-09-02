@@ -4,6 +4,25 @@ All notable changes to EA Media Tools are documented here.
 
 ## [Unreleased]
 
+## [2.6.2] - 2026-09-02
+
+### Added
+
+- Add visible discovery, indexing, and inspection progress for folder and multi-file scans.
+- Add a default-on simultaneous-encoding setting for multi-source queues, with up to four concurrent audio encodes and the existing adaptive NVENC scheduling.
+- Add validated `frame_rate` values to `presets.ini`: `23.976` for Streaming and Cellular and `passthrough` for every other built-in preset.
+
+### Changed
+
+- Replace synchronous recursive folder scanning with bounded asynchronous indexing and inspect large audio-only libraries with up to 12 concurrent probes.
+- Show rolling interval bitrate in the encode window so quality-based VBR relaxation is visible while retaining Streaming's `video_bitrate=0` behavior.
+- Convert Streaming and Cellular sources above 24 fps to exact `24000/1001` CFR without retiming their audio.
+
+### Fixed
+
+- Rename the console to Live Process Output and show rsgain commands when normalization is the only work in the queue.
+- Yield to the renderer before scanning so the picker animation is visible during large-library analysis.
+
 ## [2.6.1] - 2026-09-02
 
 ### Changed
@@ -348,6 +367,7 @@ All notable changes to EA Media Tools are documented here.
 - Convert crop offsets to CUVID edge values with division by two and floor rounding.
 - Cancel all active parallel encodes and interrupt pending cooldowns when the queue is stopped or a job fails.
 
+[2.6.2]: https://github.com/eaforlife/media-converter/compare/v2.6.1...v2.6.2
 [2.6.1]: https://github.com/eaforlife/media-converter/compare/v2.6.0...v2.6.1
 [2.6.0]: https://github.com/eaforlife/media-converter/compare/v2.5.1...v2.6.0
 [2.5.1]: https://github.com/eaforlife/media-converter/compare/v2.5.0...v2.5.1
