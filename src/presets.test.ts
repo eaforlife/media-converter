@@ -32,7 +32,7 @@ test('loads ordered built-in preset values from presets.ini', () => {
   assert.equal(presets.Streaming.bufferMultiplier, 3);
   assert.equal(presets.Streaming.encoderTune.nvenc, 'hq');
   assert.equal(presets.Streaming.encoderTune.amf, 'high_quality');
-  assert.equal(presets.Streaming.quality.nvenc, '29');
+  assert.equal(presets.Streaming.quality.nvenc, '31');
   assert.equal(presets.Regular.quality.nvenc, '24');
   assert.equal(presets.Regular.quality.amf, '22');
   assert.equal(presets.Regular.quality.software, '25');
@@ -88,7 +88,7 @@ test('streaming tiers retain their own speed and CQ around the shared UHQ-compat
   const presets = parseBuiltInPresets(presetFile);
   assert.deepEqual(
     [presets.Streaming.encoderSpeed, presets.Streaming.quality.nvenc],
-    [2, '29'],
+    [2, '31'],
   );
   assert.deepEqual(
     [presets.Cellular.encoderSpeed, presets.Cellular.quality.nvenc],

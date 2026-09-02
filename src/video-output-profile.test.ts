@@ -39,9 +39,9 @@ test('explicit scaling uses the selected INI output profile instead of the sourc
 
 test('resolves every Streaming tier CQ and backend quality from presets.ini', () => {
   const streaming = configuration.presets.Streaming;
-  equal(resolvePresetOutputDefaults(configuration, streaming, '4k', 'nvenc').quality, '29');
-  equal(resolvePresetOutputDefaults(configuration, streaming, '1080p', 'nvenc').quality, '28');
-  equal(resolvePresetOutputDefaults(configuration, streaming, '720p', 'nvenc').quality, '29');
+  equal(resolvePresetOutputDefaults(configuration, streaming, '4k', 'nvenc').quality, '31');
+  equal(resolvePresetOutputDefaults(configuration, streaming, '1080p', 'nvenc').quality, '31');
+  equal(resolvePresetOutputDefaults(configuration, streaming, '720p', 'nvenc').quality, '32');
   equal(resolvePresetOutputDefaults(configuration, streaming, '360p', 'nvenc').quality, '32');
   equal(resolvePresetOutputDefaults(configuration, streaming, '1080p', 'amf').quality, '26');
   equal(resolvePresetOutputDefaults(configuration, streaming, '1080p', 'qsv').quality, '27');

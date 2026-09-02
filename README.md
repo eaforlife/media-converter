@@ -2,7 +2,7 @@
 
 EA Media Tools is a desktop video and audio converter powered by Jellyfin FFmpeg. It inspects video, audio, subtitle, chapter, HDR, and Dolby Vision metadata; selects hardware or CPU processing; and runs queued conversions with live progress information.
 
-Version 2.5.1, codename **jaguar**, is the current stable release. It supports video files, short music videos with attached artwork, and recursive audio libraries. Hardware acceleration is enabled by default but can be disabled for CPU video encoding and decoding.
+Version 2.6.1, codename **jaguar**, is the current stable release. It supports video files, short music videos with attached artwork, and recursive audio libraries. Hardware acceleration is enabled by default but can be disabled for CPU video encoding and decoding.
 
 ## Download
 
@@ -12,7 +12,7 @@ Choose the asset that matches your operating system and CPU:
 
 | System | Intel/AMD 64-bit | ARM 64-bit |
 | --- | --- | --- |
-| Windows | `EA-Media-Tools-2.5.0-x64-Setup.exe` | `EA-Media-Tools-2.5.0-arm64-Setup.exe` |
+| Windows | `EA-Media-Tools-2.6.1-x64-Setup.exe` | `EA-Media-Tools-2.6.1-arm64-Setup.exe` |
 | macOS | ZIP containing `darwin-x64` | ZIP containing `darwin-arm64` for Apple silicon |
 | Debian/Ubuntu | `.deb` containing `amd64` | `.deb` containing `arm64` |
 
@@ -41,7 +41,7 @@ The macOS app is not signed or notarized. To uninstall it, quit the app and move
 Install the downloaded package from a terminal. Replace the filename with the asset you downloaded:
 
 ```bash
-sudo apt install ./ea-media-tools_2.5.0_amd64.deb
+sudo apt install ./ea-media-tools_2.6.1_amd64.deb
 ```
 
 ARM64 systems use the package ending in `arm64.deb`. Launch **EA Media Tools** from the desktop application menu. Remove it with:
@@ -58,9 +58,9 @@ The managed runtime setup also installs [rsgain 3.7](https://github.com/complexl
 
 Audio folders are scanned recursively. Streaming outputs 96 kbps Opus, or 128 kbps when surround audio is downmixed; Archive outputs 224 kbps libfdk_aac, or 256 kbps for a surround downmix. Converted files retain their source basename and relative artist/album layout beneath `converted`, and matching `.lrc` lyric files are copied beside them. Passthrough leaves the source files in place and can still run library normalization.
 
-For sources with more than two channels, enabled dynamic range compression runs immediately after the stereo downmix and its volume stage. It uses [Feishin's Default compressor preset](https://github.com/jeffvli/feishin/blob/development/src/renderer/features/settings/components/playback/eq-settings.tsx): -24 dB threshold, 4:1 ratio, 20 ms attack, 250 ms release, +6 dB makeup gain, and a 2.83 dB knee. The option is available in the Filters tab. It defaults on for Regular, Streaming, Cellular, Music Video, and audio-only Streaming, and off for Archive and Passthrough. Both the stable and pre-release managed Jellyfin FFmpeg channels support the generated `acompressor` chain.
+For sources with more than two channels, enabled dynamic range compression runs immediately after a coefficient-normalized stereo downmix. It uses [Feishin's Default compressor preset](https://github.com/jeffvli/feishin/blob/development/src/renderer/features/settings/components/playback/eq-settings.tsx): -24 dB threshold, 4:1 ratio, 20 ms attack, 250 ms release, +6 dB makeup gain, and a 2.83 dB knee. A lookahead limiter prevents compressed peaks from clipping, and every encoded audio track uses timestamp-aware resampling so gaps or overlaps do not become audible choppiness. The option is available in the Filters tab. It defaults on for Regular, Streaming, Cellular, Music Video, and audio-only Streaming, and off for Archive and Passthrough.
 
-The Streaming video preset also uses Opus: 96 kbps for a stereo source and 128 kbps for a surround downmix. Its 3x bitrate buffer and spatial AQ strength 12 give difficult dark scenes more short-term bitrate flexibility without changing the preset's CQ, encode speed, or maximum rates.
+The Streaming video preset also uses Opus: 96 kbps for a stereo source and 128 kbps for a surround downmix. Its 3x bitrate buffer and spatial AQ strength 12 give difficult dark scenes more short-term bitrate flexibility.
 
 Transcoded MP4 video places the playback index at the beginning, adds a keyframe at least every five seconds for more responsive seeking and Jellyfin segment boundaries, and marks HEVC video as `hvc1` for broader Apple and Safari direct-play compatibility. Stream-copy operations retain the source keyframe layout.
 
@@ -106,9 +106,9 @@ Auto Scale chooses an output profile from the source resolution. Selecting a sca
 
 | Output profile | FFmpeg scale | Streaming codec | Maximum video rate | Streaming NVENC quality |
 | --- | --- | --- | --- | --- |
-| 4K | `2720:-2` | HEVC Main / Main10 | 8000 kbps | CQ 29 |
-| 1080p | `1760:-2` | HEVC Main / Main10 | 5000 kbps | CQ 28 |
-| 720p | `1320:-2` | AV1 | 2500 kbps | CQ 29 |
+| 4K | `2720:-2` | HEVC Main / Main10 | 8000 kbps | CQ 31 |
+| 1080p | `1760:-2` | HEVC Main / Main10 | 5000 kbps | CQ 31 |
+| 720p | `1320:-2` | AV1 | 2500 kbps | CQ 32 |
 | 360p | `720:-2` | AV1 | 2500 kbps | CQ 32 |
 
 Streaming selects HEVC Main for SDR output at 4K and 1080p, and defaults to HEVC Main10 for HEVC Main10, HDR, or Dolby Vision sources when the selected encoder passed its 10-bit capability test. Auto Scale and explicit scaling switch Streaming to AV1 at 720p and 360p. H.264 exposes a Filters-tab High-profile toggle that defaults on whenever H.264 is selected. Archive and Regular select H.264 by default. At 1080p, the H.264 maximum rates are 10000 kbps for Archive, 8000 kbps for Regular, 6500 kbps for Streaming, and 7000 kbps for Music Video. At 720p and 360p/Cellular, the H.264 maximum rate is 4000 kbps. Regular and Streaming use P4 for H.264 at 4K and 1080p, Music Video uses P6, and all three use P2 at 720p and 360p; Archive retains P6.

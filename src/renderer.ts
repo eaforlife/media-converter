@@ -1,6 +1,6 @@
 import './index.css';
 import { APP_CODENAME } from './config';
-import { surroundDownmixFilter } from './audio-filters';
+import { encodedAudioFilter } from './audio-filters';
 import { AUDIO_PRESETS, AUDIO_PRESET_NAMES, audioBitrate, shouldResampleLossless } from './audio-workflow';
 import type { AudioPresetName } from './audio-workflow';
 import {
@@ -769,15 +769,19 @@ const qualityLabel = (encoder: string) => {
   if (encoder.endsWith('_videotoolbox')) return 'Q';
   return 'RF';
 };
-const addDownmixArguments = (
+const addEncodedAudioFilterArguments = (
   args: string[],
   outputIndex: number,
   track: AudioStreamInfo,
+  downmixToStereo: boolean,
   dynamicRangeCompression: boolean,
+  resampleTo48k = false,
 ) => {
-  const filter = surroundDownmixFilter(track, dynamicRangeCompression && track.channels > 2);
-  if (filter) args.push(`-filter:a:${outputIndex}`, filter);
-  else args.push(`-ac:a:${outputIndex}`, '2');
+  args.push(
+    `-filter:a:${outputIndex}`,
+    encodedAudioFilter(track, downmixToStereo, dynamicRangeCompression && track.channels > 2, resampleTo48k),
+  );
+  if (downmixToStereo && track.channels <= 2) args.push(`-ac:a:${outputIndex}`, '2');
 };
 const encoderCanOutput10Bit = (encoder: string) => encoder === 'libx265'
   || Boolean(hardwareCapabilities.encoders.find((item) => item.id === encoder)?.tenBit);
@@ -956,10 +960,11 @@ const audioCommandArguments = (source: SourceFile, settings: JobSettings, output
   if (!track || !audio) return [];
   const args = ['-i', source.path, '-map', `0:${track.index}`, '-vn', '-sn', '-dn', '-c:a:0', audio.codec];
   if (audio.bitrate) args.push('-b:a:0', audio.bitrate);
-  if (settings.filters.downmixToStereo && !track.isStereo) {
-    addDownmixArguments(args, 0, track, settings.filters.dynamicRangeCompression);
-  }
-  if (shouldResampleLossless(track, settings.filters.resampleLosslessTo48k)) args.push('-ar:a:0', '48000');
+  addEncodedAudioFilterArguments(
+    args, 0, track, settings.filters.downmixToStereo && !track.isStereo,
+    settings.filters.dynamicRangeCompression,
+    shouldResampleLossless(track, settings.filters.resampleLosslessTo48k),
+  );
   addStreamMetadataArguments(args, 'a', 0, audio.metadata);
   if (settings.filters.stripMetadata) args.push('-map_metadata', '-1');
   else args.push('-map_metadata', '0');
@@ -1095,9 +1100,12 @@ const getCommandArguments = (source: SourceFile, requestedOutputPath?: string, f
     if (!audio?.enabled) return;
     const originalIndex = audioOutputIndex++;
     args.push('-map', `0:${track.index}`, `-c:a:${originalIndex}`, audio.codec);
-    if (audio.codec !== 'copy') args.push(`-b:a:${originalIndex}`, audio.bitrate);
-    if (!settings.filters.doNotReplaceAudio && !track.isStereo) {
-      addDownmixArguments(args, originalIndex, track, settings.filters.dynamicRangeCompression);
+    if (audio.codec !== 'copy') {
+      args.push(`-b:a:${originalIndex}`, audio.bitrate);
+      addEncodedAudioFilterArguments(
+        args, originalIndex, track, !settings.filters.doNotReplaceAudio && !track.isStereo,
+        settings.filters.dynamicRangeCompression,
+      );
     }
     args.push(`-metadata:s:a:${originalIndex}`, `language=${audio.metadata.language}`);
     const originalFlags = settings.filters.doNotReplaceAudio
@@ -1117,7 +1125,7 @@ const getCommandArguments = (source: SourceFile, requestedOutputPath?: string, f
         ? audioBitrateFor(settings.preset, stereoCodec, track.isStereo)
         : audio.bitrate;
       args.push('-map', `0:${track.index}`, `-c:a:${stereoIndex}`, stereoCodec, `-b:a:${stereoIndex}`, stereoBitrate);
-      addDownmixArguments(args, stereoIndex, track, settings.filters.dynamicRangeCompression);
+      addEncodedAudioFilterArguments(args, stereoIndex, track, true, settings.filters.dynamicRangeCompression);
       if (track.language !== 'und') args.push(`-metadata:s:a:${stereoIndex}`, `language=${track.language}`);
       args.push(`-disposition:a:${stereoIndex}`, stereoDefaultAssigned ? '0' : 'default');
       if (!isMusicVideoWorkflow(source)) {
@@ -2385,7 +2393,7 @@ const startApplication = async () => {
     }
     await new Promise((resolve) => window.setTimeout(resolve, runtimeState?.phase === 'error' ? 900 : 350));
   } catch (error) {
-    runtimeState = { phase: 'error', message: error instanceof Error ? error.message : 'Unable to initialize FFmpeg', progress: null, appVersion: '2.5.0', isPackaged: false, updateEnabled: false, ffmpegAvailable: false, ffmpegPath: '', ffprobePath: '', ffmpegVersion: null, releaseTag: null, ffmpegChannel: appSettings.useStableFfmpeg ? 'stable' : 'unstable', rsgainAvailable: false, rsgainPath: '', rsgainVersion: null, ccextractorAvailable: false, ccextractorPath: '', ccextractorVersion: null };
+    runtimeState = { phase: 'error', message: error instanceof Error ? error.message : 'Unable to initialize FFmpeg', progress: null, appVersion: '2.6.1', isPackaged: false, updateEnabled: false, ffmpegAvailable: false, ffmpegPath: '', ffprobePath: '', ffmpegVersion: null, releaseTag: null, ffmpegChannel: appSettings.useStableFfmpeg ? 'stable' : 'unstable', rsgainAvailable: false, rsgainPath: '', rsgainVersion: null, ccextractorAvailable: false, ccextractorPath: '', ccextractorVersion: null };
     renderBootstrap(runtimeState); await new Promise((resolve) => window.setTimeout(resolve, 900));
   } finally { removeProgressListener(); }
   if (!builtInPresetConfiguration) return;

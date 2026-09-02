@@ -4,6 +4,18 @@ All notable changes to EA Media Tools are documented here.
 
 ## [Unreleased]
 
+## [2.6.1] - 2026-09-02
+
+### Changed
+
+- Set Streaming NVENC quality to CQ 31 for 4K and 1080p sources and CQ 32 for 720p and below.
+- Normalize surround-downmix coefficients instead of applying an additional 1.8x gain before compression.
+
+### Fixed
+
+- Stabilize encoded-audio timestamps with asynchronous resampling to prevent gaps and overlaps from producing audible choppiness.
+- Add a latency-compensated lookahead limiter after dynamic range compression to prevent clipped peaks and static-like distortion.
+
 ## [2.6.0] - 2026-09-01
 
 ### Added
@@ -336,6 +348,9 @@ All notable changes to EA Media Tools are documented here.
 - Convert crop offsets to CUVID edge values with division by two and floor rounding.
 - Cancel all active parallel encodes and interrupt pending cooldowns when the queue is stopped or a job fails.
 
+[2.6.1]: https://github.com/eaforlife/media-converter/compare/v2.6.0...v2.6.1
+[2.6.0]: https://github.com/eaforlife/media-converter/compare/v2.5.1...v2.6.0
+[2.5.1]: https://github.com/eaforlife/media-converter/compare/v2.5.0...v2.5.1
 [2.5.0]: https://github.com/eaforlife/media-converter/compare/v2.4.1...v2.5.0
 [2.4.1]: https://github.com/eaforlife/media-converter/compare/v2.4.0...v2.4.1
 [2.4.0]: https://github.com/eaforlife/media-converter/compare/v2.3.1...v2.4.0
