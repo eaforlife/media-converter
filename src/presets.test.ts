@@ -13,7 +13,7 @@ const presetFile = fs.readFileSync(new URL('../presets.ini', import.meta.url), '
 test('loads ordered built-in preset values from presets.ini', () => {
   const configuration = parseBuiltInPresetConfiguration(presetFile);
   const presets = configuration.presets;
-  assert.equal(configuration.version, 'c536df3');
+  assert.equal(configuration.version, '79c799a');
   assert.deepEqual(Object.keys(presets), ['Archive', 'Regular', 'Streaming', 'Cellular', 'Music Video']);
   assert.equal(presets.Streaming.audioCodec, 'opus');
   assert.equal(presets.Streaming.frameRate, 23.976);
@@ -128,7 +128,7 @@ test('loads codec-specific H.264 tier overrides from presets.ini', () => {
 
 test('rejects out-of-range editable preset values', () => {
   assert.throws(
-    () => parseBuiltInPresets(presetFile.replace('[Version: c536df3]', '[Version: current]')),
+    () => parseBuiltInPresets(presetFile.replace('[Version: 79c799a]', '[Version: current]')),
     /must begin with \[Version: <commit>\]/,
   );
   assert.throws(
