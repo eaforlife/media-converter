@@ -2,7 +2,7 @@
 
 EA Media Tools is a desktop video and audio converter powered by Jellyfin FFmpeg. It inspects video, audio, subtitle, chapter, HDR, and Dolby Vision metadata; selects hardware or CPU processing; and runs queued conversions with live progress information.
 
-Version 2.6.5, codename **jaguar**, is the current stable release. It supports video files, short music videos with attached artwork, and recursive audio libraries. Hardware acceleration is enabled by default but can be disabled for CPU video encoding and decoding.
+Version 2.6.6, codename **jaguar**, is the current stable release. It supports video files, short music videos with attached artwork, and recursive audio libraries. Hardware acceleration is enabled by default but can be disabled for CPU video encoding and decoding.
 
 ## Download
 
@@ -12,7 +12,7 @@ Choose the asset that matches your operating system and CPU:
 
 | System | Intel/AMD 64-bit | ARM 64-bit |
 | --- | --- | --- |
-| Windows | `EA-Media-Tools-2.6.5-x64-Setup.exe` | Not supported |
+| Windows | `EA-Media-Tools-2.6.6-x64-Setup.exe` | Not supported |
 | macOS | ZIP containing `darwin-x64` | ZIP containing `darwin-arm64` for Apple silicon |
 | Debian/Ubuntu | `.deb` containing `amd64` | `.deb` containing `arm64` |
 
@@ -41,7 +41,7 @@ The macOS app is not signed or notarized. To uninstall it, quit the app and move
 Install the downloaded package from a terminal. Replace the filename with the asset you downloaded:
 
 ```bash
-sudo apt install ./ea-media-tools_2.6.5_amd64.deb
+sudo apt install ./ea-media-tools_2.6.6_amd64.deb
 ```
 
 ARM64 systems use the package ending in `arm64.deb`. Launch **EA Media Tools** from the desktop application menu. Remove it with:
@@ -100,7 +100,7 @@ Open the gear menu and choose **View Change Log** to read the installed version'
 
 Windows x64 builds check the public Squirrel feed at startup and every 15 minutes in the background. When startup detects a new version, all other initialization remains paused on the splash screen through the download and until the update prompt is visible and answered. **Restart and update** installs immediately after cleanly cancelling active work. **Later** continues loading the app and installs the downloaded update when the app exits. **Versions 0.3.0 and 0.3.1 use the repository's former URL and must be upgraded manually once.** Windows ARM64 builds are no longer produced. Unsigned macOS builds should download new releases manually; Linux updates are provided through the installed package manager.
 
-On every normal packaged Windows startup, the splash renderer becomes visible before obsolete `app-<version>` directories are removed sequentially. Only versions older than the running application are eligible; the current and any newer staged versions are preserved. Locked remnants receive two short retries and are otherwise left for a later launch so cleanup cannot hold startup indefinitely. Cleanup does not run while Squirrel owns an update transaction. Logs archived by an earlier version are deleted, and the active runtime log is reset when its recorded application version differs from the current release.
+Only `app-<version>` directories older than the running Windows application are eligible for cleanup; the current and any newer staged versions are preserved. Unlocked directories are removed during the visible startup splash. Locked remnants are handed to a hidden helper that waits for the application and Squirrel to exit, then retries outside the update transaction. The helper is also queued during Squirrel's updated event so residual `app.asar` files are removed before they can accumulate across releases. Logs archived by an earlier version are deleted, and the active runtime log is reset when its recorded application version differs from the current release.
 
 Auto Scale chooses an output profile from the source resolution. Selecting a scale explicitly applies that output profile's dimensions, bitrate limits, and buffer to the active built-in preset. When auto-crop removes black bars, the app derives an even output height from the cropped display aspect ratio before sending the dimensions to CUDA, QSV, AMF, VA-API, VideoToolbox, or a CPU encoder. On NVIDIA, a matching CUVID decoder crops in-place without leaving GPU memory. If decoder-side crop is unavailable, generic NVDEC uses the protected download, CPU crop, and CUDA upload bridge before CUDA scaling, optional tone mapping, and NVENC output. A genuine hardware-decode failure still retries once with software decoding and the selected NVENC encoder.
 

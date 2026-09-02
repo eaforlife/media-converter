@@ -4,6 +4,14 @@ All notable changes to EA Media Tools are documented here.
 
 ## [Unreleased]
 
+## [2.6.6] - 2026-09-02
+
+### Fixed
+
+- Remove toggle track and thumb animations that could invalidate the complete frameless Windows surface, preventing the UI from turning blank when any video or filter switch changes.
+- Hand locked obsolete Windows installation directories to a hidden post-exit cleanup helper, including during Squirrel's updated event, so residual `app.asar` files are deleted after handles close instead of accumulating on every update.
+- Log each failed immediate cleanup target and Windows error independently while keeping the splash cleanup attempt bounded to one pass.
+
 ## [2.6.5] - 2026-09-02
 
 ### Changed
@@ -404,6 +412,7 @@ All notable changes to EA Media Tools are documented here.
 - Convert crop offsets to CUVID edge values with division by two and floor rounding.
 - Cancel all active parallel encodes and interrupt pending cooldowns when the queue is stopped or a job fails.
 
+[2.6.6]: https://github.com/eaforlife/media-converter/compare/v2.6.5...v2.6.6
 [2.6.5]: https://github.com/eaforlife/media-converter/compare/v2.6.4...v2.6.5
 [2.6.4]: https://github.com/eaforlife/media-converter/compare/v2.6.3...v2.6.4
 [2.6.3]: https://github.com/eaforlife/media-converter/compare/v2.6.2...v2.6.3
