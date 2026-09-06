@@ -21,7 +21,7 @@ import { probeMedia } from './media-probe';
 import { classifyMediaWorkflow } from './media-workflow';
 import { initializeRuntime, selectRuntimeChannel } from './runtime-manager';
 import { loadSettings, readConfig, saveSettings } from './settings-store';
-import { loadAppConfiguration } from './config-store';
+import { enforceUrgentUpdatePolicy, loadAppConfiguration } from './config-store';
 import { loadBuiltInPresets, presetFilePath, readPresetFile } from './preset-store';
 import { customPresetFilePath, loadCustomPresets, readCustomPresetFile, saveCustomPresets } from './custom-preset-store';
 import {
@@ -812,6 +812,7 @@ const createWindow = () => {
 if (!handlingSquirrelEvent) app.whenReady().then(async () => {
   await initializeLogger();
   await loadAppConfiguration();
+  if (!await enforceUrgentUpdatePolicy()) return;
   logActivity('INFO', 'application.started', {
     version: app.getVersion(),
     packaged: app.isPackaged,

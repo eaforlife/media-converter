@@ -1,9 +1,14 @@
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
 import test from 'node:test';
 import {
-  audioBitrate, AUDIO_PRESETS, MUSIC_VIDEO_AAC_BITRATE, rsgainArguments, shouldResampleLossless, successfulNormalizationRoots,
+  audioBitrate, AUDIO_PRESETS, rsgainArguments, shouldResampleLossless, successfulNormalizationRoots,
 } from './audio-workflow.ts';
+import { parseAppConfiguration, setAppConfiguration } from './config.ts';
 import type { AudioStreamInfo } from './shared-types.ts';
+
+const config = parseAppConfiguration(fs.readFileSync(new URL('../config.ini', import.meta.url), 'utf8'));
+setAppConfiguration(config);
 
 const track = (overrides: Partial<AudioStreamInfo> = {}): AudioStreamInfo => ({
   index: 0, codec: 'flac', codecLabel: 'FLAC', language: 'und', languageLabel: 'Undefined',
@@ -26,7 +31,7 @@ test('audio preset compressor defaults exclude Archive and Passthrough', () => {
 });
 
 test('music video audio uses libfdk AAC at 224 kbit/s', () => {
-  assert.equal(MUSIC_VIDEO_AAC_BITRATE, '224k');
+  assert.equal(config.audioPresets.Archive.stereoBitrate, '224k');
 });
 
 test('only high-frequency lossless audio is resampled to 48 kHz', () => {

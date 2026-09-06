@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import test from 'node:test';
-import { DEFAULT_CONFIG_INI, parseAppConfiguration } from './config.ts';
+import { parseAppConfiguration } from './config.ts';
 
 const configFile = fs.readFileSync(new URL('../config.ini', import.meta.url), 'utf8');
 
@@ -16,7 +16,10 @@ test('loads audio filters and presets from config.ini', () => {
   const configuration = parseAppConfiguration(configFile);
   assert.equal(configuration.audioPresets.Streaming.codec, 'libopus');
   assert.equal(configuration.audioPresets.Archive.downmixBitrate, '256k');
+  assert.deepEqual(configuration.audioBitrates.opus, ['32k', '48k', '64k', '80k', '96k', '112k', '128k']);
   assert.equal(configuration.audioFilters.downmix51.includes('pan=stereo'), true);
+  assert.equal(configuration.musicVideoWorkflow.maxDurationSeconds, 480);
+  assert.equal(configuration.musicVideoWorkflow.extractClosedCaptions, true);
   assert.equal(configuration.videoFilters.cudaTonemap.includes('tonemap_cuda'), true);
 });
 
@@ -26,8 +29,4 @@ test('loads available encoders from config.ini', () => {
     encoder.id === 'hevc_nvenc' && encoder.tenBitTest && encoder.platforms?.includes('win32')));
   assert.ok(configuration.encoders.some((encoder) =>
     encoder.id === 'av1_videotoolbox' && encoder.vendor === 'Apple'));
-});
-
-test('embedded fallback config matches the checked-in config.ini', () => {
-  assert.deepEqual(parseAppConfiguration(DEFAULT_CONFIG_INI), parseAppConfiguration(configFile));
 });

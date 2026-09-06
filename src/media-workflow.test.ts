@@ -1,10 +1,14 @@
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
 import test from 'node:test';
 import {
   attachedCoverArtArguments, classifyMediaWorkflow, isH264HighSource, musicVideoEncoderProfile,
   frameRateConversionArguments, frameRateOverrideState, outputEncoderProfile, shouldDefaultToHevcMain10,
 } from './media-workflow.ts';
+import { parseAppConfiguration, setAppConfiguration } from './config.ts';
 import type { MediaInfo } from './shared-types.ts';
+
+setAppConfiguration(parseAppConfiguration(fs.readFileSync(new URL('../config.ini', import.meta.url), 'utf8')));
 
 const media = (overrides: Partial<MediaInfo>): MediaInfo => ({
   format: 'matroska', duration: 300, video: null, audio: [], subtitles: [], chapterCount: 0,

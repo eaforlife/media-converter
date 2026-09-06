@@ -1,138 +1,8 @@
 import { booleanValue, parseIniSections } from './presets.ts';
 import type { VideoEncoderCapability } from './shared-types';
 
-export const DEFAULT_CONFIG_INI = `[App]
-name=EA Media Tools
-codename=jaguar
-update_repository=eaforlife/media-converter
-preset_source_url=https://raw.githubusercontent.com/eaforlife/media-converter/main/presets.ini
-ffmpeg_release_api=https://api.github.com/repos/jellyfin/jellyfin-ffmpeg/releases/latest
-ffmpeg_releases_api=https://api.github.com/repos/jellyfin/jellyfin-ffmpeg/releases?per_page=20
-rsgain_release_api=https://api.github.com/repos/complexlogic/rsgain/releases/tags/v3.7
-ccextractor_release_api=https://api.github.com/repos/CCExtractor/ccextractor/releases/latest
-
-[Media Extensions]
-video=mp4,mkv,mov,avi,webm,m4v,mpg,mpeg,wmv,flv,ts,mts,m2ts,vob,ogv,3gp,3g2
-audio=aac,ac3,aif,aiff,alac,ape,dts,eac3,flac,m4a,mka,mp3,oga,ogg,opus,tta,wav,wma,wv
-
-[Audio Preset: Streaming]
-codec=libopus
-extension=opus
-stereo_bitrate=96k
-downmix_bitrate=128k
-dynamic_range_compression=1
-
-[Audio Preset: Archive]
-codec=libfdk_aac
-extension=m4a
-stereo_bitrate=224k
-downmix_bitrate=256k
-dynamic_range_compression=0
-
-[Audio Preset: Passthrough]
-codec=copy
-extension=
-stereo_bitrate=
-downmix_bitrate=
-dynamic_range_compression=0
-
-[Audio Filters]
-music_video_aac_bitrate=224k
-timestamp_resample=aresample={rate_prefix}async=1
-downmix_7_1=pan=stereo|c0<c0+0.707*c2+0.707*c4+0.707*c6|c1<c1+0.707*c2+0.707*c5+0.707*c7
-downmix_5_1=pan=stereo|c0<c0+0.707*c2+0.707*c4|c1<c1+0.707*c2+0.707*c5
-downmix_surround=aformat=channel_layouts=stereo
-compressor=acompressor=threshold=0.063096:ratio=4:attack=20:release=250:makeup=1.995262:knee=2.83
-peak_limiter=alimiter=limit=0.95:attack=5:release=50:latency=1
-
-[Video Filters]
-hdr_to_sdr=zscale=t=linear:npl=100,format=gbrpf32le,zscale=p=bt709,tonemap=tonemap=hable:desat=0,zscale=t=bt709:m=bt709:r=tv,format={format}
-cuda_tonemap=tonemap_cuda=format={format}:p=bt709:t=bt709:m=bt709:tonemap=bt2390:peak=100:desat=0
-
-[Encoder: h264_nvenc]
-label=H.264 (NVENC)
-vendor=NVIDIA
-codec=H.264
-platforms=win32,linux
-ten_bit_test=0
-
-[Encoder: hevc_nvenc]
-label=H.265 / HEVC (NVENC)
-vendor=NVIDIA
-codec=HEVC
-platforms=win32,linux
-ten_bit_test=1
-
-[Encoder: av1_nvenc]
-label=AV1 (NVENC)
-vendor=NVIDIA
-codec=AV1
-platforms=win32,linux
-ten_bit_test=0
-
-[Encoder: h264_amf]
-label=H.264 (AMD AMF)
-vendor=AMD
-codec=H.264
-platforms=win32
-ten_bit_test=0
-
-[Encoder: hevc_amf]
-label=H.265 / HEVC (AMD AMF)
-vendor=AMD
-codec=HEVC
-platforms=win32
-ten_bit_test=1
-
-[Encoder: av1_amf]
-label=AV1 (AMD AMF)
-vendor=AMD
-codec=AV1
-platforms=win32
-ten_bit_test=0
-
-[Encoder: h264_qsv]
-label=H.264 (Intel QSV)
-vendor=Intel
-codec=H.264
-platforms=win32,linux
-ten_bit_test=0
-
-[Encoder: hevc_qsv]
-label=H.265 / HEVC (Intel QSV)
-vendor=Intel
-codec=HEVC
-platforms=win32,linux
-ten_bit_test=1
-
-[Encoder: av1_qsv]
-label=AV1 (Intel QSV)
-vendor=Intel
-codec=AV1
-platforms=win32,linux
-ten_bit_test=0
-
-[Encoder: h264_videotoolbox]
-label=H.264 (VideoToolbox)
-vendor=Apple
-codec=H.264
-platforms=darwin
-ten_bit_test=0
-
-[Encoder: hevc_videotoolbox]
-label=H.265 / HEVC (VideoToolbox)
-vendor=Apple
-codec=HEVC
-platforms=darwin
-ten_bit_test=1
-
-[Encoder: av1_videotoolbox]
-label=AV1 (VideoToolbox)
-vendor=Apple
-codec=AV1
-platforms=darwin
-ten_bit_test=0
-`;
+export const CONFIG_SOURCE_URL = 'https://raw.githubusercontent.com/eaforlife/media-converter/main/config.ini';
+export const URGENT_UPDATE_SOURCE_URL = 'https://raw.githubusercontent.com/eaforlife/media-converter/main/updatepolicy';
 
 export type AudioPresetConfig = {
   codec: 'libopus' | 'libfdk_aac' | 'copy';
@@ -158,8 +28,8 @@ export type AppConfiguration = {
   };
   mediaExtensions: { video: readonly string[]; audio: readonly string[] };
   audioPresets: Record<'Streaming' | 'Archive' | 'Passthrough', AudioPresetConfig>;
+  audioBitrates: { aac: readonly string[]; opus: readonly string[] };
   audioFilters: {
-    musicVideoAacBitrate: string;
     timestampResample: string;
     downmix71: string;
     downmix51: string;
@@ -167,11 +37,24 @@ export type AppConfiguration = {
     compressor: string;
     peakLimiter: string;
   };
+  musicVideoWorkflow: {
+    maxDurationSeconds: number;
+    requireAttachedCoverArt: boolean;
+    copyAttachedCoverArt: boolean;
+    extractClosedCaptions: boolean;
+  };
   videoFilters: { hdrToSdr: string; cudaTonemap: string };
   encoders: readonly Readonly<EncoderCandidateConfig>[];
 };
 
 const commaList = (value: string) => value.split(',').map((item) => item.trim()).filter(Boolean);
+const numberValue = (value: string, label: string, minimum: number, maximum: number) => {
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed < minimum || parsed > maximum) {
+    throw new Error(`${label} must be an integer from ${minimum} to ${maximum}`);
+  }
+  return parsed;
+};
 const requireSection = (sections: Map<string, Map<string, string>>, name: string) => {
   const section = sections.get(name);
   if (!section) throw new Error(`config.ini is missing the [${name}] section`);
@@ -187,6 +70,8 @@ export const parseAppConfiguration = (ini: string): AppConfiguration => {
   const sections = parseIniSections(ini);
   const app = requireSection(sections, 'App');
   const media = requireSection(sections, 'Media Extensions');
+  const audioBitrates = requireSection(sections, 'Audio Bitrates');
+  const musicVideoWorkflow = requireSection(sections, 'Music Video Workflow');
   const audioFilters = requireSection(sections, 'Audio Filters');
   const videoFilters = requireSection(sections, 'Video Filters');
   const audioPreset = (name: 'Streaming' | 'Archive' | 'Passthrough'): AudioPresetConfig => {
@@ -243,14 +128,37 @@ export const parseAppConfiguration = (ini: string): AppConfiguration => {
       Archive: Object.freeze(audioPreset('Archive')),
       Passthrough: Object.freeze(audioPreset('Passthrough')),
     }),
+    audioBitrates: Object.freeze({
+      aac: Object.freeze(commaList(requireValue(audioBitrates, 'Audio Bitrates', 'aac'))),
+      opus: Object.freeze(commaList(requireValue(audioBitrates, 'Audio Bitrates', 'opus'))),
+    }),
     audioFilters: Object.freeze({
-      musicVideoAacBitrate: requireValue(audioFilters, 'Audio Filters', 'music_video_aac_bitrate'),
       timestampResample: requireValue(audioFilters, 'Audio Filters', 'timestamp_resample'),
       downmix71: requireValue(audioFilters, 'Audio Filters', 'downmix_7_1'),
       downmix51: requireValue(audioFilters, 'Audio Filters', 'downmix_5_1'),
       downmixSurround: requireValue(audioFilters, 'Audio Filters', 'downmix_surround'),
       compressor: requireValue(audioFilters, 'Audio Filters', 'compressor'),
       peakLimiter: requireValue(audioFilters, 'Audio Filters', 'peak_limiter'),
+    }),
+    musicVideoWorkflow: Object.freeze({
+      maxDurationSeconds: numberValue(
+        requireValue(musicVideoWorkflow, 'Music Video Workflow', 'max_duration_seconds'),
+        '[Music Video Workflow] max_duration_seconds',
+        1,
+        86_400,
+      ),
+      requireAttachedCoverArt: booleanValue(
+        requireValue(musicVideoWorkflow, 'Music Video Workflow', 'require_attached_cover_art'),
+        '[Music Video Workflow] require_attached_cover_art',
+      ),
+      copyAttachedCoverArt: booleanValue(
+        requireValue(musicVideoWorkflow, 'Music Video Workflow', 'copy_attached_cover_art'),
+        '[Music Video Workflow] copy_attached_cover_art',
+      ),
+      extractClosedCaptions: booleanValue(
+        requireValue(musicVideoWorkflow, 'Music Video Workflow', 'extract_closed_captions'),
+        '[Music Video Workflow] extract_closed_captions',
+      ),
     }),
     videoFilters: Object.freeze({
       hdrToSdr: requireValue(videoFilters, 'Video Filters', 'hdr_to_sdr'),
@@ -260,10 +168,52 @@ export const parseAppConfiguration = (ini: string): AppConfiguration => {
   });
 };
 
-export let APP_CONFIG = parseAppConfiguration(DEFAULT_CONFIG_INI);
-export let APP_NAME = APP_CONFIG.app.name;
-export let APP_CODENAME = APP_CONFIG.app.codename;
-export let APP_UPDATE_REPOSITORY = APP_CONFIG.app.updateRepository;
+export const EMPTY_APP_CONFIGURATION: AppConfiguration = Object.freeze({
+  app: Object.freeze({
+    name: '',
+    codename: '',
+    updateRepository: '',
+    presetSourceUrl: '',
+    ffmpegReleaseApi: '',
+    ffmpegReleasesApi: '',
+    rsgainReleaseApi: '',
+    ccextractorReleaseApi: '',
+  }),
+  mediaExtensions: Object.freeze({ video: Object.freeze([]), audio: Object.freeze([]) }),
+  audioPresets: Object.freeze({
+    Streaming: Object.freeze({
+      codec: 'copy', extension: null, stereoBitrate: '', downmixBitrate: '', dynamicRangeCompression: false,
+    }),
+    Archive: Object.freeze({
+      codec: 'copy', extension: null, stereoBitrate: '', downmixBitrate: '', dynamicRangeCompression: false,
+    }),
+    Passthrough: Object.freeze({
+      codec: 'copy', extension: null, stereoBitrate: '', downmixBitrate: '', dynamicRangeCompression: false,
+    }),
+  }),
+  audioBitrates: Object.freeze({ aac: Object.freeze([]), opus: Object.freeze([]) }),
+  audioFilters: Object.freeze({
+    timestampResample: 'aresample={rate_prefix}async=1',
+    downmix71: '',
+    downmix51: '',
+    downmixSurround: '',
+    compressor: '',
+    peakLimiter: '',
+  }),
+  musicVideoWorkflow: Object.freeze({
+    maxDurationSeconds: 0,
+    requireAttachedCoverArt: false,
+    copyAttachedCoverArt: false,
+    extractClosedCaptions: false,
+  }),
+  videoFilters: Object.freeze({ hdrToSdr: '', cudaTonemap: '' }),
+  encoders: Object.freeze([]),
+});
+
+export let APP_CONFIG = EMPTY_APP_CONFIGURATION;
+export let APP_NAME = 'EA Media Tools';
+export let APP_CODENAME = '';
+export let APP_UPDATE_REPOSITORY = 'eaforlife/media-converter';
 export let PRESET_SOURCE_URL = APP_CONFIG.app.presetSourceUrl;
 export let FFMPEG_RELEASE_API = APP_CONFIG.app.ffmpegReleaseApi;
 export let FFMPEG_RELEASES_API = APP_CONFIG.app.ffmpegReleasesApi;

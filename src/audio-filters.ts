@@ -23,7 +23,7 @@ export const surroundDownmixFilter = (
   }
   if (!downmix) return null;
   return dynamicRangeCompression
-    ? `${downmix},${APP_CONFIG.audioFilters.compressor},${AUDIO_PEAK_LIMITER_FILTER}`
+    ? `${downmix},${APP_CONFIG.audioFilters.compressor},${APP_CONFIG.audioFilters.peakLimiter}`
     : downmix;
 };
 

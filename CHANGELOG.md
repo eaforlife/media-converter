@@ -2,6 +2,19 @@
 
 All notable changes to EA Media Tools are documented here.
 
+## [2.7.1] - 2026-09-06
+
+### Added
+
+- Download and validate `config.ini` during packaged app startup, using the installed file or a managed app-data fallback when the install directory is read-only.
+- Add a remote `updatepolicy` file with `urgentUpdate` and `minVersion` values so future builds can block startup when a required update is active.
+- Move Music Video workflow detection and behavior controls into `config.ini`, including duration threshold, attached-cover-art requirement, cover-art copying, and closed-caption extraction.
+
+### Changed
+
+- Remove the embedded copy of `config.ini` defaults from application code so app-level defaults are owned by the checked-in and remotely synchronized config file.
+- Keep Music Video preset bitrate, scaling, speed, and codec defaults in `presets.ini`, while workflow-only behavior now lives in `config.ini`.
+
 ## [2.7.0] - 2026-09-06
 
 ### Added

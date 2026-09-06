@@ -1,5 +1,6 @@
 import type { MediaInfo, MediaWorkflow, VideoStreamInfo } from './shared-types';
 import type { PreferredVideoCodec, PresetFrameRate } from './presets';
+import { APP_CONFIG } from './config.ts';
 
 export const NTSC_FILM_FRAME_RATE = '24000/1001';
 export const FRAME_RATE_MATCH_TOLERANCE = 0.01;
@@ -41,7 +42,10 @@ export const frameRateConversionArguments = (
 
 export const classifyMediaWorkflow = (media: MediaInfo): MediaWorkflow | null => {
   if (!media.video) return media.audio.length ? 'audio' : null;
-  return media.duration !== null && media.duration < 8 * 60 && media.hasCoverArt
+  const workflow = APP_CONFIG.musicVideoWorkflow;
+  return media.duration !== null
+    && media.duration < workflow.maxDurationSeconds
+    && (!workflow.requireAttachedCoverArt || media.hasCoverArt)
     ? 'music-video'
     : 'video';
 };

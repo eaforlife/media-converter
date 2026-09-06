@@ -3,14 +3,15 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import { PRESET_SOURCE_URL } from './config.ts';
+import { parseAppConfiguration } from './config.ts';
 import { presetContentsMatch, synchronizePresetFile, validateRemotePresetContents } from './preset-sync.ts';
 
 const presetFile = fs.readFileSync(new URL('../presets.ini', import.meta.url), 'utf8');
+const configFile = fs.readFileSync(new URL('../config.ini', import.meta.url), 'utf8');
 
 test('downloads predefined defaults from presets.ini on the main repository branch', () => {
   assert.equal(
-    PRESET_SOURCE_URL,
+    parseAppConfiguration(configFile).app.presetSourceUrl,
     'https://raw.githubusercontent.com/eaforlife/media-converter/main/presets.ini',
   );
 });

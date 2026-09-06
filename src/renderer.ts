@@ -93,8 +93,6 @@ const icon = (name: IconName, size = 18) => `<svg class="icon" width="${size}" h
 const app = document.querySelector<HTMLDivElement>('#app');
 if (!app) throw new Error('App root was not found');
 
-const AAC_BITRATES = ['128k', '144k', '160k', '192k', '224k', '256k', '320k'];
-const OPUS_BITRATES = ['32k', '48k', '64k', '80k', '96k', '112k', '128k'];
 let sources: SourceFile[] = [];
 let builtInPresetConfiguration: BuiltInPresetConfiguration | null = null;
 let selectedIndex = 0;
@@ -438,7 +436,8 @@ const applyMusicVideoPreset = (source: SourceFile) => {
   });
   settings.filters = {
     ...defaultFilters(source), scale: preset.scale, scaleLocked: preset.scaleLocked, stripMetadata: false,
-    extractClosedCaptions: true, pixelFormat10Bit: isH264HighSource(source.media?.video),
+    extractClosedCaptions: APP_CONFIG.musicVideoWorkflow.extractClosedCaptions,
+    pixelFormat10Bit: isH264HighSource(source.media?.video),
     dynamicRangeCompression: preset.dynamicRangeCompression,
   };
   for (const track of source.media?.audio ?? []) {
@@ -504,7 +503,7 @@ const applyPreset = (source: SourceFile, preset: string, persist = true) => {
     if (persist) void persistAppSettings();
     return;
   }
-  if (isMusicVideoWorkflow(source)) {
+  if (isMusicVideoWorkflow(source) && APP_CONFIG.musicVideoWorkflow.copyAttachedCoverArt) {
     applyMusicVideoPreset(source);
     if (persist) void persistAppSettings();
     return;
@@ -1226,7 +1225,7 @@ const createEncodeJob = (source: SourceFile, queueIndex: number): EncodeJob | nu
     duration: source.media?.duration ?? null,
     args,
     ...(softwareDecodeFallbackArgs ? { softwareDecodeFallbackArgs } : {}),
-    ...(isMusicVideoWorkflow(source) && runtimeState?.ccextractorAvailable
+    ...(isMusicVideoWorkflow(source) && APP_CONFIG.musicVideoWorkflow.extractClosedCaptions && runtimeState?.ccextractorAvailable
       ? {
         closedCaptionFormat: settings.format === 'mp4'
           ? 'mov_text' as const
@@ -1936,7 +1935,8 @@ const renderVideoSettings = (source: SourceFile, settings: JobSettings) => {
     <section class="command-card"><div class="command-heading"><div><span>COMMAND PREVIEW</span><strong>Metadata cleaned</strong></div><button id="copy-command">${icon('copy', 15)} Copy command</button></div><code id="command-preview">${escapeHtml(getCommand())}</code></section></div>`;
 };
 
-const bitrateOptions = (codec: AudioCodec, bitrate: string) => (codec === 'libopus' ? OPUS_BITRATES : AAC_BITRATES)
+const bitrateOptions = (codec: AudioCodec, bitrate: string) =>
+  (codec === 'libopus' ? APP_CONFIG.audioBitrates.opus : APP_CONFIG.audioBitrates.aac)
   .map((rate) => `<option value="${rate}"${selected(rate === bitrate)}>${rate.replace('k', ' kbps')}</option>`).join('');
 const renderDispositionControls = (
   kind: 'video' | 'audio' | 'subtitle',
@@ -2053,7 +2053,7 @@ const renderSubtitleSettings = (source: SourceFile, settings: JobSettings) => {
   const tracks = orderByFlags(source.media?.subtitles ?? [], (track) => settings.subtitles[track.index]?.flags ?? track.flags);
   const metadataOnly = isMetadataOnly(settings);
   const processing = settings.processing.subtitles;
-  const captionExtraction = isMusicVideoWorkflow(source)
+  const captionExtraction = isMusicVideoWorkflow(source) && APP_CONFIG.musicVideoWorkflow.extractClosedCaptions
     ? `<section class="settings-card closed-caption-card"><div class="card-title"><div><span>EMBEDDED CLOSED CAPTIONS</span><h3>Automatic CEA-608 / CEA-708 extraction</h3></div><span class="track-badge text">CCExtractor ${escapeHtml(runtimeState?.ccextractorVersion?.replace(/^v/i, '') ?? '')}</span></div><p>${runtimeState?.ccextractorAvailable ? 'Music Video automatically checks for embedded captions and remuxes any extracted SRT track.' : 'CCExtractor is unavailable, so embedded captions cannot be checked.'}</p></section>`
     : '';
   const importButton = `<button class="secondary-button import-subtitles" id="import-subtitles">${icon('captions', 16)} Import UTF-8 subtitles</button>`;

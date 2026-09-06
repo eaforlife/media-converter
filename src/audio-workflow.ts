@@ -3,11 +3,9 @@ import { APP_CONFIG } from './config.ts';
 
 export type AudioPresetName = 'Streaming' | 'Archive' | 'Passthrough';
 
-export const MUSIC_VIDEO_AAC_BITRATE = APP_CONFIG.audioFilters.musicVideoAacBitrate;
-
 export const AUDIO_PRESET_NAMES: readonly AudioPresetName[] = ['Streaming', 'Archive', 'Passthrough'];
 
-export const AUDIO_PRESETS = new Proxy(APP_CONFIG.audioPresets, {
+export const AUDIO_PRESETS = new Proxy({} as typeof APP_CONFIG.audioPresets, {
   get: (_target, property: AudioPresetName) => APP_CONFIG.audioPresets[property],
 });
 
