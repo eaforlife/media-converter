@@ -1,12 +1,13 @@
 import type { AudioStreamInfo } from './shared-types';
+import { APP_CONFIG } from './config.ts';
 
 // Feishin's Default compressor preset, converted from dB values to the
 // linear threshold and makeup values expected by FFmpeg's acompressor.
-export const FEISHIN_DEFAULT_COMPRESSOR_FILTER = 'acompressor=threshold=0.063096:ratio=4:attack=20:release=250:makeup=1.995262:knee=2.83';
-export const AUDIO_PEAK_LIMITER_FILTER = 'alimiter=limit=0.95:attack=5:release=50:latency=1';
+export const FEISHIN_DEFAULT_COMPRESSOR_FILTER = APP_CONFIG.audioFilters.compressor;
+export const AUDIO_PEAK_LIMITER_FILTER = APP_CONFIG.audioFilters.peakLimiter;
 
 const timestampResampleFilter = (resampleTo48k: boolean) =>
-  `aresample=${resampleTo48k ? '48000:' : ''}async=1`;
+  APP_CONFIG.audioFilters.timestampResample.replace('{rate_prefix}', resampleTo48k ? '48000:' : '');
 
 export const surroundDownmixFilter = (
   track: Pick<AudioStreamInfo, 'channels' | 'channelLayout'>,
@@ -14,15 +15,15 @@ export const surroundDownmixFilter = (
 ) => {
   let downmix: string | null = null;
   if (track.channels >= 8 || /^7\.1/i.test(track.channelLayout)) {
-    downmix = 'pan=stereo|c0<c0+0.707*c2+0.707*c4+0.707*c6|c1<c1+0.707*c2+0.707*c5+0.707*c7';
+    downmix = APP_CONFIG.audioFilters.downmix71;
   } else if (track.channels >= 6 || /^5\.1/i.test(track.channelLayout)) {
-    downmix = 'pan=stereo|c0<c0+0.707*c2+0.707*c4|c1<c1+0.707*c2+0.707*c5';
+    downmix = APP_CONFIG.audioFilters.downmix51;
   } else if (track.channels > 2) {
-    downmix = 'aformat=channel_layouts=stereo';
+    downmix = APP_CONFIG.audioFilters.downmixSurround;
   }
   if (!downmix) return null;
   return dynamicRangeCompression
-    ? `${downmix},${FEISHIN_DEFAULT_COMPRESSOR_FILTER},${AUDIO_PEAK_LIMITER_FILTER}`
+    ? `${downmix},${APP_CONFIG.audioFilters.compressor},${AUDIO_PEAK_LIMITER_FILTER}`
     : downmix;
 };
 

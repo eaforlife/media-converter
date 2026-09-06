@@ -1,15 +1,14 @@
 import type { AudioStreamInfo } from './shared-types';
+import { APP_CONFIG } from './config.ts';
 
 export type AudioPresetName = 'Streaming' | 'Archive' | 'Passthrough';
 
-export const MUSIC_VIDEO_AAC_BITRATE = '224k';
+export const MUSIC_VIDEO_AAC_BITRATE = APP_CONFIG.audioFilters.musicVideoAacBitrate;
 
 export const AUDIO_PRESET_NAMES: readonly AudioPresetName[] = ['Streaming', 'Archive', 'Passthrough'];
 
-export const AUDIO_PRESETS = Object.freeze({
-  Streaming: Object.freeze({ codec: 'libopus' as const, extension: 'opus', stereoBitrate: '96k', downmixBitrate: '128k', dynamicRangeCompression: true }),
-  Archive: Object.freeze({ codec: 'libfdk_aac' as const, extension: 'm4a', stereoBitrate: '224k', downmixBitrate: '256k', dynamicRangeCompression: false }),
-  Passthrough: Object.freeze({ codec: 'copy' as const, extension: null, stereoBitrate: '', downmixBitrate: '', dynamicRangeCompression: false }),
+export const AUDIO_PRESETS = new Proxy(APP_CONFIG.audioPresets, {
+  get: (_target, property: AudioPresetName) => APP_CONFIG.audioPresets[property],
 });
 
 export const audioBitrate = (preset: AudioPresetName, track: AudioStreamInfo, downmix: boolean) => {

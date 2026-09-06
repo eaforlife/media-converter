@@ -1,5 +1,5 @@
 import './index.css';
-import { APP_CODENAME } from './config';
+import { APP_CODENAME, APP_CONFIG, setAppConfiguration } from './config.ts';
 import { encodedAudioFilter } from './audio-filters';
 import { AUDIO_PRESETS, AUDIO_PRESET_NAMES, audioBitrate, shouldResampleLossless } from './audio-workflow';
 import type { AudioPresetName } from './audio-workflow';
@@ -916,8 +916,7 @@ const softwareScaleFilter = (source: SourceFile, settings: JobSettings) => {
 };
 const softwareToneMapFilters = (dolbyVision: boolean, format: 'nv12' | 'p010le') => [
   ...(dolbyVision ? ['setparams=color_primaries=bt2020:color_trc=smpte2084:colorspace=bt2020nc'] : []),
-  'zscale=t=linear:npl=100', 'format=gbrpf32le', 'zscale=p=bt709',
-  'tonemap=tonemap=hable:desat=0', 'zscale=t=bt709:m=bt709:r=tv', `format=${format}`,
+  ...APP_CONFIG.videoFilters.hdrToSdr.replace('{format}', format).split(','),
 ];
 const hardwareAccelerationSummary = () => {
   const capabilities = [];
@@ -1061,7 +1060,7 @@ const getCommandArguments = (source: SourceFile, requestedOutputPath?: string, f
       if (video?.hasDolbyVision) {
         filters.push('setparams=color_primaries=bt2020:color_trc=smpte2084:colorspace=bt2020nc');
       }
-      filters.push(`tonemap_cuda=format=${toneMapFormat}:p=bt709:t=bt709:m=bt709:tonemap=bt2390:peak=100:desat=0`);
+      filters.push(APP_CONFIG.videoFilters.cudaTonemap.replace('{format}', toneMapFormat));
     } else if (main10Output && !dimensions) {
       filters.push(cudaScaleFilter('iw', 'ih', true));
     } else if (!dimensions && !toneMap && !cudaCrop) {
@@ -2441,6 +2440,7 @@ const startApplication = async () => {
   const removeProgressListener = window.mediaAPI.onRuntimeProgress((state) => { runtimeState = state; renderBootstrap(state); });
   try {
     await window.mediaAPI.initializeAppUpdate();
+    setAppConfiguration(await window.mediaAPI.loadAppConfig());
     builtInPresetConfiguration = await window.mediaAPI.loadBuiltInPresets();
     try { appSettings = await window.mediaAPI.loadSettings(); } catch { /* defaults remain active */ }
     appSettings.customPresets = await window.mediaAPI.loadCustomPresets();

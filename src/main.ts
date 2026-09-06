@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { updateElectronApp, UpdateSourceType } from 'update-electron-app';
-import { APP_NAME, APP_UPDATE_REPOSITORY } from './config';
+import { APP_CONFIG, APP_NAME, APP_UPDATE_REPOSITORY } from './config';
 import {
   APP_UPDATE_INTERVAL, electronUpdateFeedUrl, friendlyUpdateError, isUpdateCheckAlreadyRunningError,
   manualUpdateUnavailableMessage, releaseChangelogUrl, shouldInitializeAppUpdater,
@@ -21,6 +21,7 @@ import { probeMedia } from './media-probe';
 import { classifyMediaWorkflow } from './media-workflow';
 import { initializeRuntime, selectRuntimeChannel } from './runtime-manager';
 import { loadSettings, readConfig, saveSettings } from './settings-store';
+import { loadAppConfiguration } from './config-store';
 import { loadBuiltInPresets, presetFilePath, readPresetFile } from './preset-store';
 import { customPresetFilePath, loadCustomPresets, readCustomPresetFile, saveCustomPresets } from './custom-preset-store';
 import {
@@ -85,15 +86,9 @@ const handleSquirrelEvent = () => {
 
 const handlingSquirrelEvent = handleSquirrelEvent();
 
-const VIDEO_EXTENSIONS = new Set([
-  '.mp4', '.mkv', '.mov', '.avi', '.webm', '.m4v', '.mpg', '.mpeg', '.wmv',
-  '.flv', '.ts', '.mts', '.m2ts', '.vob', '.ogv', '.3gp', '.3g2',
-]);
-const AUDIO_EXTENSIONS = new Set([
-  '.aac', '.ac3', '.aif', '.aiff', '.alac', '.ape', '.dts', '.eac3', '.flac', '.m4a',
-  '.mka', '.mp3', '.oga', '.ogg', '.opus', '.tta', '.wav', '.wma', '.wv',
-]);
-const MEDIA_EXTENSIONS = new Set([...VIDEO_EXTENSIONS, ...AUDIO_EXTENSIONS]);
+const videoExtensions = () => new Set(APP_CONFIG.mediaExtensions.video.map((extension) => `.${extension}`));
+const audioExtensions = () => new Set(APP_CONFIG.mediaExtensions.audio.map((extension) => `.${extension}`));
+const mediaExtensions = () => new Set([...videoExtensions(), ...audioExtensions()]);
 
 let runtimeState: RuntimeState | null = null;
 let hardwareCheck: Promise<HardwareCapabilities> | null = null;
@@ -347,7 +342,7 @@ const lyricFilesFor = async (filePath: string) => {
 const toSourceFile = async (filePath: string, sourceRoot?: string): Promise<SourceFile | null> => {
   try {
     const [stat, lyricPaths] = await Promise.all([fs.promises.stat(filePath), lyricFilesFor(filePath)]);
-    if (!stat.isFile() || !MEDIA_EXTENSIONS.has(path.extname(filePath).toLowerCase())) return null;
+    if (!stat.isFile() || !mediaExtensions().has(path.extname(filePath).toLowerCase())) return null;
     const resolvedRoot = sourceRoot ? path.resolve(sourceRoot) : path.dirname(path.resolve(filePath));
     return {
       name: path.basename(filePath),
@@ -409,7 +404,7 @@ const inspectSources = async (
   files: SourceFile[],
   onProgress?: (completed: number, total: number, file: SourceFile) => void,
 ) => {
-  const audioOnly = files.every((file) => AUDIO_EXTENSIONS.has(path.extname(file.path).toLowerCase()));
+  const audioOnly = files.every((file) => audioExtensions().has(path.extname(file.path).toLowerCase()));
   const concurrency = inspectionConcurrency(files.length, audioOnly, os.availableParallelism());
   const detailedLogging = files.length <= 100;
   logActivity('INFO', 'source.inspection.started', { files: files.length, audioOnly, concurrency });
@@ -479,8 +474,8 @@ const recursivelyFindMedia = async (root: string, onProgress?: (discovered: numb
       for (const entry of entries) {
         const fullPath = path.join(directory, entry.name);
         if (entry.isDirectory() && entry.name.toLowerCase() !== 'converted') directories.push(fullPath);
-        else if (entry.isFile() && VIDEO_EXTENSIONS.has(path.extname(entry.name).toLowerCase())) videos.push(fullPath);
-        else if (entry.isFile() && AUDIO_EXTENSIONS.has(path.extname(entry.name).toLowerCase())) audio.push(fullPath);
+        else if (entry.isFile() && videoExtensions().has(path.extname(entry.name).toLowerCase())) videos.push(fullPath);
+        else if (entry.isFile() && audioExtensions().has(path.extname(entry.name).toLowerCase())) audio.push(fullPath);
         else if (entry.isFile() && isSupportedExternalSubtitle(entry.name)) subtitles.push(fullPath);
       }
     }
@@ -626,6 +621,7 @@ const registerIpc = () => {
   });
 
   ipcMain.handle('settings:load', () => loadSettings());
+  ipcMain.handle('config:load-app', () => loadAppConfiguration());
   ipcMain.handle('settings:save', (_event, settings: AppSettings) => saveSettings(settings));
   ipcMain.handle('presets:load', (event) => {
     if (!event.sender.isDestroyed()) event.sender.send('runtime:progress', {
@@ -676,7 +672,7 @@ const registerIpc = () => {
       defaultPath: initialDirectory || undefined,
       properties: ['openFile', 'multiSelections'],
       filters: [
-        { name: 'Media files', extensions: Array.from(MEDIA_EXTENSIONS, (ext) => ext.slice(1)) },
+        { name: 'Media files', extensions: Array.from(mediaExtensions(), (ext) => ext.slice(1)) },
       ],
     };
     const result = parent
@@ -815,6 +811,7 @@ const createWindow = () => {
 
 if (!handlingSquirrelEvent) app.whenReady().then(async () => {
   await initializeLogger();
+  await loadAppConfiguration();
   logActivity('INFO', 'application.started', {
     version: app.getVersion(),
     packaged: app.isPackaged,

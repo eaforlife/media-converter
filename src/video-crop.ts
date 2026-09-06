@@ -10,7 +10,13 @@ export const cuvidCropMargins = (
   crop: DetectedCrop,
   sourceWidth: number,
   sourceHeight: number,
-) => `${crop.y}x${sourceHeight - crop.y - crop.height}x${crop.x}x${sourceWidth - crop.x - crop.width}`;
+) => {
+  const top = Math.round(crop.y / 2);
+  const bottom = Math.round((sourceHeight - crop.height - crop.y) / 2);
+  const left = Math.round(crop.x / 2);
+  const right = Math.round((sourceWidth - crop.width - crop.x) / 2);
+  return `${top}x${bottom}x${left}x${right}`;
+};
 
 export const detectedCrop = (
   value: string | null | undefined,

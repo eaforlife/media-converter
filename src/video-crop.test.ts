@@ -16,5 +16,11 @@ test('derives an even scaled height from the cropped display aspect ratio', () =
 test('converts detected crop dimensions to CUVID decoder margins', () => {
   const crop = detectedCrop('1920:800:0:140', 1920, 1080);
   assert.ok(crop);
-  assert.equal(cuvidCropMargins(crop, 1920, 1080), '140x140x0x0');
+  assert.equal(cuvidCropMargins(crop, 1920, 1080), '70x70x0x0');
+});
+
+test('rounds asymmetric detected crops to CUVID decoder half margins', () => {
+  const crop = detectedCrop('1888:1041:17:19', 1920, 1080);
+  assert.ok(crop);
+  assert.equal(cuvidCropMargins(crop, 1920, 1080), '10x10x9x8');
 });

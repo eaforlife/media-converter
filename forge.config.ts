@@ -37,7 +37,8 @@ const config: ForgeConfig = {
       await Promise.all(result.outputPaths.map(async (outputPath) => {
         const resources = await packagedResourcesDirectory(outputPath, result.platform);
         await fs.promises.mkdir(resources, { recursive: true });
-        await fs.promises.copyFile(path.resolve('presets.ini'), path.join(resources, 'presets.ini'));
+        await Promise.all(['presets.ini', 'config.ini'].map((file) =>
+          fs.promises.copyFile(path.resolve(file), path.join(resources, file))));
       }));
     },
   },

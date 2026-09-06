@@ -1,6 +1,7 @@
 import { execFile } from 'node:child_process';
 import fs from 'node:fs';
 import { logActivity } from './app-logger';
+import { APP_CONFIG } from './config.ts';
 import type { HardwareCapabilities, VideoEncoderCapability } from './shared-types';
 
 const execute = (file: string, args: string[], timeout = 8_000): Promise<string> =>
@@ -244,21 +245,7 @@ const availableHardwareDecoders = async (ffmpegPath: string) => {
   }
 };
 
-type Candidate = Omit<VideoEncoderCapability, 'tenBit'> & { tenBitTest?: boolean; platforms?: NodeJS.Platform[] };
-const CANDIDATES: Candidate[] = [
-  { id: 'h264_nvenc', label: 'H.264 (NVENC)', vendor: 'NVIDIA', codec: 'H.264', platforms: ['win32', 'linux'] },
-  { id: 'hevc_nvenc', label: 'H.265 / HEVC (NVENC)', vendor: 'NVIDIA', codec: 'HEVC', tenBitTest: true, platforms: ['win32', 'linux'] },
-  { id: 'av1_nvenc', label: 'AV1 (NVENC)', vendor: 'NVIDIA', codec: 'AV1', platforms: ['win32', 'linux'] },
-  { id: 'h264_amf', label: 'H.264 (AMD AMF)', vendor: 'AMD', codec: 'H.264', platforms: ['win32'] },
-  { id: 'hevc_amf', label: 'H.265 / HEVC (AMD AMF)', vendor: 'AMD', codec: 'HEVC', tenBitTest: true, platforms: ['win32'] },
-  { id: 'av1_amf', label: 'AV1 (AMD AMF)', vendor: 'AMD', codec: 'AV1', platforms: ['win32'] },
-  { id: 'h264_qsv', label: 'H.264 (Intel QSV)', vendor: 'Intel', codec: 'H.264', platforms: ['win32', 'linux'] },
-  { id: 'hevc_qsv', label: 'H.265 / HEVC (Intel QSV)', vendor: 'Intel', codec: 'HEVC', tenBitTest: true, platforms: ['win32', 'linux'] },
-  { id: 'av1_qsv', label: 'AV1 (Intel QSV)', vendor: 'Intel', codec: 'AV1', platforms: ['win32', 'linux'] },
-  { id: 'h264_videotoolbox', label: 'H.264 (VideoToolbox)', vendor: 'Apple', codec: 'H.264', platforms: ['darwin'] },
-  { id: 'hevc_videotoolbox', label: 'H.265 / HEVC (VideoToolbox)', vendor: 'Apple', codec: 'HEVC', tenBitTest: true, platforms: ['darwin'] },
-  { id: 'av1_videotoolbox', label: 'AV1 (VideoToolbox)', vendor: 'Apple', codec: 'AV1', platforms: ['darwin'] },
-];
+type Candidate = typeof APP_CONFIG.encoders[number];
 
 export const detectHardwareCapabilities = async (ffmpegPath: string): Promise<HardwareCapabilities> => {
   const displayAdapters = await getPlatformAdapters();
@@ -270,7 +257,7 @@ export const detectHardwareCapabilities = async (ffmpegPath: string): Promise<Ha
   if (/\bamd\b|advanced micro devices|radeon/.test(adapterText)) detectedVendors.add('AMD');
   if (/intel/.test(adapterText)) detectedVendors.add('Intel');
   if (process.platform === 'darwin') detectedVendors.add('Apple');
-  const candidates = CANDIDATES.filter((candidate) =>
+  const candidates = APP_CONFIG.encoders.filter((candidate: Candidate) =>
     detectedVendors.has(candidate.vendor) && (!candidate.platforms || candidate.platforms.includes(process.platform)));
   logActivity('INFO', 'hardware.encoder-tests.selected', { count: candidates.length, vendors: [...detectedVendors] });
 

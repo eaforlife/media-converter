@@ -2,12 +2,21 @@
 
 All notable changes to EA Media Tools are documented here.
 
-## [Unreleased]
+## [2.7.0] - 2026-09-06
+
+### Added
+
+- Add validated `config.ini` defaults for app release endpoints, media extensions, audio-only presets, HDR-to-SDR filters, audio downmix filters, and available hardware encoder candidates.
 
 ### Changed
 
 - Set the Streaming bitrate buffer multiplier to 1x.
 - Disable spatial AQ and enable temporal AQ for Streaming sources at 720p and below, including the inherited 360p Cellular delivery stack, while preserving direct Cellular HEVC defaults.
+- Package `config.ini` beside `presets.ini` so app-level defaults can move out of baked application code while older preset files remain compatible.
+
+### Fixed
+
+- Convert detected auto-crop rectangles to CUVID decoder `-crop` margins by halving and rounding each edge, matching the filter crop area without cropping too much video.
 
 ## [2.6.8] - 2026-09-03
 
