@@ -40,7 +40,7 @@ test('explicit scaling uses the selected INI output profile instead of the sourc
 test('resolves every Streaming tier CQ and backend quality from presets.ini', () => {
   const streaming = configuration.presets.Streaming;
   equal(resolvePresetOutputDefaults(configuration, streaming, '4k', 'nvenc').quality, '31');
-  equal(resolvePresetOutputDefaults(configuration, streaming, '1080p', 'nvenc').quality, '31');
+  equal(resolvePresetOutputDefaults(configuration, streaming, '1080p', 'nvenc').quality, '30');
   equal(resolvePresetOutputDefaults(configuration, streaming, '720p', 'nvenc').quality, '32');
   equal(resolvePresetOutputDefaults(configuration, streaming, '360p', 'nvenc').quality, '32');
   equal(resolvePresetOutputDefaults(configuration, streaming, '1080p', 'amf').quality, '26');
@@ -101,6 +101,6 @@ test('disabled scaling emits no scale filter while retaining the source rate tie
 });
 
 test('buffer sizing retains the preset multiplier when max rate changes', () => {
-  equal(bufferSizeFor(7000, 2), 14000);
-  equal(bufferSizeFor(2500, 2), 5000);
+  equal(bufferSizeFor(5000, configuration.presets.Streaming.bufferMultiplier), 15000);
+  equal(bufferSizeFor(2500, configuration.presets.Streaming.bufferMultiplier), 7500);
 });

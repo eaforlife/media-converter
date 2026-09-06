@@ -60,7 +60,7 @@ Audio folders are scanned recursively. Streaming outputs 96 kbps Opus, or 128 kb
 
 For sources with more than two channels, enabled dynamic range compression runs immediately after a coefficient-normalized stereo downmix. It uses [Feishin's Default compressor preset](https://github.com/jeffvli/feishin/blob/development/src/renderer/features/settings/components/playback/eq-settings.tsx): -24 dB threshold, 4:1 ratio, 20 ms attack, 250 ms release, +6 dB makeup gain, and a 2.83 dB knee. A lookahead limiter prevents compressed peaks from clipping, and every encoded audio track uses timestamp-aware resampling so gaps or overlaps do not become audible choppiness. The option is available in the Filters tab. It defaults on for Regular, Streaming, Cellular, Music Video, and audio-only Streaming, and off for Archive and Passthrough.
 
-The Streaming video preset also uses Opus: 96 kbps for a stereo source and 128 kbps for a surround downmix. It uses a 1x bitrate buffer. At 4K and 1080p, spatial AQ strength 12 gives difficult dark scenes more short-term bitrate flexibility; at 720p and below, spatial AQ is disabled and temporal AQ is enabled instead.
+The Streaming video preset also uses Opus: 96 kbps for a stereo source and 128 kbps when surround audio is downmixed. It uses a 3x bitrate buffer. At 4K and 1080p, spatial AQ strength 12 gives difficult dark scenes more short-term bitrate flexibility; at 720p and below, spatial AQ is disabled and temporal AQ is enabled instead.
 
 Transcoded MP4 video places the playback index at the beginning, adds a keyframe at least every five seconds for more responsive seeking and Jellyfin segment boundaries, and marks HEVC video as `hvc1` for broader Apple and Safari direct-play compatibility. Stream-copy operations retain the source keyframe layout.
 
@@ -107,7 +107,7 @@ Auto Scale chooses an output profile from the source resolution. Selecting a sca
 | Output profile | FFmpeg scale | Streaming codec | Maximum video rate | Streaming NVENC quality |
 | --- | --- | --- | --- | --- |
 | 4K | `2720:-2` | HEVC Main / Main10 | 8000 kbps | CQ 31 |
-| 1080p | `1760:-2` | HEVC Main / Main10 | 5000 kbps | CQ 31 |
+| 1080p | `1760:-2` | HEVC Main / Main10 | 5000 kbps | CQ 30 |
 | 720p | `1320:-2` | AV1 | 2500 kbps | CQ 32 |
 | 360p | `720:-2` | AV1 | 2500 kbps | CQ 32 |
 

@@ -12,6 +12,7 @@ All notable changes to EA Media Tools are documented here.
 
 ### Changed
 
+- Set Streaming 1080p NVENC quality to CQ 30 and restore the Streaming bitrate buffer multiplier to 3x.
 - Remove the embedded copy of `config.ini` defaults from application code so app-level defaults are owned by the checked-in and remotely synchronized config file.
 - Keep Music Video preset bitrate, scaling, speed, and codec defaults in `presets.ini`, while workflow-only behavior now lives in `config.ini`.
 

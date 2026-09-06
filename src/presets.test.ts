@@ -34,7 +34,7 @@ test('loads ordered built-in preset values from presets.ini', () => {
   assert.equal(presets.Archive.encoderProfile['H.264'], 'high');
   assert.equal(presets.Regular.encoderProfile['H.264'], 'high');
   assert.equal(presets.Archive.bitrateControl, true);
-  assert.equal(presets.Streaming.bufferMultiplier, 1);
+  assert.equal(presets.Streaming.bufferMultiplier, 3);
   assert.equal(presets.Streaming.encoderTune.nvenc, 'hq');
   assert.equal(presets.Streaming.encoderTune.amf, 'high_quality');
   assert.equal(presets.Streaming.quality.nvenc, '31');
@@ -95,6 +95,7 @@ test('streaming tiers retain their own speed and CQ around the shared UHQ-compat
     [presets.Streaming.encoderSpeed, presets.Streaming.quality.nvenc],
     [2, '31'],
   );
+  assert.equal(presets.Streaming.outputTierDefaults['1080p'].quality.nvenc, '30');
   assert.deepEqual(
     [presets.Cellular.encoderSpeed, presets.Cellular.quality.nvenc],
     [2, '32'],
