@@ -39,13 +39,13 @@ test('music-video cover art is copied after the encoded primary video stream', (
   ]);
 });
 
-test('music-video output profiles map HEVC to Main10 and leave other codecs unset', () => {
+test('music-video output profiles map HEVC and AV1 to Main10', () => {
   assert.equal(isH264HighSource({ ...video, codec: 'H264', profile: 'High' }), true);
   assert.equal(isH264HighSource({ ...video, codec: 'HEVC', profile: 'Main 10' }), false);
   assert.equal(musicVideoEncoderProfile('HEVC', true), 'main10');
   assert.equal(musicVideoEncoderProfile('HEVC', false), null);
   assert.equal(musicVideoEncoderProfile('H.264', false), null);
-  assert.equal(musicVideoEncoderProfile('AV1', true), null);
+  assert.equal(musicVideoEncoderProfile('AV1', true), 'main10');
 });
 
 test('streaming HEVC defaults to Main or Main10 from the source characteristics', () => {
@@ -55,6 +55,7 @@ test('streaming HEVC defaults to Main or Main10 from the source characteristics'
   assert.equal(shouldDefaultToHevcMain10({ ...video, hasDolbyVision: true }), true);
   assert.equal(outputEncoderProfile('HEVC', 'main', false), 'main');
   assert.equal(outputEncoderProfile('HEVC', 'main', true), 'main10');
+  assert.equal(outputEncoderProfile('AV1', '', true), 'main10');
   assert.equal(outputEncoderProfile('H.264', 'high', false), 'high');
   assert.equal(outputEncoderProfile('H.264', '', false), null);
 });

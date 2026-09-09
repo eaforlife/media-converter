@@ -26,7 +26,9 @@ test('loads audio filters and presets from config.ini', () => {
 test('loads available encoders from config.ini', () => {
   const configuration = parseAppConfiguration(configFile);
   assert.ok(configuration.encoders.some((encoder) =>
-    encoder.id === 'hevc_nvenc' && encoder.tenBitTest && encoder.platforms?.includes('win32')));
+    encoder.id === 'hevc_nvenc' && encoder.main10Enabled && !encoder.highEnabled && encoder.platforms?.includes('win32')));
   assert.ok(configuration.encoders.some((encoder) =>
-    encoder.id === 'av1_videotoolbox' && encoder.vendor === 'Apple'));
+    encoder.id === 'av1_nvenc' && encoder.main10Enabled && !encoder.highEnabled));
+  assert.ok(configuration.encoders.some((encoder) =>
+    encoder.id === 'h264_nvenc' && !encoder.main10Enabled && encoder.highEnabled));
 });

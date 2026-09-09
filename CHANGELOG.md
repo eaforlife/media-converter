@@ -2,6 +2,18 @@
 
 All notable changes to EA Media Tools are documented here.
 
+## [2.8.0] - 2026-09-09
+
+### Added
+
+- Add config-controlled `main10` and `high` profile availability for every hardware encoder. AV1 NVENC now probes and exposes Main10 when supported.
+- Add AV1 bitrate multipliers to built-in presets, allowing codec-specific delivery rates without restricting manually customized values.
+
+### Changed
+
+- Hide unavailable profile toggles rather than showing disabled controls. HEVC and AV1 Main10 now share the same profile path and 10-bit pixel format handling.
+- Default Streaming AV1 at 720p and 360p/Cellular to Main10; Cellular now prefers AV1. AV1 uses half the configured Streaming or Cellular rate while retaining the preset's 3× buffer calculation.
+
 ## [2.7.1] - 2026-09-06
 
 ### Added

@@ -12,7 +12,8 @@ export type AudioPresetConfig = {
   dynamicRangeCompression: boolean;
 };
 export type EncoderCandidateConfig = Omit<VideoEncoderCapability, 'tenBit'> & {
-  tenBitTest?: boolean;
+  main10Enabled: boolean;
+  highEnabled: boolean;
   platforms?: NodeJS.Platform[];
 };
 export type AppConfiguration = {
@@ -104,7 +105,8 @@ export const parseAppConfiguration = (ini: string): AppConfiguration => {
       vendor,
       codec,
       platforms: commaList(requireValue(section, sectionName, 'platforms')) as NodeJS.Platform[],
-      tenBitTest: booleanValue(requireValue(section, sectionName, 'ten_bit_test'), `[${sectionName}] ten_bit_test`),
+      main10Enabled: booleanValue(requireValue(section, sectionName, 'main10'), `[${sectionName}] main10`),
+      highEnabled: booleanValue(requireValue(section, sectionName, 'high'), `[${sectionName}] high`),
     }];
   });
   if (!encoders.length) throw new Error('config.ini must define at least one [Encoder: <name>] section');

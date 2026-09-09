@@ -92,6 +92,14 @@ test('resolves H.264-only rates, profiles, and speed tiers from presets.ini', ()
   equal(streamingHevc.encoderProfile, 'main');
   equal(streamingHevc.encoderSpeed, 2);
   equal(streamingHevc.maxRate, 5000);
+  const streamingAv1 = resolvePresetOutputDefaults(
+    configuration, configuration.presets.Streaming, '1080p', 'nvenc', 'AV1',
+  );
+  equal(streamingAv1.maxRate, 2500);
+  const cellularAv1 = resolvePresetOutputDefaults(
+    configuration, configuration.presets.Cellular, '360p', 'nvenc', 'AV1',
+  );
+  equal(cellularAv1.maxRate, 1250);
 });
 
 test('disabled scaling emits no scale filter while retaining the source rate tier', () => {

@@ -48,6 +48,7 @@ export type BuiltInPresetDefinition = {
   deliveryMode: boolean;
   bitrateControl: boolean;
   bufferMultiplier: number;
+  bitrateMultiplier: Partial<Record<PreferredVideoCodec, number>>;
   audioCodec: PresetAudioCodec;
   audioRates: AudioRates;
   dynamicRangeCompression: boolean;
@@ -227,6 +228,15 @@ export const parseBuiltInPresetConfiguration = (ini: string): BuiltInPresetConfi
       deliveryMode: booleanValue(get('delivery_mode'), label('delivery_mode')),
       bitrateControl: booleanValue(get('bitrate_control'), label('bitrate_control')),
       bufferMultiplier: numberValue(get('buffer_multiplier'), label('buffer_multiplier'), 0, 20),
+      bitrateMultiplier: Object.fromEntries(Object.entries(CODEC_KEYS).map(([codec, key]) => {
+        const value = optional(`bitrate_multiplier_${key}`);
+        if (!value) return [codec, undefined];
+        const multiplier = Number(value);
+        if (!Number.isFinite(multiplier) || multiplier <= 0 || multiplier > 10) {
+          throw new Error(`${label(`bitrate_multiplier_${key}`)} must be greater than 0 and at most 10`);
+        }
+        return [codec, multiplier];
+      })) as Partial<Record<PreferredVideoCodec, number>>,
       audioCodec: enumValue(get('audio_codec'), ['aac', 'opus'], label('audio_codec')),
       audioRates: {
         aac: { stereo: get('audio_aac_stereo'), surround: get('audio_aac_downmix') },
@@ -294,6 +304,7 @@ export const resolvePresetOutputDefaults = (
   const outputProfile = configuration.outputProfiles[tier];
   const overrides = preset.outputTierDefaults[tier];
   const codecOverrides = overrides.codec[codec] ?? {};
+  const bitrateMultiplier = preset.bitrateMultiplier[codec] ?? 1;
   const deliveryPreset = overrides.deliveryPreset
     ? configuration.presets[overrides.deliveryPreset]
     : preset;
@@ -304,7 +315,7 @@ export const resolvePresetOutputDefaults = (
     encoderProfile: preset.encoderProfile[codec] ?? '',
     resolution: overrides.resolution ?? outputProfile.scale,
     quality: overrides.quality[family] ?? deliveryPreset.quality[family],
-    videoBitrate: codecOverrides.videoBitrate ?? overrides.videoBitrate ?? outputProfile.videoBitrate,
-    maxRate: codecOverrides.maxRate ?? overrides.maxRate ?? outputProfile.maxRate,
+    videoBitrate: Math.round((codecOverrides.videoBitrate ?? overrides.videoBitrate ?? outputProfile.videoBitrate) * bitrateMultiplier),
+    maxRate: Math.round((codecOverrides.maxRate ?? overrides.maxRate ?? outputProfile.maxRate) * bitrateMultiplier),
   };
 };

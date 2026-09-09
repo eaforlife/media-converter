@@ -34,7 +34,7 @@ import { mediaLanguageName, mediaLanguageOptions } from './media-language';
 import { applyStreamMetadataPatch, metadataTemporaryPath, streamMetadataChanged, streamMetadataPatch } from './metadata-edit';
 import type { EditableStreamMetadata } from './metadata-edit';
 import {
-  attachedCoverArtArguments, isH264HighSource, musicVideoEncoderProfile, outputEncoderProfile,
+  attachedCoverArtArguments, musicVideoEncoderProfile, outputEncoderProfile,
   frameRateConversionArguments, frameRateOverrideState, shouldDefaultToHevcMain10,
 } from './media-workflow';
 import { mp4PlaybackArguments } from './mp4-playback';
@@ -437,7 +437,7 @@ const applyMusicVideoPreset = (source: SourceFile) => {
   settings.filters = {
     ...defaultFilters(source), scale: preset.scale, scaleLocked: preset.scaleLocked, stripMetadata: false,
     extractClosedCaptions: APP_CONFIG.musicVideoWorkflow.extractClosedCaptions,
-    pixelFormat10Bit: isH264HighSource(source.media?.video),
+    pixelFormat10Bit: shouldDefaultToMain10(source, preset.name, outputProfile.tier, encoder),
     dynamicRangeCompression: preset.dynamicRangeCompression,
   };
   for (const track of source.media?.audio ?? []) {
@@ -551,6 +551,7 @@ const applyPreset = (source: SourceFile, preset: string, persist = true) => {
   settings.filters = defaults
     ? {
       ...defaultFilters(source), scale: defaults.scale, scaleLocked: defaults.scaleLocked,
+      pixelFormat10Bit: shouldDefaultToMain10(source, defaults.name, outputProfile!.tier, encoder),
       dynamicRangeCompression: defaults.dynamicRangeCompression,
     }
     : { ...saved!.filters };
@@ -605,6 +606,7 @@ const applyBuiltInScaleProfile = (
   settings.bufferSize = String(bufferSizeFor(defaults.bitrateControl ? outputDefaults.maxRate : 0, defaults.bufferMultiplier));
   settings.deliveryMode = profileDefaults.deliveryMode;
   settings.advancedVideo = resolvePresetAdvancedVideo(profileDefaults, preferredCodecForEncoder(encoder), outputProfile.tier);
+  settings.filters.pixelFormat10Bit = shouldDefaultToMain10(source, defaults.name, outputProfile.tier, encoder);
   for (const track of source.media?.audio ?? []) {
     const audio = settings.audio[track.index];
     if (audio && audio.codec !== 'copy') {
@@ -799,8 +801,21 @@ const addEncodedAudioFilterArguments = (
   );
   if (downmixToStereo && track.channels <= 2) args.push(`-ac:a:${outputIndex}`, '2');
 };
-const encoderCanOutput10Bit = (encoder: string) => encoder === 'libx265'
-  || Boolean(hardwareCapabilities.encoders.find((item) => item.id === encoder)?.tenBit);
+const encoderMain10Enabled = (encoder: string) => encoder === 'libx265'
+  || Boolean(APP_CONFIG.encoders.find((item) => item.id === encoder)?.main10Enabled);
+const encoderHighEnabled = (encoder: string) => encoder === 'libx264'
+  || Boolean(APP_CONFIG.encoders.find((item) => item.id === encoder)?.highEnabled);
+const encoderCanOutput10Bit = (encoder: string) => encoderMain10Enabled(encoder)
+  && (encoder === 'libx265' || Boolean(hardwareCapabilities.encoders.find((item) => item.id === encoder)?.tenBit));
+const shouldDefaultToMain10 = (
+  source: SourceFile,
+  preset: string,
+  tier: ReturnType<typeof videoOutputProfile>['tier'],
+  encoder: string,
+) => encoderMain10Enabled(encoder) && (
+  shouldDefaultToHevcMain10(source.media?.video)
+  || (preferredCodecForEncoder(encoder) === 'AV1' && (preset === 'Cellular' || (preset === 'Streaming' && (tier === '720p' || tier === '360p'))))
+);
 
 const qsvDecoderName = (source: SourceFile) => {
   const codecNames: Record<string, string> = {
@@ -1030,8 +1045,8 @@ const getCommandArguments = (source: SourceFile, requestedOutputPath?: string, f
   const video = source.media?.video;
   const toneMap = Boolean(settings.filters.toneMapHdrToSdr && (video?.hasHdr || video?.hasDolbyVision));
   const outputCodec = preferredCodecForEncoder(settings.encoder);
-  const hevcOutput = outputCodec === 'HEVC';
-  const canUse10Bit = hevcOutput && encoderCanOutput10Bit(settings.encoder);
+  const tenBitOutput = outputCodec === 'HEVC' || outputCodec === 'AV1';
+  const canUse10Bit = tenBitOutput && encoderCanOutput10Bit(settings.encoder);
   const main10Output = settings.filters.pixelFormat10Bit && canUse10Bit;
   const profile = outputEncoderProfile(
     outputCodec,
@@ -1994,9 +2009,11 @@ const renderFilterSettings = (source: SourceFile, settings: JobSettings) => {
   const outputCodec = preferredCodecForEncoder(settings.encoder);
   const h264Output = outputCodec === 'H.264';
   const h264High = h264Output && settings.encoderProfile.toLowerCase() === 'high';
-  const hevcOutput = outputCodec === 'HEVC';
+  const tenBitOutput = outputCodec === 'HEVC' || outputCodec === 'AV1';
   const supports10Bit = encoderCanOutput10Bit(settings.encoder);
-  const allowMain10 = hevcOutput && supports10Bit;
+  const showMain10 = tenBitOutput && encoderMain10Enabled(settings.encoder);
+  const allowMain10 = showMain10 && supports10Bit;
+  const showH264High = h264Output && encoderHighEnabled(settings.encoder);
   const hasSurround = Boolean(source.media?.audio.some((track) => settings.audio[track.index]?.enabled && track.channels > 2));
   const crop = detectedCropForSource(source);
   const cropDetail = crop ? `Detected ${crop.filter}` : 'No crop detected; full frame will be retained';
@@ -2006,8 +2023,8 @@ const renderFilterSettings = (source: SourceFile, settings: JobSettings) => {
   return `<div class="filter-layout"><fieldset class="settings-card processing-fieldset ${settings.processing.video ? '' : 'processing-disabled'}"${settings.processing.video ? '' : ' disabled'}><div class="card-title"><div><span>PICTURE FILTERS</span><h3>Automatic processing</h3></div>${icon('sliders', 22)}</div>
     <div class="filter-options"><button type="button" class="toggle-row" role="switch" data-filter="autoCrop"${switchState(settings.filters.autoCrop)}><span><strong>Auto Crop</strong><small>${escapeHtml(cropDetail)}</small></span><i aria-hidden="true"></i></button>
     <button type="button" class="toggle-row ${isHdr ? '' : 'disabled'}" role="switch" data-filter="toneMapHdrToSdr"${switchState(settings.filters.toneMapHdrToSdr)}${isHdr ? '' : ' disabled'}><span><strong>HDR to SDR</strong><small>${isHdr ? `Tone-map ${escapeHtml(hdrLabel(source))} to SDR` : 'Unavailable because the source is SDR'}</small></span><i aria-hidden="true"></i></button>
-    <button type="button" class="toggle-row ${allowMain10 ? '' : 'disabled'}" role="switch" data-filter="pixelFormat10Bit"${switchState(settings.filters.pixelFormat10Bit && hevcOutput)}${allowMain10 ? '' : ' disabled'}><span><strong>HEVC Main10 profile</strong><small>${allowMain10 ? settings.encoder.endsWith('_nvenc') ? 'Use HEVC Main10 and CUDA-native p010le output without leaving GPU memory' : 'Use the HEVC Main10 profile and a 10-bit output pixel format' : hevcOutput ? 'The detected HEVC encoder did not pass its 10-bit capability test' : 'Available only when an HEVC output encoder is selected'}</small></span><i aria-hidden="true"></i></button>
-    ${h264Output ? `<button type="button" class="toggle-row" role="switch" data-video-profile="h264-high"${switchState(h264High)}><span><strong>H.264 High profile</strong><small>Use the High output profile; enabled by default for H.264.</small></span><i aria-hidden="true"></i></button>` : ''}
+    ${showMain10 ? `<button type="button" class="toggle-row ${allowMain10 ? '' : 'disabled'}" role="switch" data-filter="pixelFormat10Bit"${switchState(settings.filters.pixelFormat10Bit)}${allowMain10 ? '' : ' disabled'}><span><strong>${escapeHtml(outputCodec)} Main10 profile</strong><small>${allowMain10 ? settings.encoder.endsWith('_nvenc') ? `Use ${escapeHtml(outputCodec)} Main10 and CUDA-native p010le output without leaving GPU memory` : `Use the ${escapeHtml(outputCodec)} Main10 profile and a 10-bit output pixel format` : `The detected ${escapeHtml(outputCodec)} encoder did not pass its 10-bit capability test`}</small></span><i aria-hidden="true"></i></button>` : ''}
+    ${showH264High ? `<button type="button" class="toggle-row" role="switch" data-video-profile="h264-high"${switchState(h264High)}><span><strong>H.264 High profile</strong><small>Use the High output profile; enabled by default for H.264.</small></span><i aria-hidden="true"></i></button>` : ''}
     <label class="scale-row"><span><strong>Auto scale</strong><small>${isMusicVideoWorkflow(source) ? `Music Video locks Auto Scale and only scales 4K sources to ${escapeHtml(musicVideoScale)}.` : settings.filters.scaleLocked ? 'Cellular locks scaling to 360p.' : 'Choose an automatic output height or leave scaling disabled.'}</small></span><select id="filter-scale"${settings.filters.scaleLocked ? ' disabled' : ''}><option value="auto"${selected(settings.filters.scale === 'auto')}>Auto Scale</option><option value="1080p"${selected(settings.filters.scale === '1080p')}>1080p</option><option value="720p"${selected(settings.filters.scale === '720p')}>720p</option><option value="360p"${selected(settings.filters.scale === '360p')}>360p</option><option value="disabled"${selected(settings.filters.scale === 'disabled')}>Disabled</option></select></label></div></fieldset>
     <fieldset class="settings-card processing-fieldset ${settings.processing.audio ? '' : 'processing-disabled'}"${settings.processing.audio ? '' : ' disabled'}><div class="card-title"><div><span>AUDIO FILTERS</span><h3>Surround processing</h3></div>${icon('audio', 22)}</div><div class="filter-options">
       <button type="button" class="toggle-row ${hasSurround ? '' : 'disabled'}" role="switch" data-audio-filter="dynamicRangeCompression"${switchState(settings.filters.dynamicRangeCompression)}${hasSurround ? '' : ' disabled'}><span><strong>Dynamic range compressor</strong><small>${hasSurround ? 'Apply Feishin\'s Default compressor immediately after each surround downmix.' : 'No enabled surround source was detected.'}</small></span><i aria-hidden="true"></i></button>

@@ -265,7 +265,7 @@ export const detectHardwareCapabilities = async (ffmpegPath: string): Promise<Ha
   const [testedEncoders, cudaAvailable, amfDecodeAvailable, qsvDecodeAvailable, decoders, vaapiAvailable] = await Promise.all([
     Promise.all(candidates.map(async (candidate): Promise<VideoEncoderCapability | null> => {
       if (!await canEncode(ffmpegPath, candidate.id)) return null;
-      const tenBit = candidate.tenBitTest ? await canEncode(ffmpegPath, candidate.id, true) : false;
+      const tenBit = candidate.main10Enabled ? await canEncode(ffmpegPath, candidate.id, true) : false;
       return {
         id: candidate.id,
         label: candidate.label,
