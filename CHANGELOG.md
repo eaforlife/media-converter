@@ -2,6 +2,12 @@
 
 All notable changes to EA Media Tools are documented here.
 
+## [2.8.1] - 2026-09-09
+
+### Fixed
+
+- Keep AV1 10-bit output on the Main profile and use `p010le` filtering; only HEVC emits the Main10 profile. Rename the UI control to 10-bit output.
+
 ## [2.8.0] - 2026-09-09
 
 ### Added
