@@ -2,6 +2,12 @@
 
 All notable changes to EA Media Tools are documented here.
 
+## [2.8.2] - 2026-09-09
+
+### Fixed
+
+- Use NVENC numeric profile values: `0` for AV1 Main and `1` for H.264 High. HEVC Main10 remains `main10` for 10-bit output.
+
 ## [2.8.1] - 2026-09-09
 
 ### Fixed

@@ -2008,7 +2008,7 @@ const renderFilterSettings = (source: SourceFile, settings: JobSettings) => {
   const isHdr = Boolean(video?.hasHdr || video?.hasDolbyVision);
   const outputCodec = preferredCodecForEncoder(settings.encoder);
   const h264Output = outputCodec === 'H.264';
-  const h264High = h264Output && settings.encoderProfile.toLowerCase() === 'high';
+  const h264High = h264Output && settings.encoderProfile === '1';
   const tenBitOutput = outputCodec === 'HEVC' || outputCodec === 'AV1';
   const supports10Bit = encoderCanOutput10Bit(settings.encoder);
   const show10Bit = tenBitOutput && encoderMain10Enabled(settings.encoder);
@@ -2201,7 +2201,7 @@ const bindContentEvents = () => {
           outputProfile.tier,
         );
       } else {
-        settings.encoderProfile = preferredCodecForEncoder(value) === 'H.264' ? 'high' : '';
+        settings.encoderProfile = preferredCodecForEncoder(value) === 'H.264' ? '1' : preferredCodecForEncoder(value) === 'AV1' ? '0' : '';
       }
       markCustom(settings);
       renderWorkspace();
@@ -2318,7 +2318,7 @@ const bindContentEvents = () => {
     renderWorkspace();
   }));
   document.querySelector<HTMLButtonElement>('[data-video-profile="h264-high"]')?.addEventListener('click', (event) => {
-    settings.encoderProfile = toggleSwitch(event.currentTarget as HTMLButtonElement) ? 'high' : '';
+    settings.encoderProfile = toggleSwitch(event.currentTarget as HTMLButtonElement) ? '1' : '';
     markCustom(settings);
     renderWorkspace();
   });

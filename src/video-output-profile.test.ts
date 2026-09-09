@@ -81,7 +81,7 @@ test('resolves H.264-only rates, profiles, and speed tiers from presets.ini', ()
     const defaults = resolvePresetOutputDefaults(
       configuration, configuration.presets[expected.preset], expected.tier, 'nvenc', 'H.264',
     );
-    equal(defaults.encoderProfile, 'high');
+    equal(defaults.encoderProfile, '1');
     equal(defaults.encoderSpeed, expected.speed);
     equal(defaults.maxRate, expected.maxRate);
   }

@@ -31,8 +31,8 @@ test('loads ordered built-in preset values from presets.ini', () => {
   assert.equal(presets.Streaming.encoderProfile.HEVC, 'main');
   assert.equal(presets.Archive.preferredVideoCodec, 'H.264');
   assert.equal(presets.Regular.preferredVideoCodec, 'H.264');
-  assert.equal(presets.Archive.encoderProfile['H.264'], 'high');
-  assert.equal(presets.Regular.encoderProfile['H.264'], 'high');
+  assert.equal(presets.Archive.encoderProfile['H.264'], '1');
+  assert.equal(presets.Regular.encoderProfile['H.264'], '1');
   assert.equal(presets.Archive.bitrateControl, true);
   assert.equal(presets.Streaming.bufferMultiplier, 3);
   assert.equal(presets.Streaming.encoderTune.nvenc, 'hq');

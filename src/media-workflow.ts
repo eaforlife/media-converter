@@ -72,11 +72,11 @@ export const outputEncoderProfile = (
   main10Output: boolean,
 ) => outputCodec === 'HEVC' && main10Output
   ? 'main10'
-  : outputCodec === 'AV1' && main10Output
-    ? configuredProfile || 'main'
+  : outputCodec === 'AV1'
+    ? configuredProfile || '0'
     : configuredProfile || null;
 
 export const musicVideoEncoderProfile = (
   outputCodec: PreferredVideoCodec,
   main10Output: boolean,
-) => outputCodec === 'HEVC' && main10Output ? 'main10' : outputCodec === 'AV1' && main10Output ? 'main' : null;
+) => outputCodec === 'HEVC' && main10Output ? 'main10' : outputCodec === 'AV1' ? '0' : null;

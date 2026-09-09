@@ -45,7 +45,7 @@ test('music-video output profiles use HEVC Main10 and AV1 Main for 10-bit output
   assert.equal(musicVideoEncoderProfile('HEVC', true), 'main10');
   assert.equal(musicVideoEncoderProfile('HEVC', false), null);
   assert.equal(musicVideoEncoderProfile('H.264', false), null);
-  assert.equal(musicVideoEncoderProfile('AV1', true), 'main');
+  assert.equal(musicVideoEncoderProfile('AV1', true), '0');
 });
 
 test('streaming HEVC defaults to Main or Main10 from the source characteristics', () => {
@@ -55,8 +55,8 @@ test('streaming HEVC defaults to Main or Main10 from the source characteristics'
   assert.equal(shouldDefaultToHevcMain10({ ...video, hasDolbyVision: true }), true);
   assert.equal(outputEncoderProfile('HEVC', 'main', false), 'main');
   assert.equal(outputEncoderProfile('HEVC', 'main', true), 'main10');
-  assert.equal(outputEncoderProfile('AV1', '', true), 'main');
-  assert.equal(outputEncoderProfile('H.264', 'high', false), 'high');
+  assert.equal(outputEncoderProfile('AV1', '', true), '0');
+  assert.equal(outputEncoderProfile('H.264', '1', false), '1');
   assert.equal(outputEncoderProfile('H.264', '', false), null);
 });
 
