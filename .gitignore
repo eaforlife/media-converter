@@ -113,3 +113,6 @@ Thumbs.db
 Desktop.ini
 # Downloaded third-party runtime binaries and their generated notices.
 /lib/
+
+# Local LLM Agent rules
+.clinerules/
