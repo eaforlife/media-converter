@@ -60,7 +60,8 @@ test('uses protected generic NVDEC only when decoder-side crop is unavailable', 
 
 test('makes logged decode errors and empty video outputs fail closed', () => {
   assert.deepEqual(strictVideoTranscodeArguments(), [
-    '-max_error_rate', '0',
+    '-max_error_rate', '1',
     '-abort_on', 'empty_output+empty_output_stream',
+    '-err_detect', 'ignore_err',
   ]);
 });

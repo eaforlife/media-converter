@@ -51,7 +51,7 @@ export const cudaHardwareDecodeArguments = (decoderCropArguments: readonly strin
 ];
 
 export const strictVideoTranscodeArguments = () => [
-  '-max_error_rate', '0',
+  '-max_error_rate', '1',
   '-abort_on', 'empty_output+empty_output_stream',
   '-err_detect', 'ignore_err',
 ];
