@@ -53,5 +53,9 @@ export const cudaHardwareDecodeArguments = (decoderCropArguments: readonly strin
 export const strictVideoTranscodeArguments = () => [
   '-max_error_rate', '1',
   '-abort_on', 'empty_output+empty_output_stream',
+  // Let the Matroska demuxer/decoder skip damaged packets and continue. This
+  // keeps hardware decoding enabled; missing reference frames may still make
+  // a few corrupted pictures unavailable, but the transcode can complete.
+  '-fflags', '+discardcorrupt',
   '-err_detect', 'ignore_err',
 ];
