@@ -13,7 +13,7 @@ const presetFile = fs.readFileSync(new URL('../presets.ini', import.meta.url), '
 test('loads ordered built-in preset values from presets.ini', () => {
   const configuration = parseBuiltInPresetConfiguration(presetFile);
   const presets = configuration.presets;
-  assert.equal(configuration.version, '1ef699d');
+  assert.equal(configuration.version, '2eee326');
   assert.deepEqual(Object.keys(presets), ['Archive', 'Regular', 'Streaming', 'Cellular', 'Music Video']);
   assert.equal(presets.Streaming.audioCodec, 'opus');
   assert.equal(presets.Streaming.frameRate, 23.976);
@@ -28,7 +28,7 @@ test('loads ordered built-in preset values from presets.ini', () => {
   assert.equal(preferredVideoCodecForPreset(presets.Streaming, '1080p'), 'HEVC');
   assert.equal(preferredVideoCodecForPreset(presets.Streaming, '720p'), 'AV1');
   assert.equal(preferredVideoCodecForPreset(presets.Streaming, '360p'), 'AV1');
-  assert.equal(presets.Streaming.encoderProfile.HEVC, 'main');
+  assert.equal(presets.Streaming.encoderProfile.HEVC, 'main10');
   assert.equal(presets.Archive.preferredVideoCodec, 'H.264');
   assert.equal(presets.Regular.preferredVideoCodec, 'H.264');
   assert.equal(presets.Archive.encoderProfile['H.264'], '1');
@@ -48,7 +48,7 @@ test('loads ordered built-in preset values from presets.ini', () => {
   }
   assert.deepEqual(presets.Streaming.advancedVideo, {
     bFrames: true, multipass: 1, bRefMode: 'middle', adaptiveBFrames: true,
-    sceneCutDetection: true, rcLookahead: 26, nonReferenceP: false, spatialAq: 13, temporalAq: false,
+    sceneCutDetection: true, rcLookahead: 26, nonReferenceP: false, spatialAq: 12, temporalAq: false,
   });
   assert.equal(presets.Cellular.advancedVideo.spatialAq, 12);
   assert.equal(presets['Music Video'].advancedVideo.spatialAq, 12);
@@ -95,7 +95,7 @@ test('streaming tiers retain their own speed and CQ around the shared UHQ-compat
     [presets.Streaming.encoderSpeed, presets.Streaming.quality.nvenc],
     [2, '31'],
   );
-  assert.equal(presets.Streaming.outputTierDefaults['1080p'].quality.nvenc, '30');
+  assert.equal(presets.Streaming.outputTierDefaults['1080p'].quality.nvenc, '31');
   assert.deepEqual(
     [presets.Cellular.encoderSpeed, presets.Cellular.quality.nvenc],
     [2, '32'],
@@ -103,7 +103,7 @@ test('streaming tiers retain their own speed and CQ around the shared UHQ-compat
   for (const name of ['Streaming', 'Cellular', 'Music Video'] as const) {
     assert.equal(presets[name].encoderTune.nvenc, 'hq');
   }
-  assert.equal(presets.Streaming.advancedVideo.spatialAq, 13);
+  assert.equal(presets.Streaming.advancedVideo.spatialAq, 12);
   assert.equal(resolvePresetAdvancedVideo(presets.Streaming, 'AV1').bFrames, false);
   assert.equal(resolvePresetAdvancedVideo(presets.Streaming, 'AV1', '720p').spatialAq, 0);
   assert.equal(resolvePresetAdvancedVideo(presets.Streaming, 'AV1', '720p').temporalAq, true);
@@ -135,7 +135,7 @@ test('loads codec-specific H.264 tier overrides from presets.ini', () => {
 
 test('rejects out-of-range editable preset values', () => {
   assert.throws(
-    () => parseBuiltInPresets(presetFile.replace('[Version: 1ef699d]', '[Version: current]')),
+    () => parseBuiltInPresets(presetFile.replace('[Version: 2eee326]', '[Version: current]')),
     /must begin with \[Version: <commit>\]/,
   );
   assert.throws(

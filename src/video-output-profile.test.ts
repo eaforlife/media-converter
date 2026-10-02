@@ -13,10 +13,10 @@ const profiles = configuration.outputProfiles;
 
 test('loads every output tier value from presets.ini', () => {
   const cases = [
-    { height: 2160, tier: '4k', scale: ['2720', '-2'], videoBitrate: 0, maxRate: 8000 },
-    { height: 1080, tier: '1080p', scale: ['1760', '-2'], videoBitrate: 0, maxRate: 5000 },
-    { height: 720, tier: '720p', scale: ['1320', '-2'], videoBitrate: 0, maxRate: 2500 },
-    { height: 360, tier: '360p', scale: ['720', '-2'], videoBitrate: 0, maxRate: 2500 },
+    { height: 2160, tier: '4k', scale: ['3180', '-2'], videoBitrate: 0, maxRate: 8000 },
+    { height: 1080, tier: '1080p', scale: ['1860', '-2'], videoBitrate: 0, maxRate: 5000 },
+    { height: 720, tier: '720p', scale: ['1300', '-2'], videoBitrate: 0, maxRate: 2500 },
+    { height: 360, tier: '360p', scale: ['-2', '540'], videoBitrate: 0, maxRate: 2500 },
   ] as const;
 
   for (const expected of cases) {
@@ -30,9 +30,9 @@ test('loads every output tier value from presets.ini', () => {
 
 test('explicit scaling uses the selected INI output profile instead of the source tier', () => {
   const sourceHeight = 2160;
-  deepStrictEqual(scaleDimensionsFor(sourceHeight, '1080p', profiles), ['1760', '-2']);
-  deepStrictEqual(scaleDimensionsFor(sourceHeight, '720p', profiles), ['1320', '-2']);
-  deepStrictEqual(scaleDimensionsFor(sourceHeight, '360p', profiles), ['720', '-2']);
+  deepStrictEqual(scaleDimensionsFor(sourceHeight, '1080p', profiles), ['1860', '-2']);
+  deepStrictEqual(scaleDimensionsFor(sourceHeight, '720p', profiles), ['1300', '-2']);
+  deepStrictEqual(scaleDimensionsFor(sourceHeight, '360p', profiles), ['-2', '540']);
   equal(videoOutputProfile(sourceHeight, '1080p', profiles).maxRate, 5000);
   equal(videoOutputProfile(sourceHeight, '720p', profiles).maxRate, 2500);
 });
@@ -40,7 +40,7 @@ test('explicit scaling uses the selected INI output profile instead of the sourc
 test('resolves every Streaming tier CQ and backend quality from presets.ini', () => {
   const streaming = configuration.presets.Streaming;
   equal(resolvePresetOutputDefaults(configuration, streaming, '4k', 'nvenc').quality, '31');
-  equal(resolvePresetOutputDefaults(configuration, streaming, '1080p', 'nvenc').quality, '30');
+  equal(resolvePresetOutputDefaults(configuration, streaming, '1080p', 'nvenc').quality, '31');
   equal(resolvePresetOutputDefaults(configuration, streaming, '720p', 'nvenc').quality, '32');
   equal(resolvePresetOutputDefaults(configuration, streaming, '360p', 'nvenc').quality, '32');
   equal(resolvePresetOutputDefaults(configuration, streaming, '1080p', 'amf').quality, '26');
@@ -69,7 +69,7 @@ test('resolves H.264-only rates, profiles, and speed tiers from presets.ini', ()
   const cases = [
     { preset: 'Archive', tier: '1080p', speed: 6, maxRate: 10000 },
     { preset: 'Regular', tier: '1080p', speed: 4, maxRate: 8000 },
-    { preset: 'Streaming', tier: '1080p', speed: 4, maxRate: 6500 },
+    { preset: 'Streaming', tier: '1080p', speed: 4, maxRate: 4500 },
     { preset: 'Music Video', tier: '1080p', speed: 6, maxRate: 7000 },
     { preset: 'Regular', tier: '720p', speed: 2, maxRate: 4000 },
     { preset: 'Streaming', tier: '360p', speed: 2, maxRate: 4000 },
@@ -89,13 +89,13 @@ test('resolves H.264-only rates, profiles, and speed tiers from presets.ini', ()
   const streamingHevc = resolvePresetOutputDefaults(
     configuration, configuration.presets.Streaming, '1080p', 'nvenc', 'HEVC',
   );
-  equal(streamingHevc.encoderProfile, 'main');
+  equal(streamingHevc.encoderProfile, 'main10');
   equal(streamingHevc.encoderSpeed, 2);
-  equal(streamingHevc.maxRate, 5000);
+  equal(streamingHevc.maxRate, 4500);
   const streamingAv1 = resolvePresetOutputDefaults(
     configuration, configuration.presets.Streaming, '1080p', 'nvenc', 'AV1',
   );
-  equal(streamingAv1.maxRate, 2500);
+  equal(streamingAv1.maxRate, 2700);
   const cellularAv1 = resolvePresetOutputDefaults(
     configuration, configuration.presets.Cellular, '360p', 'nvenc', 'AV1',
   );
