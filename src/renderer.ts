@@ -932,7 +932,7 @@ const softwareToneMapFilters = (dolbyVision: boolean, format: 'nv12' | 'p010le')
   ...(dolbyVision ? ['setparams=color_primaries=bt2020:color_trc=smpte2084:colorspace=bt2020nc'] : []),
   ...APP_CONFIG.videoFilters.hdrToSdr.replace('{format}', format).split(','),
 ];
-const sourceColorMetadataArguments = (video: NonNullable<SourceFile['media']>['video']) => {
+const sourceColorMetadataArguments = (video?: NonNullable<SourceFile['media']>['video']) => {
   if (!video?.hasHdr && !video?.hasDolbyVision) return [];
   return [
     ...(video.colorPrimaries ? ['-color_primaries:v:0', video.colorPrimaries] : []),

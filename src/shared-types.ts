@@ -28,9 +28,9 @@ export type VideoStreamInfo = {
   width: number;
   height: number;
   frameRate: string;
-  colorTransfer: string | null;
-  colorPrimaries: string | null;
-  colorSpace: string | null;
+  colorTransfer?: string | null;
+  colorPrimaries?: string | null;
+  colorSpace?: string | null;
   hasHdr: boolean;
   hdrFormat: string | null;
   hasDolbyVision: boolean;
