@@ -27,6 +27,7 @@ type ProbeStream = {
   r_frame_rate?: string;
   color_transfer?: string;
   color_primaries?: string;
+  colorspace?: string;
   tags?: Record<string, string>;
   disposition?: Record<string, number>;
   side_data_list?: Array<Record<string, unknown>>;
@@ -89,6 +90,9 @@ const videoInfo = (stream: ProbeStream): VideoStreamInfo => {
     width: stream.width ?? 0,
     height: stream.height ?? 0,
     frameRate: parseFrameRate(stream),
+    colorTransfer: stream.color_transfer || null,
+    colorPrimaries: stream.color_primaries || null,
+    colorSpace: stream.colorspace || null,
     hasHdr,
     hdrFormat,
     hasDolbyVision,

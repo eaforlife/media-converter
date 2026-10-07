@@ -932,6 +932,14 @@ const softwareToneMapFilters = (dolbyVision: boolean, format: 'nv12' | 'p010le')
   ...(dolbyVision ? ['setparams=color_primaries=bt2020:color_trc=smpte2084:colorspace=bt2020nc'] : []),
   ...APP_CONFIG.videoFilters.hdrToSdr.replace('{format}', format).split(','),
 ];
+const sourceColorMetadataArguments = (video: NonNullable<SourceFile['media']>['video']) => {
+  if (!video?.hasHdr && !video?.hasDolbyVision) return [];
+  return [
+    ...(video.colorPrimaries ? ['-color_primaries:v:0', video.colorPrimaries] : []),
+    ...(video.colorTransfer ? ['-color_trc:v:0', video.colorTransfer] : []),
+    ...(video.colorSpace ? ['-colorspace:v:0', video.colorSpace] : []),
+  ];
+};
 const hardwareAccelerationSummary = () => {
   const capabilities = [];
   if (hardwareCapabilities.cudaAvailable) capabilities.push('CUDA');
@@ -1044,6 +1052,7 @@ const getCommandArguments = (source: SourceFile, requestedOutputPath?: string, f
   const filters: string[] = [];
   const video = source.media?.video;
   const toneMap = Boolean(settings.filters.toneMapHdrToSdr && (video?.hasHdr || video?.hasDolbyVision));
+  if (!toneMap) args.push(...sourceColorMetadataArguments(video));
   const outputCodec = preferredCodecForEncoder(settings.encoder);
   const tenBitOutput = outputCodec === 'HEVC' || outputCodec === 'AV1';
   const canUse10Bit = tenBitOutput && encoderCanOutput10Bit(settings.encoder);
