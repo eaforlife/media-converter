@@ -214,20 +214,23 @@ const compareVersions = (left: string, right: string) => {
   return 0;
 };
 
-export const enforceUrgentUpdatePolicy = async () => {
+export const enforceUrgentUpdatePolicy = async (onUpdateRequested: () => Promise<void>) => {
   if (!app.isPackaged) return true;
   try {
     const policy = parseUpdatePolicy(await fetchText(URGENT_UPDATE_SOURCE_URL, 8_000));
     if (!policy.urgentUpdate || compareVersions(app.getVersion(), policy.minVersion) >= 0) return true;
     logActivity('ERROR', 'update.urgent.required', { currentVersion: app.getVersion(), minVersion: policy.minVersion });
-    await dialog.showMessageBox({
+    const result = await dialog.showMessageBox({
       type: 'warning',
-      buttons: ['Exit'],
+      buttons: ['Update and restart', 'Exit'],
+      defaultId: 0,
+      cancelId: 1,
       title: `${APP_NAME || 'EA Media Tools'} Update Required`,
       message: `${APP_NAME || 'EA Media Tools'} must be updated before it can run.`,
       detail: `Installed version: ${app.getVersion()}\nRequired version: ${policy.minVersion}`,
     });
-    app.quit();
+    if (result.response === 0) await onUpdateRequested();
+    else app.quit();
     return false;
   } catch (error) {
     logActivity('WARN', 'update.urgent.unavailable', {

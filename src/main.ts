@@ -193,7 +193,7 @@ const installDownloadedUpdate = async (reason: 'restart-now' | 'app-exit') => {
   }
 };
 
-const initializeStartupAppUpdate = (webContents: Electron.WebContents) => {
+const initializeStartupAppUpdate = (webContents: Electron.WebContents, forceInstall = false) => {
   if (startupUpdateCheck) return startupUpdateCheck;
   if (!app.isPackaged || !shouldInitializeAppUpdater(process.platform, process.arch)) {
     if (app.isPackaged) {
@@ -201,6 +201,7 @@ const initializeStartupAppUpdate = (webContents: Electron.WebContents) => {
         reason: manualUpdateUnavailableMessage(process.platform, process.arch),
       });
     }
+    if (forceInstall) app.quit();
     startupUpdateCheck = Promise.resolve();
     return startupUpdateCheck;
   }
@@ -232,7 +233,10 @@ const initializeStartupAppUpdate = (webContents: Electron.WebContents) => {
       settled = true;
       notify(message, phase);
       cleanup();
-      setTimeout(resolve, delayMs);
+      setTimeout(() => {
+        if (forceInstall) app.quit();
+        else resolve();
+      }, delayMs);
     };
     const handleSignal = (
       signal: Parameters<typeof startupUpdateShouldContinue>[0],
@@ -296,6 +300,16 @@ const initializeStartupAppUpdate = (webContents: Electron.WebContents) => {
       notifyUser: true,
       onNotifyUser: (info) => {
         void (async () => {
+          if (forceInstall) {
+            logActivity('INFO', 'update.urgent.restart-requested', { releaseName: info.releaseName });
+            if (!settled) {
+              settled = true;
+              notify('Required update downloaded · restarting to install', 'verifying');
+              cleanup();
+            }
+            await installDownloadedUpdate('restart-now');
+            return;
+          }
           const owner = BrowserWindow.fromWebContents(webContents);
           const options: Electron.MessageBoxOptions = {
             type: 'info',
@@ -600,6 +614,8 @@ const readInstalledReleaseChangelog = async () => {
 const registerIpc = () => {
   ipcMain.handle('app:initialize-update', async (event) => {
     await initializeStartupInstallCleanup(event.sender);
+    const updateRequired = await enforceUrgentUpdatePolicy(() => initializeStartupAppUpdate(event.sender, true));
+    if (!updateRequired) return;
     await initializeStartupAppUpdate(event.sender);
   });
   ipcMain.handle('runtime:initialize', async (event, useStableFfmpeg?: boolean) => {
@@ -833,7 +849,6 @@ const createWindow = () => {
 if (!handlingSquirrelEvent) app.whenReady().then(async () => {
   await initializeLogger();
   await loadAppConfiguration();
-  if (!await enforceUrgentUpdatePolicy()) return;
   logActivity('INFO', 'application.started', {
     version: app.getVersion(),
     packaged: app.isPackaged,
