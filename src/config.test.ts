@@ -45,3 +45,14 @@ test('loads tagged hardware capability data from the bundled config section', ()
   assert.equal(parseAppConfiguration(managed).systemCapabilities?.cacheTag, '1');
   assert.equal(parseAppConfiguration(managed).systemCapabilities?.driverVersion, '555.1');
 });
+
+test('loads independently tagged personalized defaults from config.ini', () => {
+  const configuration = parseAppConfiguration(configFile);
+  assert.equal(configuration.personalizedDefaults.lastPreset, 'Streaming');
+  assert.equal(configuration.personalizedDefaults.hardwareAcceleration, true);
+  assert.equal(configuration.personalizedDefaults.workingPreset, null);
+  assert.throws(
+    () => parseAppConfiguration(configFile.replace('defaults_tag=1', 'defaults_tag=2')),
+    /defaults_tag must be 1/,
+  );
+});

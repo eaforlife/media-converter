@@ -26,7 +26,7 @@ test('compares preset contents independently of BOM and platform line endings', 
 test('INI version tags normalize minor-only versions and only replace older local data', () => {
   assert.equal(iniVersion('[Version: 2.9]\n'), '2.9.0');
   assert.equal(iniVersion(configFile), null);
-  assert.match(configFile, /^\[App Version: 2\.9\.2\]/);
+  assert.match(configFile, /^\[App Version: 2\.9\.3\]/);
   assert.equal(compareIniVersions('2.10.0', '2.9.9'), 1);
   assert.equal(compareIniVersions('2.9.0', '2.9'), 0);
   assert.equal(sourceIniIsNewer('[Version: 2.9.0]\n', '[Version: 2.8.7]\n'), true);

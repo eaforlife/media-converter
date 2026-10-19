@@ -1,5 +1,6 @@
 import { booleanValue, parseIniSections } from './presets.ts';
 import type { HardwareCapabilities, VideoEncoderCapability } from './shared-types';
+import { parsePersonalizedDefaults, type PersonalizedDefaults } from './personalized-defaults.ts';
 
 export const URGENT_UPDATE_SOURCE_URL = 'https://raw.githubusercontent.com/eaforlife/media-converter/main/updatepolicy';
 
@@ -42,6 +43,7 @@ export type AppConfiguration = {
     checkedAt: string;
     capabilities: HardwareCapabilities;
   }> | null;
+  personalizedDefaults: PersonalizedDefaults;
   audioBitrates: { aac: readonly string[]; opus: readonly string[] };
   audioFilters: {
     timestampResample: string;
@@ -192,6 +194,7 @@ export const parseAppConfiguration = (ini: string): AppConfiguration => {
         capabilities: Object.freeze(capabilities),
       });
     })(),
+    personalizedDefaults: Object.freeze(parsePersonalizedDefaults(sections.get('Personalized Defaults'))),
     audioBitrates: Object.freeze({
       aac: Object.freeze(commaList(requireValue(audioBitrates, 'Audio Bitrates', 'aac'))),
       opus: Object.freeze(commaList(requireValue(audioBitrates, 'Audio Bitrates', 'opus'))),
@@ -258,6 +261,11 @@ export const EMPTY_APP_CONFIGURATION: AppConfiguration = Object.freeze({
     bufferMultiplier: 3,
   }),
   systemCapabilities: null,
+  personalizedDefaults: Object.freeze({
+    hardwareAcceleration: true, useStableFfmpeg: true, simultaneousEncoding: true,
+    smartFileNaming: true, lastPreset: 'Streaming', lastSourceDirectory: '',
+    workingPreset: null, separateAudioDirectory: true,
+  }),
   audioBitrates: Object.freeze({ aac: Object.freeze([]), opus: Object.freeze([]) }),
   audioFilters: Object.freeze({
     timestampResample: 'aresample={rate_prefix}async=1',

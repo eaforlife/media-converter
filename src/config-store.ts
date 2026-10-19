@@ -7,6 +7,7 @@ import {
 } from './config';
 import { logActivity } from './app-logger';
 import { presetContentsMatch } from './preset-sync';
+import { replacePersonalizedDefaults, type PersonalizedDefaults } from './personalized-defaults.ts';
 import type { HardwareCapabilities } from './shared-types';
 import {
   configSourceContentsMatch, removeSystemCapabilityCache, replaceConfigContentBeforeCache, setConfigAppVersion,
@@ -151,6 +152,15 @@ export const invalidateSystemCapabilityCacheForInstall = async () => {
   await synchronizeConfigFile(destination, updated);
   if (activeConfigFilePath === destination) setAppConfiguration(parseAppConfiguration(updated));
   return true;
+};
+
+export const savePersonalizedDefaults = async (settings: PersonalizedDefaults) => {
+  const destination = activeConfigPath();
+  const contents = await fs.promises.readFile(destination, 'utf8');
+  const updated = replacePersonalizedDefaults(contents, settings);
+  validateConfigContents(updated);
+  await synchronizeConfigFile(destination, updated);
+  setAppConfiguration(parseAppConfiguration(updated));
 };
 
 export type UpdatePolicy = { urgentUpdate: boolean; minVersion: string };

@@ -101,7 +101,6 @@ dist/
 release/
 
 # Local application state and temporary media artifacts
-/config
 *.tmp
 ea-media-tools-previews/
 

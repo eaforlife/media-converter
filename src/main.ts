@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { updateElectronApp, UpdateSourceType } from 'update-electron-app';
 import { APP_CONFIG, APP_NAME, APP_UPDATE_REPOSITORY } from './config';
-import { migrateCustomPresetFile, removeLegacyDataDirectories } from './app-storage-migration';
+import { migrateCustomPresetFile, migratePersonalizedDefaults, removeLegacyDataDirectories } from './app-storage-migration';
 import {
   APP_UPDATE_INTERVAL, electronUpdateFeedUrl, friendlyUpdateError, isUpdateCheckAlreadyRunningError,
   manualUpdateUnavailableMessage, releaseChangelogUrl, shouldInitializeAppUpdater,
@@ -23,7 +23,7 @@ import { classifyMediaWorkflow } from './media-workflow';
 import { initializeRuntime, selectRuntimeChannel } from './runtime-manager';
 import { loadSettings, readConfig, saveSettings } from './settings-store';
 import {
-  enforceUrgentUpdatePolicy, invalidateSystemCapabilityCacheForInstall, loadAppConfiguration, saveSystemCapabilityCache,
+  configFilePath, enforceUrgentUpdatePolicy, invalidateSystemCapabilityCacheForInstall, loadAppConfiguration, saveSystemCapabilityCache,
 } from './config-store';
 import { loadBuiltInPresets, presetFilePath, readPresetFile } from './preset-store';
 import { customPresetFilePath, loadCustomPresets, readCustomPresetFile, saveCustomPresets } from './custom-preset-store';
@@ -61,12 +61,16 @@ const legacyDataDirectories = () => [
 
 const migrateStorageBeforeInstallCleanup = async (previousInstallDirectories: readonly string[]) => {
   const legacyDirectories = legacyDataDirectories();
+  const previousResources = previousInstallDirectories
+    .filter((directory) => /^app-\d/i.test(path.basename(directory)))
+    .sort((left, right) => path.basename(right).localeCompare(path.basename(left), undefined, { numeric: true }))
+    .map((directory) => path.join(directory, 'resources'));
+  const personalizedDefaultsFrom = await migratePersonalizedDefaults(
+    configFilePath(), previousResources, legacyDirectories,
+  );
   const migration = await migrateCustomPresetFile(
     process.resourcesPath,
-    previousInstallDirectories
-      .filter((directory) => /^app-\d/i.test(path.basename(directory)))
-      .sort((left, right) => path.basename(right).localeCompare(path.basename(left), undefined, { numeric: true }))
-      .map((directory) => path.join(directory, 'resources')),
+    previousResources,
     legacyDirectories,
   );
   if (!migration.safeToCleanPrevious) {
@@ -77,6 +81,7 @@ const migrateStorageBeforeInstallCleanup = async (previousInstallDirectories: re
   }
   const cleanup = await removeLegacyDataDirectories(legacyDirectories, path.dirname(process.execPath));
   logActivity('INFO', 'storage.migration.completed', {
+    personalizedDefaultsFrom,
     copiedFrom: migration.copiedFrom,
     removedLegacyDirectories: cleanup.removed,
     preservedLegacyDirectories: cleanup.preserved,
@@ -896,6 +901,12 @@ const createWindow = () => {
 
 if (!handlingSquirrelEvent) app.whenReady().then(async () => {
   await initializeLogger();
+  if (app.isPackaged && process.platform === 'win32') {
+    const previous = await installCleanupTargets(path.dirname(process.execPath)).catch(() => []);
+    await migrateStorageBeforeInstallCleanup(previous).catch((error) => {
+      logActivity('ERROR', 'storage.migration.failed', error instanceof Error ? error.message : String(error));
+    });
+  }
   await loadAppConfiguration();
   logActivity('INFO', 'application.started', {
     version: app.getVersion(),
