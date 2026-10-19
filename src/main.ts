@@ -673,7 +673,7 @@ const registerIpc = () => {
         const driverVersion = await detectDriverVersion();
         const ffmpegVersion = runtimeState?.ffmpegVersion ?? 'unknown';
         const cached = APP_CONFIG.systemCapabilities;
-        if (driverVersion !== 'unknown' && cached?.driverVersion === driverVersion) {
+        if (driverVersion !== 'unknown' && cached?.cacheTag === '1' && cached.driverVersion === driverVersion) {
           logActivity('INFO', 'hardware.capabilities.cache-hit', { driverVersion, ffmpegVersion, checkedAt: cached.checkedAt });
           return cached.capabilities;
         }
@@ -682,7 +682,7 @@ const registerIpc = () => {
           cachedFfmpegVersion: cached?.ffmpegVersion ?? null,
         });
         const detected = await detectHardwareCapabilities(ffmpegPath, driverVersion, ffmpegVersion);
-        if (driverVersion !== 'unknown' && ffmpegVersion !== 'unknown') {
+        if (driverVersion !== 'unknown') {
           await saveSystemCapabilityCache(driverVersion, ffmpegVersion, detected);
         }
         return detected;

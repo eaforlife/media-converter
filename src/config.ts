@@ -1,16 +1,8 @@
 import { booleanValue, parseIniSections } from './presets.ts';
 import type { HardwareCapabilities, VideoEncoderCapability } from './shared-types';
 
-export const CONFIG_SOURCE_URL = 'https://raw.githubusercontent.com/eaforlife/media-converter/main/config.ini';
 export const URGENT_UPDATE_SOURCE_URL = 'https://raw.githubusercontent.com/eaforlife/media-converter/main/updatepolicy';
 
-export type AudioPresetConfig = {
-  codec: 'libopus' | 'libfdk_aac' | 'copy';
-  extension: string | null;
-  stereoBitrate: string;
-  downmixBitrate: string;
-  dynamicRangeCompression: boolean;
-};
 export type EncoderCandidateConfig = Omit<VideoEncoderCapability, 'tenBit'> & {
   main10Enabled: boolean;
   highEnabled: boolean;
@@ -43,12 +35,12 @@ export type AppConfiguration = {
     bufferMultiplier: number;
   };
   systemCapabilities: Readonly<{
+    cacheTag: string;
     driverVersion: string;
     ffmpegVersion: string;
     checkedAt: string;
     capabilities: HardwareCapabilities;
   }> | null;
-  audioPresets: Record<'Streaming' | 'Archive' | 'Passthrough', AudioPresetConfig>;
   audioBitrates: { aac: readonly string[]; opus: readonly string[] };
   audioFilters: {
     timestampResample: string;
@@ -122,23 +114,6 @@ export const parseAppConfiguration = (ini: string): AppConfiguration => {
   const musicVideoWorkflow = requireSection(sections, 'Music Video Workflow');
   const audioFilters = requireSection(sections, 'Audio Filters');
   const videoFilters = requireSection(sections, 'Video Filters');
-  const audioPreset = (name: 'Streaming' | 'Archive' | 'Passthrough'): AudioPresetConfig => {
-    const sectionName = `Audio Preset: ${name}`;
-    const section = requireSection(sections, sectionName);
-    const codec = requireValue(section, sectionName, 'codec') as AudioPresetConfig['codec'];
-    if (!['libopus', 'libfdk_aac', 'copy'].includes(codec)) throw new Error(`[${sectionName}] codec is invalid`);
-    const extension = requireValue(section, sectionName, 'extension');
-    return {
-      codec,
-      extension: extension || null,
-      stereoBitrate: requireValue(section, sectionName, 'stereo_bitrate'),
-      downmixBitrate: requireValue(section, sectionName, 'downmix_bitrate'),
-      dynamicRangeCompression: booleanValue(
-        requireValue(section, sectionName, 'dynamic_range_compression'),
-        `[${sectionName}] dynamic_range_compression`,
-      ),
-    };
-  };
   const encoders = [...sections.entries()].flatMap(([sectionName, section]) => {
     const match = /^Encoder: (.+)$/.exec(sectionName);
     if (!match) return [];
@@ -202,17 +177,13 @@ export const parseAppConfiguration = (ini: string): AppConfiguration => {
         throw new Error('[System Capability Cache] capabilities_json has an invalid shape');
       }
       return Object.freeze({
+        cacheTag: cache.get('cache_tag') ?? '',
         driverVersion: cache.get('driver_version') ?? '',
         ffmpegVersion: cache.get('ffmpeg_version') ?? '',
         checkedAt: cache.get('checked_at') ?? '',
         capabilities: Object.freeze(capabilities),
       });
     })(),
-    audioPresets: Object.freeze({
-      Streaming: Object.freeze(audioPreset('Streaming')),
-      Archive: Object.freeze(audioPreset('Archive')),
-      Passthrough: Object.freeze(audioPreset('Passthrough')),
-    }),
     audioBitrates: Object.freeze({
       aac: Object.freeze(commaList(requireValue(audioBitrates, 'Audio Bitrates', 'aac'))),
       opus: Object.freeze(commaList(requireValue(audioBitrates, 'Audio Bitrates', 'opus'))),
@@ -278,17 +249,6 @@ export const EMPTY_APP_CONFIGURATION: AppConfiguration = Object.freeze({
     bufferMultiplier: 3,
   }),
   systemCapabilities: null,
-  audioPresets: Object.freeze({
-    Streaming: Object.freeze({
-      codec: 'copy', extension: null, stereoBitrate: '', downmixBitrate: '', dynamicRangeCompression: false,
-    }),
-    Archive: Object.freeze({
-      codec: 'copy', extension: null, stereoBitrate: '', downmixBitrate: '', dynamicRangeCompression: false,
-    }),
-    Passthrough: Object.freeze({
-      codec: 'copy', extension: null, stereoBitrate: '', downmixBitrate: '', dynamicRangeCompression: false,
-    }),
-  }),
   audioBitrates: Object.freeze({ aac: Object.freeze([]), opus: Object.freeze([]) }),
   audioFilters: Object.freeze({
     timestampResample: 'aresample={rate_prefix}async=1',

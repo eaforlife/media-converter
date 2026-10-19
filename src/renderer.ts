@@ -1,7 +1,7 @@
 import './index.css';
 import { APP_CODENAME, APP_CONFIG, setAppConfiguration } from './config.ts';
 import { encodedAudioFilter } from './audio-filters';
-import { AUDIO_PRESETS, AUDIO_PRESET_NAMES, audioBitrate, shouldResampleLossless } from './audio-workflow';
+import { AUDIO_PRESET_NAMES, shouldResampleLossless } from './audio-workflow';
 import type { AudioPresetName } from './audio-workflow';
 import {
   commonSeriesFolderName, parseEpisodeIdentity, preservedOutputBaseName, sanitizePathSegment,
@@ -109,10 +109,12 @@ let hardwareCapabilities: HardwareCapabilities = {
 };
 let pickerBusy = false;
 let customPresetDraftName = '';
+let customPresetEditorOpen = false;
 let sourceMode: 'file' | 'folder' | null = null;
 let folderSeriesLayout: FolderSeriesLayout | null = null;
 let appSettings: AppSettings = { hardwareAcceleration: true, useStableFfmpeg: true, simultaneousEncoding: true, smartFileNaming: true, lastPreset: 'Streaming', lastSourceDirectory: '', customPresets: [], workingPreset: null, separateAudioDirectory: true };
 const settingsByPath = new Map<string, JobSettings>();
+const manualBufferSettings = new WeakSet<JobSettings>();
 let encodeQueueProgress: EncodeQueueProgressState | null = null;
 let encodePageIndex = 0;
 let encodePagePinned = false;
@@ -230,6 +232,12 @@ const audioBitrateFor = (
   if (!preset || codec === 'copy') return fallback;
   const rates = preset.audioRates[(codec === 'libopus' ? 'opus' : 'aac') as PresetAudioCodec];
   return isStereo ? rates.stereo : rates.surround;
+};
+const presetRateMultiplier = (encoder: string, main10: boolean) => {
+  const codec = preferredCodecForEncoder(encoder);
+  const multipliers = APP_CONFIG.videoDefaults.codecRateMultipliers;
+  return codec === 'H.264' ? 1 : codec === 'HEVC' ? main10 ? multipliers.hevcMain10 : multipliers.hevc
+    : main10 ? multipliers.av1TenBit : multipliers.av1;
 };
 const orderByFlags = <T>(tracks: T[], flagsFor: (track: T) => StreamFlags) =>
   tracks.map((track, position) => ({ track, position, flags: flagsFor(track) }))
@@ -369,7 +377,7 @@ const applyMetadataChangesToQueue = (originSource: SourceFile) => {
 };
 const initialAudioSettings = (source: SourceFile): JobSettings => {
   const track = source.media?.audio[0];
-  const preset = AUDIO_PRESETS.Streaming;
+  const preset = builtInPreset('Streaming')!;
   return {
     preset: 'Streaming', format: 'opus', encoder: '', encoderSpeed: 4, encoderTune: '', encoderProfile: '', resolution: '', quality: '',
     videoBitrate: '0', maxRate: '0', bufferMultiplier: 0, bufferSize: '0', deliveryMode: false,
@@ -378,7 +386,7 @@ const initialAudioSettings = (source: SourceFile): JobSettings => {
     processing: { video: false, audio: true, subtitles: false },
     videoMetadata: copyMetadata('und', { default: false, forced: false, hearingImpaired: false }),
     audio: track ? { [track.index]: {
-      enabled: true, codec: preset.codec, bitrate: audioBitrate('Streaming', track, true),
+      enabled: true, codec: preset.audioCodec === 'opus' ? 'libopus' : 'libfdk_aac', bitrate: audioBitrateFor('Streaming', preset.audioCodec === 'opus' ? 'libopus' : 'libfdk_aac', track.isStereo),
       flags: { default: true, forced: false, hearingImpaired: false },
       metadata: copyMetadata(track.language, track.flags),
     } } : {},
@@ -411,20 +419,22 @@ const applyAudioPreset = (source: SourceFile, presetName: string) => {
     ? presetName as AudioPresetName
     : 'Streaming';
   const settings = settingsByPath.get(source.path) ?? initialAudioSettings(source);
-  const preset = AUDIO_PRESETS[name];
+  const preset = builtInPreset(name);
+  const passthrough = name === 'Passthrough';
+  const codec: AudioCodec = passthrough ? 'copy' : preset?.audioCodec === 'opus' ? 'libopus' : 'libfdk_aac';
   settingsByPath.set(source.path, settings);
   settings.preset = name;
-  settings.format = name === 'Passthrough' ? 'source' : preset.extension as 'opus' | 'm4a';
-  settings.processing = { video: false, audio: name !== 'Passthrough', subtitles: false };
+  settings.format = passthrough ? 'source' : codec === 'libopus' ? 'opus' : 'm4a';
+  settings.processing = { video: false, audio: !passthrough, subtitles: false };
   settings.filters = {
     ...defaultFilters(source), stripMetadata: false, downmixToStereo: true,
-    dynamicRangeCompression: preset.dynamicRangeCompression,
+    dynamicRangeCompression: preset?.dynamicRangeCompression ?? false,
     resampleLosslessTo48k: true, normalizeAudio: true,
   };
   for (const track of source.media?.audio ?? []) {
     settings.audio[track.index] = {
-      enabled: true, codec: preset.codec,
-      bitrate: name === 'Passthrough' ? '' : audioBitrate(name, track, settings.filters.downmixToStereo),
+      enabled: true, codec,
+      bitrate: passthrough ? '' : audioBitrateFor(name, codec, track.isStereo || !settings.filters.downmixToStereo),
       flags: { default: true, forced: false, hearingImpaired: false },
       metadata: settings.audio[track.index]?.metadata ?? copyMetadata(track.language, track.flags),
     };
@@ -518,6 +528,8 @@ const getSettings = (source: SourceFile) => {
   return settings;
 };
 const applyPreset = (source: SourceFile, preset: string, persist = true) => {
+  const existingSettings = settingsByPath.get(source.path);
+  if (existingSettings) manualBufferSettings.delete(existingSettings);
   if (isAudioWorkflow(source)) {
     applyAudioPreset(source, preset);
     if (persist) void persistAppSettings();
@@ -538,6 +550,8 @@ const applyPreset = (source: SourceFile, preset: string, persist = true) => {
     return;
   }
   const selectedPreset = defaults ?? saved as SavedPreset;
+  const savedRateMultiplier = saved?.rateBasis === 'h264'
+    ? presetRateMultiplier(saved.encoder, saved.filters.pixelFormat10Bit) : 1;
   const outputProfile = defaults ? outputProfileFor(source, defaults.scale, defaults.name) : null;
   const selectedCodec = defaults
     ? defaults.name === APP_CONFIG.videoDefaults.preset
@@ -559,20 +573,26 @@ const applyPreset = (source: SourceFile, preset: string, persist = true) => {
     encoderTune: normalizeEncoderTune(encoder, defaults ? presetTune(defaults, encoder) : saved!.encoderTune),
     encoderProfile: defaults ? outputDefaults!.encoderProfile : saved!.encoderProfile,
     quality: defaults ? outputDefaults!.quality : normalizeQuality(saved!.quality),
-    videoBitrate: defaults ? String(defaults.bitrateControl ? outputDefaults!.videoBitrate : 0) : saved!.videoBitrate,
-    maxRate: defaults ? String(defaults.bitrateControl ? outputDefaults!.maxRate : 0) : saved!.maxRate,
-    bufferMultiplier: defaults ? APP_CONFIG.videoDefaults.bufferMultiplier : saved!.bufferMultiplier,
-    bufferSize: defaults ? String(defaults.bitrateControl ? outputDefaults!.bufferSize : 0) : saved!.bufferSize,
+    videoBitrate: defaults ? String(defaults.bitrateControl ? outputDefaults!.videoBitrate : 0)
+      : String(Math.round(Number(saved!.videoBitrate) * savedRateMultiplier)),
+    maxRate: defaults ? String(defaults.bitrateControl ? outputDefaults!.maxRate : 0)
+      : String(Math.round(Number(saved!.maxRate) * savedRateMultiplier)),
+    bufferMultiplier: APP_CONFIG.videoDefaults.bufferMultiplier,
+    bufferSize: defaults ? String(defaults.bitrateControl ? outputDefaults!.bufferSize : 0)
+      : String(saved!.rateBasis === 'h264'
+        ? Math.round(Number(saved!.bufferSize) * savedRateMultiplier)
+        : saved!.bufferSize),
     frameRate: defaults ? defaults.frameRate : saved!.frameRate,
     frameRateOverride: defaults
       ? frameRateOverrideState(source.media?.video?.frameRate, defaults.frameRate).enabled
-      : frameRateOverrideState(source.media?.video?.frameRate, saved!.frameRate).enabled,
+      : saved!.frameRateOverride ?? frameRateOverrideState(source.media?.video?.frameRate, saved!.frameRate).enabled,
     deliveryMode: selectedPreset.deliveryMode,
     advancedVideo: defaults
       ? resolvePresetAdvancedVideo(profileDefaults!, preferredCodecForEncoder(encoder), outputProfile!.tier)
       : copyAdvancedVideo(saved!.advancedVideo),
   });
   if (defaults) settings.resolution = defaults.scale === 'disabled' ? defaults.resolution : outputDefaults!.resolution.join(':');
+  else if (saved?.resolution) settings.resolution = saved.resolution;
   settings.filters = defaults
     ? {
       ...defaultFilters(source), scale: defaults.scale, scaleLocked: defaults.scaleLocked,
@@ -600,6 +620,18 @@ const applyPreset = (source: SourceFile, preset: string, persist = true) => {
     else if (settings.format === 'webm') { subtitle.enabled = track.kind === 'text'; subtitle.codec = track.kind === 'text' ? 'webvtt' : 'copy'; }
     else if (track.kind === 'text' && (subtitle.codec === 'mov_text' || subtitle.codec === 'webvtt')) subtitle.codec = 'subrip';
   }
+  if (!defaults && saved?.audioSettings) {
+    try { Object.assign(settings.audio, JSON.parse(saved.audioSettings) as JobSettings['audio']); } catch { /* older presets may omit stream settings */ }
+  }
+  if (!defaults && saved?.subtitleSettings) {
+    try { Object.assign(settings.subtitles, JSON.parse(saved.subtitleSettings) as JobSettings['subtitles']); } catch { /* older presets may omit stream settings */ }
+  }
+  if (!defaults && saved?.processingSettings) {
+    try { settings.processing = JSON.parse(saved.processingSettings) as ProcessingSettings; } catch { /* older presets may omit processing settings */ }
+  }
+  if (!defaults && saved?.videoMetadataSettings) {
+    try { settings.videoMetadata = JSON.parse(saved.videoMetadataSettings) as EditableStreamMetadata; } catch { /* older presets may omit metadata settings */ }
+  }
   normalizeStreamDispositions(settings);
   if (persist) {
     appSettings.lastPreset = preset;
@@ -611,6 +643,7 @@ const applyBuiltInScaleProfile = (
   settings: JobSettings,
   scale: ScaleMode,
 ) => {
+  manualBufferSettings.delete(settings);
   const defaults = builtInPreset(settings.preset);
   if (!defaults) return false;
   const outputProfile = outputProfileFor(source, scale, defaults.name);
@@ -641,6 +674,25 @@ const applyBuiltInScaleProfile = (
       audio.bitrate = audioBitrateFor(profileDefaults.name, audio.codec, track.isStereo);
     }
   }
+  return true;
+};
+const applyBuiltInCodecProfile = (source: SourceFile, settings: JobSettings, encoder: string) => {
+  const preset = builtInPreset(settings.preset);
+  if (!preset) return false;
+  const outputProfile = outputProfileFor(source, settings.filters.scale, preset.name);
+  const outputDefaults = videoOutputDefaultsFor(preset, outputProfile.tier, encoder, settings.filters.pixelFormat10Bit);
+  settings.encoder = encoder;
+  settings.encoderTune = normalizeEncoderTune(encoder, presetTune(preset, encoder));
+  settings.encoderSpeed = normalizeEncoderSpeed(outputDefaults.encoderSpeed);
+  settings.encoderProfile = outputDefaults.encoderProfile;
+  settings.quality = outputDefaults.quality;
+  settings.videoBitrate = String(preset.bitrateControl ? outputDefaults.videoBitrate : 0);
+  settings.maxRate = String(preset.bitrateControl ? outputDefaults.maxRate : 0);
+  settings.bufferMultiplier = APP_CONFIG.videoDefaults.bufferMultiplier;
+  settings.bufferSize = String(preset.bitrateControl ? outputDefaults.bufferSize : 0);
+  settings.advancedVideo = resolvePresetAdvancedVideo(
+    outputDefaults.deliveryPreset, preferredCodecForEncoder(encoder), outputProfile.tier,
+  );
   return true;
 };
 const matchingTrackIndex = <T extends { index: number; language: string }>(
@@ -695,25 +747,12 @@ const markCustom = (settings: JobSettings) => {
     void persistAppSettings();
     return;
   }
-  settings.preset = 'Custom';
-  settings.filters.scaleLocked = false;
-  appSettings.lastPreset = 'Custom';
-  appSettings.workingPreset = snapshotPreset(settings, 'Custom');
-  const presetSelect = document.querySelector<HTMLSelectElement>('#preset');
-  if (presetSelect) {
-    if (![...presetSelect.options].some((option) => option.value === 'Custom')) {
-      presetSelect.add(new Option('Custom', 'Custom'));
-    }
-    presetSelect.value = 'Custom';
-  }
-  const editor = document.querySelector<HTMLElement>('#custom-preset-editor');
-  if (editor) editor.hidden = false;
-  const description = document.querySelector<HTMLElement>('.preset-description');
-  if (description) description.textContent = 'Modified settings ready to save as a preset.';
+  appSettings.workingPreset = snapshotPreset(settings, settings.preset);
   for (const source of sources) {
     const target = getSettings(source);
     if (target !== settings) {
       applyPreset(source, 'Custom', false);
+      target.preset = settings.preset;
       if (originSource) syncBatchTrackSettings(originSource, settings, source, target);
     }
   }
@@ -732,17 +771,24 @@ const snapshotPreset = (settings: JobSettings, name: string): SavedPreset => {
     encoderSpeed: settings.encoderSpeed,
     encoderTune: settings.encoderTune,
     encoderProfile: settings.encoderProfile,
+    resolution: settings.resolution,
+    rateBasis: 'h264',
     frameRate: settings.frameRate,
+    frameRateOverride: settings.frameRateOverride,
     quality: settings.quality,
-    videoBitrate: settings.videoBitrate,
-    maxRate: settings.maxRate,
-    bufferMultiplier: settings.bufferMultiplier,
-    bufferSize: settings.bufferSize,
+    videoBitrate: String(Math.round(Number(settings.videoBitrate) / presetRateMultiplier(settings.encoder, settings.filters.pixelFormat10Bit))),
+    maxRate: String(Math.round(Number(settings.maxRate) / presetRateMultiplier(settings.encoder, settings.filters.pixelFormat10Bit))),
+    bufferMultiplier: APP_CONFIG.videoDefaults.bufferMultiplier,
+    bufferSize: String(Math.round(Number(settings.bufferSize) / presetRateMultiplier(settings.encoder, settings.filters.pixelFormat10Bit))),
     deliveryMode: settings.deliveryMode,
     advancedVideo: copyAdvancedVideo(settings.advancedVideo),
     audioCodec: firstAudio.codec,
     audioBitrate: firstAudio.bitrate,
-    filters: { ...settings.filters, scaleLocked: false },
+    audioSettings: JSON.stringify(settings.audio),
+    subtitleSettings: JSON.stringify(settings.subtitles),
+    processingSettings: JSON.stringify(settings.processing),
+    videoMetadataSettings: JSON.stringify(settings.videoMetadata),
+    filters: { ...settings.filters },
   };
 };
 const detectFolderSeriesLayout = (folderSources: SourceFile[]): FolderSeriesLayout | null => {
@@ -1835,11 +1881,10 @@ const renderWorkspace = () => {
     : [['Summary', 'film'], ['Video', 'video'], ['Audio', 'audio'], ['Subtitles', 'captions'], ['Filters', 'sliders']]) as Array<[string, IconName]>;
   const fileRows = sources.map((file, index) => `<button class="source-row ${index === selectedIndex ? 'active' : ''}" data-source-index="${index}"><span class="file-type">${escapeHtml(file.extension.slice(0, 4))}</span><span class="source-row-copy"><strong>${escapeHtml(file.name)}</strong><small>${formatSize(file.size)}</small></span>${index === selectedIndex ? '<span class="active-pip"></span>' : ''}</button>`).join('');
   const video = source.media?.video;
-  const showWorkingCustom = settings.preset === 'Custom';
   const basePresets = audioWorkflow
     ? [...AUDIO_PRESET_NAMES]
     : predefinedPresetNames(builtInPresetConfiguration?.presets ?? {}, musicVideo);
-  const visiblePresets = [...basePresets, ...(showWorkingCustom ? ['Custom'] : [])];
+  const visiblePresets = basePresets;
   const savedPresets = musicVideo ? [] : appSettings.customPresets.filter((preset) =>
     audioWorkflow ? preset.workflow === 'audio' : preset.workflow !== 'audio');
   const presetDescription = audioWorkflow
@@ -1848,7 +1893,7 @@ const renderWorkspace = () => {
         : settings.preset === 'Passthrough' ? 'Retain source audio and optionally normalize the selected library.'
           : 'Modified audio settings ready to save as a preset.'
     : musicVideo ? 'Short-form music video with preserved metadata, protected cover art, automatic captions, and 4K-only scaling.'
-      : builtInPreset(settings.preset)?.description ?? (settings.preset === 'Custom' ? 'Modified settings ready to save as a preset.' : appSettings.customPresets.find((preset) => preset.name === settings.preset)?.description ?? 'Saved user preset.');
+      : builtInPreset(settings.preset)?.description ?? appSettings.customPresets.find((preset) => preset.name === settings.preset)?.description ?? 'Saved user preset.';
   const workflowLabel = audioWorkflow ? 'audio' : musicVideo ? 'music video' : 'video';
   const destinationToggle = audioWorkflow
     ? `<label class="smart-naming ${passthrough ? 'disabled' : ''}"><input id="separate-audio-directory" type="checkbox"${checked(!passthrough && appSettings.separateAudioDirectory)}${encodingActive || passthrough ? ' disabled' : ''}/><span>Separate encode directory</span></label>`
@@ -1861,7 +1906,7 @@ const renderWorkspace = () => {
     <section class="work-area"><div class="source-hero"><div class="media-preview">${source.previewDataUrl ? `<img src="${source.previewDataUrl}" alt="35 percent source preview"/>` : `<div class="preview-grid"></div><div class="preview-play">${icon(audioWorkflow ? 'audio' : 'play', 23)}</div>`}<span>${escapeHtml(source.extension)}</span></div><div class="source-info"><div class="section-label">CURRENT ${workflowLabel.toUpperCase()} SOURCE${audioWorkflow ? '' : ' · PREVIEW AT 35%'}</div><h2>${escapeHtml(source.name)}</h2><p title="${escapeHtml(source.path)}">${escapeHtml(source.path)}</p>
       <div class="metadata">${audioWorkflow ? `<span><b>Audio</b>${escapeHtml(audioSummary(source))}</span><span><b>Sample rate</b>${source.media?.audio[0]?.sampleRate ? `${source.media.audio[0].sampleRate / 1000} kHz` : 'Unknown'}</span><span><b>Channels</b>${source.media?.audio[0]?.channels ?? 'Unknown'}</span><span><b>Duration</b>${formatDuration(source.media?.duration ?? null)}</span>` : `<span><b>Video</b>${video ? `${escapeHtml(video.codec)} · ${video.width}×${video.height}` : 'Unknown'}</span><span><b>Dynamic range</b>${escapeHtml(hdrLabel(source))}</span><span><b>Audio</b>${escapeHtml(audioSummary(source))}</span><span><b>Chapters</b>${source.media?.chapterCount ?? 'Unknown'}</span><span><b>Subtitles</b>${escapeHtml(subtitleSummary(source))}</span>`}</div></div></div>
       ${source.probeError ? `<div class="probe-warning">${icon('x', 16)} ${escapeHtml(source.probeError)}</div>` : ''}
-      <div class="preset-bar ${metadataOnly ? 'processing-disabled' : ''}"><div class="preset-icon">${icon('gauge', 22)}</div><label class="preset-control"><span>PRESET</span><select id="preset"${metadataOnly || musicVideo ? ' disabled' : ''}>${visiblePresets.map((preset) => `<option${selected(settings.preset === preset)}>${preset}</option>`).join('')}${savedPresets.length ? `<optgroup label="Saved presets">${savedPresets.map((preset) => `<option${selected(settings.preset === preset.name)}>${escapeHtml(preset.name)}</option>`).join('')}</optgroup>` : ''}</select><small class="preset-description">${metadataOnly ? 'Metadata-only mode copies every stream and preserves the source container.' : escapeHtml(presetDescription)}</small></label><div class="custom-preset-editor" id="custom-preset-editor"${settings.preset === 'Custom' && !metadataOnly ? '' : ' hidden'}><label><span>PRESET NAME</span><input id="custom-preset-name" value="${escapeHtml(customPresetDraftName)}" placeholder="My preset" maxlength="80"/></label><button class="save-preset" id="save-preset">Save</button></div></div>
+      <div class="preset-bar ${metadataOnly ? 'processing-disabled' : ''}"><div class="preset-icon">${icon('gauge', 22)}</div><label class="preset-control"><span>PRESET</span><select id="preset"${metadataOnly || musicVideo ? ' disabled' : ''}>${visiblePresets.map((preset) => `<option${selected(settings.preset === preset)}>${preset}</option>`).join('')}${savedPresets.length ? `<optgroup label="Saved presets">${savedPresets.map((preset) => `<option${selected(settings.preset === preset.name)}>${escapeHtml(preset.name)}</option>`).join('')}</optgroup>` : ''}</select><small class="preset-description">${metadataOnly ? 'Metadata-only mode copies every stream and preserves the source container.' : escapeHtml(presetDescription)}</small></label>${!metadataOnly && !musicVideo ? `<button class="save-preset" id="add-preset">Add preset</button>` : ''}<div class="custom-preset-editor" id="custom-preset-editor"${customPresetEditorOpen && !metadataOnly ? '' : ' hidden'}><label><span>PRESET NAME</span><input id="custom-preset-name" value="${escapeHtml(customPresetDraftName)}" placeholder="My preset" maxlength="80"/></label><button class="save-preset" id="save-preset">Save</button></div></div>
       <nav class="tabs">${tabs.map(([label, tabIcon]) => `<button class="tab ${activeTab === label ? 'active' : ''}" data-tab="${label}">${icon(tabIcon, 17)}${label}${label === 'Audio' ? `<i>${source.media?.audio.length ?? 0}</i>` : label === 'Subtitles' ? `<i>${source.media?.subtitles.length ?? 0}</i>` : ''}</button>`).join('')}</nav><div class="tab-content" id="tab-content">${renderTabContent(activeTab, source, settings)}</div></section>
     <footer class="encode-footer"><div class="destination"><div class="destination-heading"><span>${metadataOnly ? 'SOURCE REPLACEMENT' : passthrough ? 'SOURCE LIBRARY' : 'DESTINATION'}</span></div><div class="destination-controls"><div class="destination-row"><div class="destination-path" title="${escapeHtml(outputDirectoryFor(source))}">${icon('folder', 16)}<span>${escapeHtml(outputDirectoryFor(source))}</span></div><button id="browse-output"${encodingActive || metadataOnly || passthrough ? ' disabled' : ''}>Browse</button></div>${destinationToggle}</div><small class="destination-output" title="${escapeHtml(makeOutputPath(source))}">${metadataOnly ? 'The original file will be replaced after a verified stream-copy update.' : passthrough ? 'Source audio is retained; enabled normalization runs in place.' : `Output: ${escapeHtml(outputFileName)}`}</small></div>${metadataApplyAll}<button class="encode-button ${metadataOnly ? 'metadata-update-button' : ''}" id="start-encode"${encodingActive || metadataOnly && metadataEditCount === 0 ? ' disabled' : ''}>${icon(metadataOnly ? 'check' : 'play', 17)} ${metadataOnly ? metadataEditCount ? `Update metadata (${metadataEditCount})` : 'No metadata changes' : `${passthrough ? 'Process' : 'Encode'} ${sources.length} ${workflowLabel}${sources.length === 1 ? '' : ' files'}`}</button></footer></main>`;
   bindWorkspaceEvents();
@@ -1955,7 +2000,7 @@ const renderVideoSettings = (source: SourceFile, settings: JobSettings) => {
   const delivery = isDeliveryPreset(settings);
   const fixedPreset = builtInPreset(settings.preset);
   const bitrateControl = fixedPreset?.bitrateControl ?? true;
-  const bufferEditable = settings.preset === 'Regular' || !fixedPreset;
+  const bufferEditable = settings.preset === 'Regular' || manualBufferSettings.has(settings) || !fixedPreset;
   const mode = qualityLabel(settings.encoder);
   const metadataOnly = isMetadataOnly(settings);
   const processing = settings.processing.video;
@@ -1984,7 +2029,7 @@ const renderVideoSettings = (source: SourceFile, settings: JobSettings) => {
     <div class="video-bitrate-control ${bitrateControl ? '' : 'disabled'}"><div class="bitrate-heading"><div><strong>Bitrate control</strong><small>${bitrateControl ? 'Bitrate 0 uses variable bitrate with a quality target.' : 'Disabled by this preset in presets.ini.'}</small></div></div><div class="form-grid three-fields">
       <label>Bitrate (kbps)<input type="number" min="0" step="100" data-video-rate="videoBitrate" value="${settings.videoBitrate}"${bitrateControl ? '' : ' disabled'}/><small class="field-help">0 = VBR</small></label>
       <label>Max Rate (kbps)<input type="number" min="0" step="100" data-video-rate="maxRate" value="${settings.maxRate}"${bitrateControl ? '' : ' disabled'}/></label>
-      <label>Buffer size (kbps)<input type="number" min="0" step="100" data-video-rate="bufferSize" value="${settings.bufferSize}"${bitrateControl && bufferEditable ? '' : ' disabled'}/><small class="field-help">${!bitrateControl ? 'Disabled by preset' : bufferEditable ? 'Editable for Regular and Custom presets' : `${settings.bufferMultiplier}× Max Rate, calculated automatically`}</small></label>
+      <label>Buffer size (kbps)<input type="number" min="0" step="100" data-video-rate="bufferSize" value="${settings.bufferSize}"${bitrateControl && bufferEditable ? '' : ' disabled'}/><small class="field-help">${!bitrateControl ? 'Disabled by preset' : bufferEditable ? 'Editable; changing Max Rate recalculates it' : `${settings.bufferMultiplier}× Max Rate, calculated automatically`}</small></label>
     </div></div></fieldset><section class="settings-card metadata-card"><div class="card-title"><div><span>VIDEO METADATA</span><h3>Language and dispositions</h3></div><span class="read-only-badge">${processing ? 'LANGUAGE EDITABLE' : metadataOnly ? 'EDITING' : 'VIDEO PROCESSING OFF'}</span></div>${renderMetadataEditor('video', 0, settings.videoMetadata, processing || metadataOnly, metadataOnly)}</section><div class="${processing ? '' : 'processing-disabled'}">${renderAdvancedVideoPanel(settings)}</div>
     <section class="command-card"><div class="command-heading"><div><span>COMMAND PREVIEW</span><strong>Metadata cleaned</strong></div><button id="copy-command">${icon('copy', 15)} Copy command</button></div><code id="command-preview">${escapeHtml(getCommand())}</code></section></div>`;
 };
@@ -2193,10 +2238,13 @@ const bindContentEvents = () => {
     const field = control.dataset.videoRate as 'videoBitrate' | 'maxRate' | 'bufferSize';
     settings[field] = String(Math.max(0, Number(control.value) || 0));
     if (field === 'maxRate') {
+      manualBufferSettings.add(settings);
       settings.bufferMultiplier = APP_CONFIG.videoDefaults.bufferMultiplier;
       settings.bufferSize = String(bufferSizeFor(Number(settings.maxRate), APP_CONFIG.videoDefaults.bufferMultiplier));
       const buffer = document.querySelector<HTMLInputElement>('[data-video-rate="bufferSize"]');
       if (buffer) buffer.value = settings.bufferSize;
+    } else if (field === 'bufferSize') {
+      manualBufferSettings.add(settings);
     }
   };
   document.querySelectorAll<HTMLInputElement>('[data-video-rate]').forEach((control) => {
@@ -2225,26 +2273,16 @@ const bindContentEvents = () => {
       renderWorkspace();
     } else {
       const defaults = builtInPreset(settings.preset);
-      settings[field] = value;
-      settings.encoderTune = normalizeEncoderTune(value, defaults ? presetTune(defaults, value) : settings.encoderTune);
       if (defaults) {
-        const outputProfile = outputProfileFor(source, settings.filters.scale, defaults.name);
-        const outputDefaults = videoOutputDefaultsFor(defaults, outputProfile.tier, value);
-        settings.encoderSpeed = normalizeEncoderSpeed(outputDefaults.encoderSpeed);
-        settings.encoderProfile = outputDefaults.encoderProfile;
-        settings.quality = outputDefaults.quality;
-        settings.videoBitrate = String(defaults.bitrateControl ? outputDefaults.videoBitrate : 0);
-        settings.maxRate = String(defaults.bitrateControl ? outputDefaults.maxRate : 0);
-        settings.bufferSize = String(defaults.bitrateControl ? outputDefaults.bufferSize : 0);
-        settings.advancedVideo = resolvePresetAdvancedVideo(
-          outputDefaults.deliveryPreset,
-          preferredCodecForEncoder(value),
-          outputProfile.tier,
-        );
+        for (const item of sources) applyBuiltInCodecProfile(item, getSettings(item), value);
+        appSettings.workingPreset = snapshotPreset(settings, settings.preset);
+        void persistAppSettings();
       } else {
+        settings[field] = value;
+        settings.encoderTune = normalizeEncoderTune(value, settings.encoderTune);
         settings.encoderProfile = preferredCodecForEncoder(value) === 'H.264' ? '1' : preferredCodecForEncoder(value) === 'AV1' ? '0' : '';
+        markCustom(settings);
       }
-      markCustom(settings);
       renderWorkspace();
     }
   }));
@@ -2258,7 +2296,7 @@ const bindContentEvents = () => {
       if (codec === 'copy') appSettings.separateAudioDirectory = false;
     }
     current.bitrate = isAudioWorkflow(source) && track && codec !== 'copy'
-      ? audioBitrate(codec === 'libopus' ? 'Streaming' : 'Archive', track, settings.filters.downmixToStereo)
+      ? audioBitrateFor(codec === 'libopus' ? 'Streaming' : 'Archive', codec, track.isStereo || !settings.filters.downmixToStereo)
       : audioBitrateFor(
       settings.preset, codec, track?.isStereo ?? true,
       codec === 'libopus' ? (track?.isStereo === false ? '128k' : '96k') : (track?.isStereo === false ? '160k' : '144k'),
@@ -2367,7 +2405,7 @@ const bindContentEvents = () => {
       for (const track of source.media?.audio ?? []) {
         const audio = settings.audio[track.index];
         if (!audio || audio.codec === 'copy') continue;
-        audio.bitrate = audioBitrate(audio.codec === 'libopus' ? 'Streaming' : 'Archive', track, settings.filters.downmixToStereo);
+        audio.bitrate = audioBitrateFor(audio.codec === 'libopus' ? 'Streaming' : 'Archive', audio.codec, track.isStereo || !settings.filters.downmixToStereo);
       }
     }
     markCustom(settings);
@@ -2424,6 +2462,7 @@ const saveCurrentPreset = async (source: SourceFile) => {
   appSettings.lastPreset = name;
   for (const item of sources) getSettings(item).preset = name;
   customPresetDraftName = '';
+  customPresetEditorOpen = false;
   try {
     await window.mediaAPI.saveCustomPresets(appSettings.customPresets);
     await window.mediaAPI.saveSettings(appSettings);
@@ -2446,6 +2485,11 @@ const bindWorkspaceEvents = () => {
   });
   document.querySelector<HTMLInputElement>('#custom-preset-name')?.addEventListener('input', (event) => {
     customPresetDraftName = (event.currentTarget as HTMLInputElement).value;
+  });
+  document.querySelector('#add-preset')?.addEventListener('click', () => {
+    customPresetEditorOpen = true;
+    renderWorkspace();
+    document.querySelector<HTMLInputElement>('#custom-preset-name')?.focus();
   });
   document.querySelector('#save-preset')?.addEventListener('click', () => void saveCurrentPreset(source));
   document.querySelectorAll<HTMLElement>('[data-source-index]').forEach((row) => row.addEventListener('click', () => {

@@ -157,7 +157,10 @@ export type SavedPreset = {
   encoderSpeed: number;
   encoderTune: string;
   encoderProfile: string;
+  resolution?: string;
+  rateBasis?: 'h264';
   frameRate: 'passthrough' | number;
+  frameRateOverride?: boolean;
   quality: string;
   videoBitrate: string;
   maxRate: string;
@@ -167,6 +170,10 @@ export type SavedPreset = {
   advancedVideo: AdvancedVideoSettings;
   audioCodec: 'libfdk_aac' | 'libopus' | 'copy';
   audioBitrate: string;
+  audioSettings?: string;
+  subtitleSettings?: string;
+  processingSettings?: string;
+  videoMetadataSettings?: string;
   filters: FilterSettings;
 };
 

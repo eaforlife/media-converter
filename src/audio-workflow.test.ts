@@ -2,13 +2,12 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import test from 'node:test';
 import {
-  audioBitrate, AUDIO_PRESETS, rsgainArguments, shouldResampleLossless, successfulNormalizationRoots,
+  rsgainArguments, shouldResampleLossless, successfulNormalizationRoots,
 } from './audio-workflow.ts';
-import { parseAppConfiguration, setAppConfiguration } from './config.ts';
+import { parseBuiltInPresetConfiguration } from './presets.ts';
 import type { AudioStreamInfo } from './shared-types.ts';
 
-const config = parseAppConfiguration(fs.readFileSync(new URL('../config.ini', import.meta.url), 'utf8'));
-setAppConfiguration(config);
+const presets = parseBuiltInPresetConfiguration(fs.readFileSync(new URL('../presets.ini', import.meta.url), 'utf8')).presets;
 
 const track = (overrides: Partial<AudioStreamInfo> = {}): AudioStreamInfo => ({
   index: 0, codec: 'flac', codecLabel: 'FLAC', language: 'und', languageLabel: 'Undefined',
@@ -17,21 +16,17 @@ const track = (overrides: Partial<AudioStreamInfo> = {}): AudioStreamInfo => ({
   flags: { default: false, forced: false, hearingImpaired: false }, ...overrides,
 });
 
-test('audio presets use the requested stereo and surround-downmix rates', () => {
-  assert.equal(audioBitrate('Streaming', track(), true), '96k');
-  assert.equal(audioBitrate('Streaming', track({ channels: 6, isStereo: false }), true), '128k');
-  assert.equal(audioBitrate('Archive', track(), true), '224k');
-  assert.equal(audioBitrate('Archive', track({ channels: 6, isStereo: false }), true), '256k');
-});
-
-test('audio preset compressor defaults exclude Archive and Passthrough', () => {
-  assert.equal(AUDIO_PRESETS.Streaming.dynamicRangeCompression, true);
-  assert.equal(AUDIO_PRESETS.Archive.dynamicRangeCompression, false);
-  assert.equal(AUDIO_PRESETS.Passthrough.dynamicRangeCompression, false);
+test('named presets own their audio codec rates and compressor defaults', () => {
+  assert.equal(presets.Streaming.audioRates.opus.stereo, '96k');
+  assert.equal(presets.Streaming.audioRates.opus.surround, '128k');
+  assert.equal(presets.Archive.audioRates.aac.stereo, '224k');
+  assert.equal(presets.Archive.audioRates.aac.surround, '256k');
+  assert.equal(presets.Streaming.dynamicRangeCompression, true);
+  assert.equal(presets.Archive.dynamicRangeCompression, false);
 });
 
 test('music video audio uses libfdk AAC at 224 kbit/s', () => {
-  assert.equal(config.audioPresets.Archive.stereoBitrate, '224k');
+  assert.equal(presets['Music Video'].audioRates.aac.stereo, '224k');
 });
 
 test('only high-frequency lossless audio is resampled to 48 kHz', () => {

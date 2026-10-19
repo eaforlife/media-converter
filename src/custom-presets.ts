@@ -43,7 +43,10 @@ export const parseCustomPresets = (ini: string): SavedPreset[] => {
       encoderSpeed: integer(get('encoder_speed', '4'), label('encoder_speed'), 1, 7),
       encoderTune: get('encoder_tune', ''),
       encoderProfile: get('encoder_profile', ''),
+      ...(get('resolution', '') ? { resolution: get('resolution') } : {}),
+      ...(get('rate_basis', '') === 'h264' ? { rateBasis: 'h264' as const } : {}),
       frameRate: presetFrameRateValue(get('frame_rate', 'passthrough'), label('frame_rate')),
+      ...(get('frame_rate_override', '') ? { frameRateOverride: booleanValue(get('frame_rate_override'), label('frame_rate_override')) } : {}),
       quality: get('quality', '20'),
       videoBitrate: get('video_bitrate', '0'),
       maxRate: get('max_rate', '0'),
@@ -63,6 +66,10 @@ export const parseCustomPresets = (ini: string): SavedPreset[] => {
       },
       audioCodec: get('audio_codec', 'libfdk_aac') as SavedPreset['audioCodec'],
       audioBitrate: get('audio_bitrate', '192k'),
+      ...(get('audio_settings', '') ? { audioSettings: get('audio_settings') } : {}),
+      ...(get('subtitle_settings', '') ? { subtitleSettings: get('subtitle_settings') } : {}),
+      ...(get('processing_settings', '') ? { processingSettings: get('processing_settings') } : {}),
+      ...(get('video_metadata_settings', '') ? { videoMetadataSettings: get('video_metadata_settings') } : {}),
       filters: {
         autoCrop: booleanValue(get('auto_crop', '1'), label('auto_crop')),
         toneMapHdrToSdr: booleanValue(get('tone_map_hdr_to_sdr', '1'), label('tone_map_hdr_to_sdr')),
@@ -91,7 +98,10 @@ encoder=${preset.encoder}
 encoder_speed=${preset.encoderSpeed}
 encoder_tune=${preset.encoderTune}
 encoder_profile=${preset.encoderProfile}
+resolution=${preset.resolution ?? ''}
+rate_basis=${preset.rateBasis ?? ''}
 frame_rate=${preset.frameRate}
+frame_rate_override=${preset.frameRateOverride === undefined ? '' : oneOrZero(preset.frameRateOverride)}
 quality=${preset.quality}
 video_bitrate=${preset.videoBitrate}
 max_rate=${preset.maxRate}
@@ -100,6 +110,10 @@ buffer_size=${preset.bufferSize}
 delivery_mode=${oneOrZero(preset.deliveryMode)}
 audio_codec=${preset.audioCodec}
 audio_bitrate=${preset.audioBitrate}
+audio_settings=${preset.audioSettings ?? ''}
+subtitle_settings=${preset.subtitleSettings ?? ''}
+processing_settings=${preset.processingSettings ?? ''}
+video_metadata_settings=${preset.videoMetadataSettings ?? ''}
 b_frames=${oneOrZero(preset.advancedVideo.bFrames)}
 multipass=${preset.advancedVideo.multipass}
 b_ref_mode=${preset.advancedVideo.bRefMode}
