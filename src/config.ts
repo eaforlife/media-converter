@@ -28,6 +28,20 @@ export type AppConfiguration = {
     ccextractorReleaseApi: string;
   };
   mediaExtensions: { video: readonly string[]; audio: readonly string[] };
+  videoDefaults: {
+    preset: string;
+    codec: 'H.264' | 'HEVC' | 'AV1';
+    main10: boolean;
+    outputProfiles: Readonly<Record<'4k' | '1080p' | '720p' | '360p', {
+      tier: '4k' | '1080p' | '720p' | '360p';
+      scale: readonly [string, string];
+      videoBitrate: number;
+      maxRate: number;
+      bufferSize: number;
+    }>>;
+    codecRateMultipliers: Readonly<{ hevc: number; hevcMain10: number; av1: number; av1TenBit: number }>;
+    main10Advanced: Readonly<{ spatialAq: number; bFrames: boolean }>;
+  };
   audioPresets: Record<'Streaming' | 'Archive' | 'Passthrough', AudioPresetConfig>;
   audioBitrates: { aac: readonly string[]; opus: readonly string[] };
   audioFilters: {
@@ -71,6 +85,33 @@ export const parseAppConfiguration = (ini: string): AppConfiguration => {
   const sections = parseIniSections(ini);
   const app = requireSection(sections, 'App');
   const media = requireSection(sections, 'Media Extensions');
+  const uiDefaults = requireSection(sections, 'UI Defaults');
+  const videoOutputProfiles = Object.fromEntries((['4k', '1080p', '720p', '360p'] as const).map((tier) => {
+    const sectionName = `Video Output: ${tier}`;
+    const section = requireSection(sections, sectionName);
+    const resolution = requireValue(section, sectionName, 'resolution').split(':');
+    if (resolution.length !== 2 || resolution.some((value) => !/^-?\d+$/.test(value))) {
+      throw new Error(`[${sectionName}] resolution must contain two integer dimensions`);
+    }
+    return [tier, Object.freeze({
+      tier,
+      scale: Object.freeze([resolution[0], resolution[1]]) as readonly [string, string],
+      videoBitrate: numberValue(requireValue(section, sectionName, 'h264_bitrate'), `[${sectionName}] h264_bitrate`, 0, 1_000_000),
+      maxRate: numberValue(requireValue(section, sectionName, 'h264_max_rate'), `[${sectionName}] h264_max_rate`, 1, 1_000_000),
+      bufferSize: numberValue(requireValue(section, sectionName, 'h264_buffer_size'), `[${sectionName}] h264_buffer_size`, 0, 1_000_000),
+    })];
+  })) as AppConfiguration['videoDefaults']['outputProfiles'];
+  const rateMultipliers = requireSection(sections, 'Video Codec Rate Multipliers');
+  const rateMultiplier = (key: string) => {
+    const value = Number(requireValue(rateMultipliers, 'Video Codec Rate Multipliers', key));
+    if (!Number.isFinite(value) || value <= 0 || value > 10) {
+      throw new Error(`[Video Codec Rate Multipliers] ${key} must be greater than 0 and at most 10`);
+    }
+    return value;
+  };
+  const main10Advanced = requireSection(sections, 'Main10 Defaults');
+  const defaultCodec = requireValue(uiDefaults, 'UI Defaults', 'default_video_codec') as AppConfiguration['videoDefaults']['codec'];
+  if (!['H.264', 'HEVC', 'AV1'].includes(defaultCodec)) throw new Error('[UI Defaults] default_video_codec is invalid');
   const audioBitrates = requireSection(sections, 'Audio Bitrates');
   const musicVideoWorkflow = requireSection(sections, 'Music Video Workflow');
   const audioFilters = requireSection(sections, 'Audio Filters');
@@ -124,6 +165,20 @@ export const parseAppConfiguration = (ini: string): AppConfiguration => {
     mediaExtensions: Object.freeze({
       video: commaList(requireValue(media, 'Media Extensions', 'video')),
       audio: commaList(requireValue(media, 'Media Extensions', 'audio')),
+    }),
+    videoDefaults: Object.freeze({
+      preset: requireValue(uiDefaults, 'UI Defaults', 'default_video_preset'),
+      codec: defaultCodec,
+      main10: booleanValue(requireValue(uiDefaults, 'UI Defaults', 'default_main10'), '[UI Defaults] default_main10'),
+      outputProfiles: Object.freeze(videoOutputProfiles),
+      codecRateMultipliers: Object.freeze({
+        hevc: rateMultiplier('hevc'), hevcMain10: rateMultiplier('hevc_main10'),
+        av1: rateMultiplier('av1'), av1TenBit: rateMultiplier('av1_10bit'),
+      }),
+      main10Advanced: Object.freeze({
+        spatialAq: numberValue(requireValue(main10Advanced, 'Main10 Defaults', 'spatial_aq'), '[Main10 Defaults] spatial_aq', 0, 15),
+        bFrames: booleanValue(requireValue(main10Advanced, 'Main10 Defaults', 'b_frames'), '[Main10 Defaults] b_frames'),
+      }),
     }),
     audioPresets: Object.freeze({
       Streaming: Object.freeze(audioPreset('Streaming')),
@@ -182,6 +237,17 @@ export const EMPTY_APP_CONFIGURATION: AppConfiguration = Object.freeze({
     ccextractorReleaseApi: '',
   }),
   mediaExtensions: Object.freeze({ video: Object.freeze([]), audio: Object.freeze([]) }),
+  videoDefaults: Object.freeze({
+    preset: 'Streaming', codec: 'HEVC', main10: false,
+    outputProfiles: Object.freeze({
+      '4k': { tier: '4k', scale: ['3180', '-2'], videoBitrate: 0, maxRate: 10000, bufferSize: 30000 },
+      '1080p': { tier: '1080p', scale: ['1860', '-2'], videoBitrate: 0, maxRate: 7500, bufferSize: 22500 },
+      '720p': { tier: '720p', scale: ['1300', '-2'], videoBitrate: 0, maxRate: 4000, bufferSize: 12000 },
+      '360p': { tier: '360p', scale: ['-2', '540'], videoBitrate: 0, maxRate: 2500, bufferSize: 7500 },
+    }) as AppConfiguration['videoDefaults']['outputProfiles'],
+    codecRateMultipliers: Object.freeze({ hevc: 0.5, hevcMain10: 0.6, av1: 0.75, av1TenBit: 0.8 }),
+    main10Advanced: Object.freeze({ spatialAq: 6, bFrames: false }),
+  }),
   audioPresets: Object.freeze({
     Streaming: Object.freeze({
       codec: 'copy', extension: null, stereoBitrate: '', downmixBitrate: '', dynamicRangeCompression: false,

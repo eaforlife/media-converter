@@ -25,6 +25,8 @@ let cancellationRequested = false;
 let queueFailureRequested = false;
 let queueFailureMessage: string | undefined;
 let activeQueuePromise: Promise<void> | null = null;
+let taskbarQueueTotal = 0;
+let taskbarJobProgress = new Map<number, number>();
 
 const ENCODE_COOLDOWN_MS = ADAPTIVE_SAMPLE_MS;
 const SHUTDOWN_GRACE_MS = 8_000;
@@ -46,12 +48,30 @@ const emit = (webContents: WebContents, progress: EncodeProgress) => {
   webContents.send('encode:progress', progress);
   const owner = BrowserWindow.fromWebContents(webContents);
   if (!owner) return;
-  if (progress.phase === 'failed' || progress.phase === 'cancelled' || progress.phase === 'queue-completed') {
+  if (progress.phase === 'queue-completed') {
     owner.setProgressBar(-1);
+    taskbarQueueTotal = 0;
+    taskbarJobProgress.clear();
+  } else if (progress.phase === 'queue-failed' || progress.phase === 'queue-cancelled') {
+    owner.setProgressBar(-1);
+    taskbarQueueTotal = 0;
+    taskbarJobProgress.clear();
+  } else if (progress.phase === 'failed' || progress.phase === 'cancelled') {
+    taskbarJobProgress.set(progress.jobIndex, 100);
+    const sum = [...taskbarJobProgress.values()].reduce((total, percent) => total + percent, 0);
+    owner.setProgressBar(taskbarQueueTotal ? sum / taskbarQueueTotal / 100 : 0);
   } else if (progress.percent === null) {
-    owner.setProgressBar(2, { mode: 'indeterminate' });
+    if (progress.phase === 'starting' && progress.jobIndex > 0) {
+      taskbarJobProgress.set(progress.jobIndex, 0);
+    }
+    const sum = [...taskbarJobProgress.values()].reduce((total, percent) => total + percent, 0);
+    owner.setProgressBar(taskbarQueueTotal ? sum / taskbarQueueTotal / 100 : 0);
   } else {
-    owner.setProgressBar(progress.percent / 100, { mode: 'normal' });
+    if (progress.jobIndex > 0) {
+      taskbarJobProgress.set(progress.jobIndex, progress.percent);
+    }
+    const sum = [...taskbarJobProgress.values()].reduce((total, percent) => total + percent, 0);
+    owner.setProgressBar(taskbarQueueTotal ? sum / taskbarQueueTotal / 100 : progress.percent / 100);
   }
 };
 
@@ -176,11 +196,24 @@ const runRsgain = (
   const child = spawn(rsgainPath, args, { windowsHide: true, shell: false });
   let output = '';
   let settled = false;
+  const startedAt = Date.now();
+  const readOutput = (chunk: string) => {
+    output = `${output}${chunk}`.slice(-2 * 1024 * 1024);
+    const percentage = [...output.matchAll(/(?:^|\s)(\d{1,3}(?:\.\d+)?)\s*%/g)]
+      .map((match) => Number(match[1])).findLast((value) => value >= 0 && value <= 100);
+    if (percentage === undefined) return;
+    emit(webContents, {
+      phase: 'encoding', jobIndex, totalJobs, sourceName: job.sourceName, outputPath: root,
+      percent: percentage, bitrate: '—', fps: '—',
+      runTimeSeconds: (Date.now() - startedAt) / 1000, etaSeconds: null, speed: '—',
+      message: `Normalizing audio library · ${percentage.toFixed(0)}%`,
+    });
+  };
   activeProcesses.set(jobIndex, child);
   child.stdout.setEncoding('utf8');
   child.stderr.setEncoding('utf8');
-  child.stdout.on('data', (chunk: string) => { output = `${output}${chunk}`.slice(-2 * 1024 * 1024); });
-  child.stderr.on('data', (chunk: string) => { output = `${output}${chunk}`.slice(-2 * 1024 * 1024); });
+  child.stdout.on('data', readOutput);
+  child.stderr.on('data', readOutput);
   child.on('error', (error) => {
     if (settled) return;
     settled = true;
@@ -430,6 +463,8 @@ export const startEncodeQueue = async (
 
   await Promise.all(outputJobs.map((job) => fs.promises.mkdir(path.dirname(job.outputPath), { recursive: true })));
   queueRunning = true;
+  taskbarQueueTotal = jobs.length;
+  taskbarJobProgress = new Map(jobs.map((_job, index) => [index + 1, 0]));
   cancellationRequested = false;
   queueFailureRequested = false;
   queueFailureMessage = undefined;
@@ -642,6 +677,8 @@ export const startEncodeQueue = async (
       cancelCooldowns.clear();
       cancelledJobs.clear();
       queueRunning = false;
+      taskbarQueueTotal = 0;
+      taskbarJobProgress.clear();
       cancellationRequested = false;
       queueFailureRequested = false;
       queueFailureMessage = undefined;

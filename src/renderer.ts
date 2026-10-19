@@ -159,7 +159,7 @@ const isAudioPassthrough = (settings: JobSettings) => settings.format === 'sourc
 const builtInPreset = (name: string) => builtInPresetConfiguration?.presets[name];
 const requiredBuiltInPresetConfiguration = () => {
   if (!builtInPresetConfiguration) throw new Error('The built-in preset configuration is unavailable');
-  return builtInPresetConfiguration;
+  return { ...builtInPresetConfiguration, outputProfiles: APP_CONFIG.videoDefaults.outputProfiles };
 };
 const requiredBuiltInPreset = (name: BuiltInPresetName) => {
   const preset = builtInPreset(name);
@@ -195,6 +195,26 @@ const outputDefaultsFor = (
 ) => resolvePresetOutputDefaults(
   requiredBuiltInPresetConfiguration(), preset, tier, encoderFamily(encoder), preferredCodecForEncoder(encoder),
 );
+const videoOutputDefaultsFor = (
+  preset: BuiltInPresetDefinition,
+  tier: ReturnType<typeof videoOutputProfile>['tier'],
+  encoder: string,
+  main10 = false,
+) => {
+  const defaults = outputDefaultsFor(preset, tier, encoder);
+  const profile = APP_CONFIG.videoDefaults.outputProfiles[tier];
+  const codec = preferredCodecForEncoder(encoder);
+  const multipliers = APP_CONFIG.videoDefaults.codecRateMultipliers;
+  const multiplier = codec === 'H.264' ? 1
+    : codec === 'HEVC' ? main10 ? multipliers.hevcMain10 : multipliers.hevc
+      : main10 ? multipliers.av1TenBit : multipliers.av1;
+  return {
+    ...defaults,
+    videoBitrate: Math.round(profile.videoBitrate * multiplier),
+    maxRate: Math.round(profile.maxRate * multiplier),
+    bufferSize: Math.round(profile.bufferSize * multiplier),
+  };
+};
 const deliveryQuality = (
   preset: BuiltInPresetDefinition,
   tier: ReturnType<typeof videoOutputProfile>['tier'],
@@ -420,7 +440,7 @@ const applyMusicVideoPreset = (source: SourceFile) => {
   const settings = settingsByPath.get(source.path) ?? initialSettings(source);
   settingsByPath.set(source.path, settings);
   const encoder = hardwareEncoderFor(preset.preferredVideoCodec);
-  const outputDefaults = outputDefaultsFor(preset, outputProfile.tier, encoder);
+  const outputDefaults = videoOutputDefaultsFor(preset, outputProfile.tier, encoder);
   Object.assign(settings, {
     preset: 'Music Video', format: preset.format, encoder,
     encoderSpeed: normalizeEncoderSpeed(outputDefaults.encoderSpeed),
@@ -428,7 +448,7 @@ const applyMusicVideoPreset = (source: SourceFile) => {
     encoderProfile: outputDefaults.encoderProfile,
     resolution: outputDefaults.resolution.join(':'), quality: outputDefaults.quality,
     videoBitrate: String(outputDefaults.videoBitrate), maxRate: String(outputDefaults.maxRate), bufferMultiplier: preset.bufferMultiplier,
-    bufferSize: String(bufferSizeFor(outputDefaults.maxRate, preset.bufferMultiplier)),
+    bufferSize: String(outputDefaults.bufferSize),
     frameRate: preset.frameRate, frameRateOverride: false,
     deliveryMode: preset.deliveryMode,
     advancedVideo: resolvePresetAdvancedVideo(preset, preferredCodecForEncoder(encoder), outputProfile.tier),
@@ -452,17 +472,17 @@ const applyMusicVideoPreset = (source: SourceFile) => {
 
 const initialSettings = (source: SourceFile): JobSettings => {
   if (isAudioWorkflow(source)) return initialAudioSettings(source);
-  const preset = requiredBuiltInPreset('Streaming');
+  const preset = requiredBuiltInPreset(APP_CONFIG.videoDefaults.preset as BuiltInPresetName);
   const outputProfile = outputProfileFor(source, preset.scale, preset.name);
-  const encoder = hardwareEncoderFor(preferredVideoCodecForPreset(preset, outputProfile.tier));
-  const outputDefaults = outputDefaultsFor(preset, outputProfile.tier, encoder);
+  const encoder = hardwareEncoderFor(APP_CONFIG.videoDefaults.codec);
+  const outputDefaults = videoOutputDefaultsFor(preset, outputProfile.tier, encoder);
   const profilePreset = outputDefaults.deliveryPreset;
   const selectedAudio = preferredAudioIndexes(source.media?.audio ?? []);
   const settings: JobSettings = {
     preset: 'Streaming', format: preset.format, encoder, encoderSpeed: normalizeEncoderSpeed(outputDefaults.encoderSpeed), encoderTune: normalizeEncoderTune(encoder, presetTune(preset, encoder)), encoderProfile: outputDefaults.encoderProfile,
     resolution: outputDefaults.resolution.join(':'), quality: outputDefaults.quality,
     videoBitrate: String(outputDefaults.videoBitrate), maxRate: String(outputDefaults.maxRate), bufferMultiplier: preset.bufferMultiplier,
-    bufferSize: String(bufferSizeFor(outputDefaults.maxRate, preset.bufferMultiplier)),
+    bufferSize: String(outputDefaults.bufferSize),
     frameRate: preset.frameRate,
     frameRateOverride: frameRateOverrideState(source.media?.video?.frameRate, preset.frameRate).enabled,
     advancedVideo: resolvePresetAdvancedVideo(profilePreset, preferredCodecForEncoder(encoder), outputProfile.tier),
@@ -519,12 +539,17 @@ const applyPreset = (source: SourceFile, preset: string, persist = true) => {
   }
   const selectedPreset = defaults ?? saved as SavedPreset;
   const outputProfile = defaults ? outputProfileFor(source, defaults.scale, defaults.name) : null;
+  const selectedCodec = defaults
+    ? defaults.name === APP_CONFIG.videoDefaults.preset
+      ? APP_CONFIG.videoDefaults.codec
+      : preferredVideoCodecForPreset(defaults, outputProfile!.tier)
+    : null;
   const encoder = defaults
-    ? hardwareEncoderFor(preferredVideoCodecForPreset(defaults, outputProfile!.tier))
+    ? hardwareEncoderFor(selectedCodec!)
     : hardwareCapabilities.encoders.some((item) => item.id === saved!.encoder)
       ? saved!.encoder
       : hardwareEncoderFor(preferredCodecForEncoder(saved!.encoder));
-  const outputDefaults = defaults && outputProfile ? outputDefaultsFor(defaults, outputProfile.tier, encoder) : null;
+  const outputDefaults = defaults && outputProfile ? videoOutputDefaultsFor(defaults, outputProfile.tier, encoder) : null;
   const profileDefaults = outputDefaults?.deliveryPreset ?? null;
   Object.assign(settings, {
     preset,
@@ -537,7 +562,7 @@ const applyPreset = (source: SourceFile, preset: string, persist = true) => {
     videoBitrate: defaults ? String(defaults.bitrateControl ? outputDefaults!.videoBitrate : 0) : saved!.videoBitrate,
     maxRate: defaults ? String(defaults.bitrateControl ? outputDefaults!.maxRate : 0) : saved!.maxRate,
     bufferMultiplier: defaults ? defaults.bufferMultiplier : saved!.bufferMultiplier,
-    bufferSize: defaults ? String(bufferSizeFor(defaults.bitrateControl ? outputDefaults!.maxRate : 0, defaults.bufferMultiplier)) : saved!.bufferSize,
+    bufferSize: defaults ? String(defaults.bitrateControl ? outputDefaults!.bufferSize : 0) : saved!.bufferSize,
     frameRate: defaults ? defaults.frameRate : saved!.frameRate,
     frameRateOverride: defaults
       ? frameRateOverrideState(source.media?.video?.frameRate, defaults.frameRate).enabled
@@ -589,8 +614,11 @@ const applyBuiltInScaleProfile = (
   const defaults = builtInPreset(settings.preset);
   if (!defaults) return false;
   const outputProfile = outputProfileFor(source, scale, defaults.name);
-  const encoder = hardwareEncoderFor(preferredVideoCodecForPreset(defaults, outputProfile.tier));
-  const outputDefaults = outputDefaultsFor(defaults, outputProfile.tier, encoder);
+  const selectedCodec = defaults.name === APP_CONFIG.videoDefaults.preset
+    ? APP_CONFIG.videoDefaults.codec
+    : preferredVideoCodecForPreset(defaults, outputProfile.tier);
+  const encoder = hardwareEncoderFor(selectedCodec);
+  const outputDefaults = videoOutputDefaultsFor(defaults, outputProfile.tier, encoder);
   const profileDefaults = outputDefaults.deliveryPreset;
   settings.filters.scale = scale;
   settings.filters.scaleLocked = defaults.scaleLocked;
@@ -603,7 +631,7 @@ const applyBuiltInScaleProfile = (
   settings.videoBitrate = String(defaults.bitrateControl ? outputDefaults.videoBitrate : 0);
   settings.maxRate = String(defaults.bitrateControl ? outputDefaults.maxRate : 0);
   settings.bufferMultiplier = defaults.bufferMultiplier;
-  settings.bufferSize = String(bufferSizeFor(defaults.bitrateControl ? outputDefaults.maxRate : 0, defaults.bufferMultiplier));
+  settings.bufferSize = String(defaults.bitrateControl ? outputDefaults.bufferSize : 0);
   settings.deliveryMode = profileDefaults.deliveryMode;
   settings.advancedVideo = resolvePresetAdvancedVideo(profileDefaults, preferredCodecForEncoder(encoder), outputProfile.tier);
   settings.filters.pixelFormat10Bit = shouldDefaultToMain10(source, defaults.name, outputProfile.tier, encoder);
@@ -812,7 +840,7 @@ const shouldDefaultToMain10 = (
   preset: string,
   tier: ReturnType<typeof videoOutputProfile>['tier'],
   encoder: string,
-) => encoderMain10Enabled(encoder) && (
+) => APP_CONFIG.videoDefaults.main10 && encoderMain10Enabled(encoder) && (
   shouldDefaultToHevcMain10(source.media?.video)
   || (preferredCodecForEncoder(encoder) === 'AV1' && (preset === 'Cellular' || (preset === 'Streaming' && (tier === '720p' || tier === '360p'))))
 );
@@ -1955,7 +1983,7 @@ const renderVideoSettings = (source: SourceFile, settings: JobSettings) => {
       <label>Bitrate (kbps)<input type="number" min="0" step="100" data-video-rate="videoBitrate" value="${settings.videoBitrate}"${bitrateControl ? '' : ' disabled'}/><small class="field-help">0 = VBR</small></label>
       <label>Max Rate (kbps)<input type="number" min="0" step="100" data-video-rate="maxRate" value="${settings.maxRate}"${bitrateControl ? '' : ' disabled'}/></label>
       <label>Buffer size (kbps)<input type="number" min="0" step="100" data-video-rate="bufferSize" value="${settings.bufferSize}"${bitrateControl && bufferEditable ? '' : ' disabled'}/><small class="field-help">${!bitrateControl ? 'Disabled by preset' : bufferEditable ? 'Editable for Regular and Custom presets' : `${settings.bufferMultiplier}× Max Rate, calculated automatically`}</small></label>
-    </div></div></fieldset><section class="settings-card metadata-card"><div class="card-title"><div><span>VIDEO METADATA</span><h3>Language and dispositions</h3></div><span class="read-only-badge">${metadataOnly ? 'EDITING' : 'METADATA MODE ONLY'}</span></div>${renderMetadataEditor('video', 0, settings.videoMetadata, metadataOnly)}</section><div class="${processing ? '' : 'processing-disabled'}">${renderAdvancedVideoPanel(settings)}</div>
+    </div></div></fieldset><section class="settings-card metadata-card"><div class="card-title"><div><span>VIDEO METADATA</span><h3>Language and dispositions</h3></div><span class="read-only-badge">${processing ? 'LANGUAGE EDITABLE' : metadataOnly ? 'EDITING' : 'VIDEO PROCESSING OFF'}</span></div>${renderMetadataEditor('video', 0, settings.videoMetadata, processing || metadataOnly, metadataOnly)}</section><div class="${processing ? '' : 'processing-disabled'}">${renderAdvancedVideoPanel(settings)}</div>
     <section class="command-card"><div class="command-heading"><div><span>COMMAND PREVIEW</span><strong>Metadata cleaned</strong></div><button id="copy-command">${icon('copy', 15)} Copy command</button></div><code id="command-preview">${escapeHtml(getCommand())}</code></section></div>`;
 };
 
@@ -2197,13 +2225,13 @@ const bindContentEvents = () => {
       settings.encoderTune = normalizeEncoderTune(value, defaults ? presetTune(defaults, value) : settings.encoderTune);
       if (defaults) {
         const outputProfile = outputProfileFor(source, settings.filters.scale, defaults.name);
-        const outputDefaults = outputDefaultsFor(defaults, outputProfile.tier, value);
+        const outputDefaults = videoOutputDefaultsFor(defaults, outputProfile.tier, value);
         settings.encoderSpeed = normalizeEncoderSpeed(outputDefaults.encoderSpeed);
         settings.encoderProfile = outputDefaults.encoderProfile;
         settings.quality = outputDefaults.quality;
         settings.videoBitrate = String(defaults.bitrateControl ? outputDefaults.videoBitrate : 0);
         settings.maxRate = String(defaults.bitrateControl ? outputDefaults.maxRate : 0);
-        settings.bufferSize = String(bufferSizeFor(defaults.bitrateControl ? outputDefaults.maxRate : 0, defaults.bufferMultiplier));
+        settings.bufferSize = String(defaults.bitrateControl ? outputDefaults.bufferSize : 0);
         settings.advancedVideo = resolvePresetAdvancedVideo(
           outputDefaults.deliveryPreset,
           preferredCodecForEncoder(value),
@@ -2289,6 +2317,7 @@ const bindContentEvents = () => {
         ? settings.audio[index].metadata
         : settings.subtitles[index].metadata;
     metadata.language = control.value;
+    if (kind === 'video') markCustom(settings);
     renderWorkspace();
   }));
   document.querySelectorAll<HTMLInputElement>('[data-metadata-flag]').forEach((control) => control.addEventListener('change', () => {
@@ -2310,6 +2339,20 @@ const bindContentEvents = () => {
   document.querySelectorAll<HTMLButtonElement>('[data-filter]').forEach((control) => control.addEventListener('click', () => {
     const key = control.dataset.filter as 'autoCrop' | 'toneMapHdrToSdr' | 'pixelFormat10Bit';
     settings.filters[key] = toggleSwitch(control);
+    if (key === 'pixelFormat10Bit' && builtInPreset(settings.preset)) {
+      const preset = requiredBuiltInPreset(settings.preset as BuiltInPresetName);
+      const outputProfile = outputProfileFor(source, settings.filters.scale, preset.name);
+      const rates = videoOutputDefaultsFor(preset, outputProfile.tier, settings.encoder, settings.filters.pixelFormat10Bit);
+      settings.videoBitrate = String(rates.videoBitrate);
+      settings.maxRate = String(rates.maxRate);
+      settings.bufferSize = String(rates.bufferSize);
+      if (settings.filters.pixelFormat10Bit) {
+        settings.advancedVideo.bFrames = APP_CONFIG.videoDefaults.main10Advanced.bFrames;
+        settings.advancedVideo.spatialAq = APP_CONFIG.videoDefaults.main10Advanced.spatialAq;
+      } else {
+        settings.advancedVideo = resolvePresetAdvancedVideo(preset, preferredCodecForEncoder(settings.encoder), outputProfile.tier);
+      }
+    }
     markCustom(settings);
     renderWorkspace();
   }));

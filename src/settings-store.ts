@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import type { AdvancedVideoSettings, AppSettings, FilterSettings, SavedPreset, ScaleMode } from './shared-types';
 import { presetFrameRateValue } from './presets';
+import { APP_CONFIG } from './config.ts';
 
 const DEFAULT_SETTINGS: AppSettings = {
   hardwareAcceleration: true,
@@ -151,14 +152,14 @@ export const loadSettings = async (): Promise<AppSettings> => {
       useStableFfmpeg: bool(tag(xml, 'useStableFfmpeg'), true),
       simultaneousEncoding: bool(tag(xml, 'simultaneousEncoding'), true),
       smartFileNaming: bool(tag(xml, 'smartFileNaming'), true),
-      lastPreset: xmlUnescape(tag(xml, 'lastPreset') || 'Streaming'),
+      lastPreset: xmlUnescape(tag(xml, 'lastPreset') || APP_CONFIG.videoDefaults.preset),
       lastSourceDirectory: xmlUnescape(tag(xml, 'lastSourceDirectory') || ''),
       customPresets: [],
       workingPreset: parsePresets(tag(xml, 'workingPreset') || '')[0] ?? null,
       separateAudioDirectory: bool(tag(xml, 'separateAudioDirectory'), true),
     };
   } catch {
-    return structuredClone(DEFAULT_SETTINGS);
+    return { ...structuredClone(DEFAULT_SETTINGS), lastPreset: APP_CONFIG.videoDefaults.preset };
   }
 };
 
