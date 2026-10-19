@@ -1,5 +1,6 @@
 import type { AdvancedVideoSettings, ScaleMode } from './shared-types';
 import type { OutputTier, VideoOutputProfiles } from './video-output-profile';
+import { iniVersion } from './ini-version.ts';
 
 export const MUSIC_VIDEO_PRESET_NAME = 'Music Video';
 export const REQUIRED_BUILT_IN_PRESET_NAMES = ['Archive', 'Regular', 'Streaming', 'Cellular', MUSIC_VIDEO_PRESET_NAME] as const;
@@ -128,7 +129,8 @@ export const parseIniSections = (ini: string) => {
 export const parseBuiltInPresetConfiguration = (ini: string): BuiltInPresetConfiguration => {
   const firstEntry = ini.replace(/^\uFEFF/, '').split(/\r?\n/).map((line) => line.trim()).find(Boolean) ?? '';
   const versionMatch = firstEntry.match(/^\[Version: ([0-9a-f]{7,40})\]$/i);
-  if (!versionMatch) throw new Error('presets.ini must begin with [Version: <commit>]');
+  const semanticVersion = iniVersion(ini);
+  if (!versionMatch && !semanticVersion) throw new Error('presets.ini must begin with [Version: <major.minor.patch>]');
   const versionSection = firstEntry.slice(1, -1);
   const sections = parseIniSections(ini);
   for (const name of REQUIRED_BUILT_IN_PRESET_NAMES) {
@@ -274,7 +276,7 @@ export const parseBuiltInPresetConfiguration = (ini: string): BuiltInPresetConfi
     }
   }
   return Object.freeze({
-    version: versionMatch[1],
+    version: semanticVersion ?? versionMatch![1],
     outputProfiles: Object.freeze(outputProfiles),
     presets: Object.freeze(parsed),
   });

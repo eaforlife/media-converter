@@ -1,6 +1,7 @@
 import { deepStrictEqual, equal } from 'node:assert/strict';
 import fs from 'node:fs';
 import { test } from 'node:test';
+import { parseAppConfiguration } from './config.ts';
 import { parseBuiltInPresetConfiguration, resolvePresetOutputDefaults } from './presets.ts';
 import {
   bufferSizeFor, scaleDimensionsFor, videoOutputProfile,
@@ -9,13 +10,14 @@ import {
 const configuration = parseBuiltInPresetConfiguration(
   fs.readFileSync(new URL('../presets.ini', import.meta.url), 'utf8'),
 );
-const profiles = configuration.outputProfiles;
+const appConfiguration = parseAppConfiguration(fs.readFileSync(new URL('../config.ini', import.meta.url), 'utf8'));
+const profiles = appConfiguration.videoDefaults.outputProfiles;
 
-test('loads every output tier value from presets.ini', () => {
+test('loads H.264 bitrate baselines and output dimensions from config.ini', () => {
   const cases = [
-    { height: 2160, tier: '4k', scale: ['3180', '-2'], videoBitrate: 0, maxRate: 8000 },
-    { height: 1080, tier: '1080p', scale: ['1860', '-2'], videoBitrate: 0, maxRate: 5000 },
-    { height: 720, tier: '720p', scale: ['1300', '-2'], videoBitrate: 0, maxRate: 2500 },
+    { height: 2160, tier: '4k', scale: ['3180', '-2'], videoBitrate: 0, maxRate: 10000 },
+    { height: 1080, tier: '1080p', scale: ['1860', '-2'], videoBitrate: 0, maxRate: 7500 },
+    { height: 720, tier: '720p', scale: ['1300', '-2'], videoBitrate: 0, maxRate: 4000 },
     { height: 360, tier: '360p', scale: ['-2', '540'], videoBitrate: 0, maxRate: 2500 },
   ] as const;
 
@@ -28,13 +30,13 @@ test('loads every output tier value from presets.ini', () => {
   }
 });
 
-test('explicit scaling uses the selected INI output profile instead of the source tier', () => {
+test('explicit scaling uses the configured output profile instead of the source tier', () => {
   const sourceHeight = 2160;
   deepStrictEqual(scaleDimensionsFor(sourceHeight, '1080p', profiles), ['1860', '-2']);
   deepStrictEqual(scaleDimensionsFor(sourceHeight, '720p', profiles), ['1300', '-2']);
   deepStrictEqual(scaleDimensionsFor(sourceHeight, '360p', profiles), ['-2', '540']);
-  equal(videoOutputProfile(sourceHeight, '1080p', profiles).maxRate, 5000);
-  equal(videoOutputProfile(sourceHeight, '720p', profiles).maxRate, 2500);
+  equal(videoOutputProfile(sourceHeight, '1080p', profiles).maxRate, 7500);
+  equal(videoOutputProfile(sourceHeight, '720p', profiles).maxRate, 4000);
 });
 
 test('resolves every Streaming tier CQ and backend quality from presets.ini', () => {
@@ -56,25 +58,25 @@ test('resolves Cellular delivery and Music Video tier overrides from presets.ini
 
   const music4k = resolvePresetOutputDefaults(configuration, configuration.presets['Music Video'], '4k', 'nvenc');
   equal(music4k.encoderSpeed, 6);
-  equal(music4k.maxRate, 11000);
+  equal(music4k.maxRate, 0);
   deepStrictEqual(music4k.resolution, ['2960', '-2']);
 
   const music1080 = resolvePresetOutputDefaults(configuration, configuration.presets['Music Video'], '1080p', 'nvenc');
   equal(music1080.encoderSpeed, 6);
-  equal(music1080.maxRate, 7000);
+  equal(music1080.maxRate, 0);
   deepStrictEqual(music1080.resolution, ['-2', '-2']);
 });
 
-test('resolves H.264-only rates, profiles, and speed tiers from presets.ini', () => {
+test('resolves preset profiles and speed tiers independently from configured rates', () => {
   const cases = [
-    { preset: 'Archive', tier: '1080p', speed: 6, maxRate: 10000 },
-    { preset: 'Regular', tier: '1080p', speed: 4, maxRate: 8000 },
-    { preset: 'Streaming', tier: '1080p', speed: 4, maxRate: 4500 },
-    { preset: 'Music Video', tier: '1080p', speed: 6, maxRate: 7000 },
-    { preset: 'Regular', tier: '720p', speed: 2, maxRate: 4000 },
-    { preset: 'Streaming', tier: '360p', speed: 2, maxRate: 4000 },
-    { preset: 'Cellular', tier: '360p', speed: 2, maxRate: 4000 },
-    { preset: 'Music Video', tier: '720p', speed: 2, maxRate: 4000 },
+    { preset: 'Archive', tier: '1080p', speed: 6 },
+    { preset: 'Regular', tier: '1080p', speed: 4 },
+    { preset: 'Streaming', tier: '1080p', speed: 4 },
+    { preset: 'Music Video', tier: '1080p', speed: 6 },
+    { preset: 'Regular', tier: '720p', speed: 2 },
+    { preset: 'Streaming', tier: '360p', speed: 2 },
+    { preset: 'Cellular', tier: '360p', speed: 2 },
+    { preset: 'Music Video', tier: '720p', speed: 2 },
   ] as const;
 
   for (const expected of cases) {
@@ -83,7 +85,7 @@ test('resolves H.264-only rates, profiles, and speed tiers from presets.ini', ()
     );
     equal(defaults.encoderProfile, '1');
     equal(defaults.encoderSpeed, expected.speed);
-    equal(defaults.maxRate, expected.maxRate);
+    equal(defaults.maxRate, 0);
   }
 
   const streamingHevc = resolvePresetOutputDefaults(
@@ -91,24 +93,34 @@ test('resolves H.264-only rates, profiles, and speed tiers from presets.ini', ()
   );
   equal(streamingHevc.encoderProfile, 'main10');
   equal(streamingHevc.encoderSpeed, 2);
-  equal(streamingHevc.maxRate, 4500);
+  equal(streamingHevc.maxRate, 0);
   const streamingAv1 = resolvePresetOutputDefaults(
     configuration, configuration.presets.Streaming, '1080p', 'nvenc', 'AV1',
   );
-  equal(streamingAv1.maxRate, 2700);
+  equal(streamingAv1.maxRate, 0);
   const cellularAv1 = resolvePresetOutputDefaults(
     configuration, configuration.presets.Cellular, '360p', 'nvenc', 'AV1',
   );
-  equal(cellularAv1.maxRate, 1250);
+  equal(cellularAv1.maxRate, 0);
+});
+
+test('H.264 output rate baselines scale using only config.ini codec ratios', () => {
+  const { codecRateMultipliers: ratios } = appConfiguration.videoDefaults;
+  const h264 = profiles['1080p'].maxRate;
+  equal(Math.round(h264 * ratios.hevc), 3750);
+  equal(Math.round(h264 * ratios.hevcMain10), 4500);
+  equal(Math.round(h264 * ratios.av1), 5625);
+  equal(Math.round(h264 * ratios.av1TenBit), 6000);
+  equal(appConfiguration.videoDefaults.bufferMultiplier, 3);
 });
 
 test('disabled scaling emits no scale filter while retaining the source rate tier', () => {
   equal(scaleDimensionsFor(2160, 'disabled', profiles), null);
   equal(videoOutputProfile(2160, 'disabled', profiles).tier, '4k');
-  equal(videoOutputProfile(2160, 'disabled', profiles).maxRate, 8000);
+  equal(videoOutputProfile(2160, 'disabled', profiles).maxRate, 10000);
 });
 
-test('buffer sizing retains the preset multiplier when max rate changes', () => {
-  equal(bufferSizeFor(5000, configuration.presets.Streaming.bufferMultiplier), 15000);
-  equal(bufferSizeFor(2500, configuration.presets.Streaming.bufferMultiplier), 7500);
+test('buffer sizing follows the app-wide config multiplier when max rate changes', () => {
+  equal(bufferSizeFor(5000, appConfiguration.videoDefaults.bufferMultiplier), 15000);
+  equal(bufferSizeFor(2500, appConfiguration.videoDefaults.bufferMultiplier), 7500);
 });

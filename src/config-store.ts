@@ -8,6 +8,7 @@ import {
 import { logActivity } from './app-logger';
 import { presetContentsMatch } from './preset-sync';
 import type { HardwareCapabilities } from './shared-types';
+import { compareIniVersions, iniVersion, sourceIniIsNewer } from './ini-version.ts';
 
 export const configFilePath = () => app.isPackaged
   ? path.join(process.resourcesPath, 'config.ini')
@@ -90,6 +91,12 @@ const validConfigFile = async (target: string) => {
   }
 };
 
+const newestVersionedConfig = (...contents: string[]) => contents.reduce((newest, candidate) => {
+  if (!candidate) return newest;
+  const comparison = compareIniVersions(iniVersion(candidate), iniVersion(newest));
+  return !newest || comparison !== null && comparison > 0 ? candidate : newest;
+}, '');
+
 export const loadAppConfiguration = async (): Promise<AppConfiguration> => {
   const installed = configFilePath();
   const managed = managedConfigFilePath();
@@ -97,27 +104,39 @@ export const loadAppConfiguration = async (): Promise<AppConfiguration> => {
   if (app.isPackaged) {
     try {
       const remoteContents = validateConfigContents(await fetchText(CONFIG_SOURCE_URL));
-      try {
-        const updatedInstalled = await synchronizeConfigFile(installed, remoteContents);
-        const localContents = validateConfigContents(await preserveSystemCapabilityCache(remoteContents));
-        const updated = await synchronizeConfigFile(managed, localContents);
-        activeConfigFilePath = managed;
-        logActivity('INFO', updated ? 'config.remote.updated' : 'config.remote.current', {
-          source: CONFIG_SOURCE_URL, destination: managed, installedUpdated: updatedInstalled,
-        });
-      } catch (error) {
-        const localContents = validateConfigContents(await preserveSystemCapabilityCache(remoteContents));
-        await synchronizeConfigFile(managed, localContents).catch(async () => {
-          if (!await validConfigFile(managed)) throw error;
-        });
-        activeConfigFilePath = managed;
-        logActivity('WARN', 'config.remote.managed-fallback', {
-          source: CONFIG_SOURCE_URL, destination: activeConfigFilePath,
-          reason: error instanceof Error ? error.message : String(error),
-        });
+      if (!iniVersion(remoteContents)) throw new Error('Remote config.ini has no valid [Version: major.minor.patch] header');
+      const [installedContents, managedContents] = await Promise.all([
+        fs.promises.readFile(installed, 'utf8').catch(() => ''),
+        fs.promises.readFile(managed, 'utf8').catch(() => ''),
+      ]);
+      let installedUpdated = false;
+      if (sourceIniIsNewer(remoteContents, installedContents)) {
+        try { installedUpdated = await synchronizeConfigFile(installed, remoteContents); }
+        catch (error) {
+          logActivity('WARN', 'config.remote.installed-readonly', {
+            destination: installed, reason: error instanceof Error ? error.message : String(error),
+          });
+        }
       }
+      const newestLocal = newestVersionedConfig(
+        await validConfigFile(managed) ? managedContents : '', installedContents,
+      );
+      const baseContents = sourceIniIsNewer(remoteContents, newestLocal) ? remoteContents : newestLocal || remoteContents;
+      const contentsWithCache = validateConfigContents(await preserveSystemCapabilityCache(baseContents));
+      const updated = await synchronizeConfigFile(managed, contentsWithCache);
+      activeConfigFilePath = managed;
+      logActivity('INFO', updated ? 'config.remote.updated' : 'config.remote.current', {
+        version: iniVersion(baseContents), source: CONFIG_SOURCE_URL, destination: managed, installedUpdated,
+      });
     } catch (error) {
-      if (await validConfigFile(managed)) activeConfigFilePath = managed;
+      const managedValid = await validConfigFile(managed);
+      const [managedContents, installedContents] = await Promise.all([
+        managedValid ? fs.promises.readFile(managed, 'utf8').catch(() => '') : Promise.resolve(''),
+        fs.promises.readFile(installed, 'utf8').catch(() => ''),
+      ]);
+      const newestLocal = newestVersionedConfig(managedContents, installedContents);
+      if (newestLocal === managedContents && managedValid) activeConfigFilePath = managed;
+      else if (await validConfigFile(installed)) activeConfigFilePath = installed;
       else if (await validConfigFile(legacyManagedConfigFilePath())) activeConfigFilePath = legacyManagedConfigFilePath();
       logActivity('WARN', 'config.remote.unavailable', {
         source: CONFIG_SOURCE_URL, fallback: activeConfigFilePath,
@@ -127,7 +146,9 @@ export const loadAppConfiguration = async (): Promise<AppConfiguration> => {
   } else {
     try {
       const sourceContents = validateConfigContents(await fs.promises.readFile(installed, 'utf8'));
-      const localContents = validateConfigContents(await preserveSystemCapabilityCache(sourceContents));
+      const existingManaged = await fs.promises.readFile(managed, 'utf8').catch(() => '');
+      const baseContents = sourceIniIsNewer(existingManaged, sourceContents) ? existingManaged : sourceContents;
+      const localContents = validateConfigContents(await preserveSystemCapabilityCache(baseContents));
       await synchronizeConfigFile(managed, localContents);
       activeConfigFilePath = managed;
     } catch (error) {

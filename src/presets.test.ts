@@ -13,7 +13,7 @@ const presetFile = fs.readFileSync(new URL('../presets.ini', import.meta.url), '
 test('loads ordered built-in preset values from presets.ini', () => {
   const configuration = parseBuiltInPresetConfiguration(presetFile);
   const presets = configuration.presets;
-  assert.equal(configuration.version, '2eee326');
+  assert.equal(configuration.version, '2.9.0');
   assert.deepEqual(Object.keys(presets), ['Archive', 'Regular', 'Streaming', 'Cellular', 'Music Video']);
   assert.equal(presets.Streaming.audioCodec, 'opus');
   assert.equal(presets.Streaming.frameRate, 23.976);
@@ -70,11 +70,11 @@ test('Music Video maps upstream UHQ intent to Jellyfin-compatible AV1 NVENC sett
   assert.equal(preset.quality.nvenc, '26');
   assert.deepEqual(
     [preset.outputTierDefaults['4k'].encoderSpeed, preset.outputTierDefaults['4k'].maxRate, preset.outputTierDefaults['4k'].resolution],
-    [6, 11000, ['2960', '-2']],
+    [6, undefined, ['2960', '-2']],
   );
   assert.deepEqual(
     [preset.outputTierDefaults['1080p'].encoderSpeed, preset.outputTierDefaults['1080p'].maxRate, preset.outputTierDefaults['1080p'].resolution],
-    [6, 7000, ['-2', '-2']],
+    [6, undefined, ['-2', '-2']],
   );
   assert.deepEqual(encoderSpeedArguments('av1_nvenc', preset.outputTierDefaults['4k'].encoderSpeed!), ['-preset', 'p6']);
   assert.deepEqual(encoderSpeedArguments('av1_nvenc', preset.outputTierDefaults['1080p'].encoderSpeed!), ['-preset', 'p6']);
@@ -120,23 +120,24 @@ test('streaming tiers retain their own speed and CQ around the shared UHQ-compat
   assert.equal(resolvePresetAdvancedVideo(presets.Cellular, 'AV1', '360p').multipass, 1);
 });
 
-test('loads codec-specific H.264 tier overrides from presets.ini', () => {
+test('preset file does not duplicate app-wide codec bitrate rates', () => {
   const presets = parseBuiltInPresets(presetFile);
   assert.deepEqual(presets.Regular.outputTierDefaults['1080p'].codec['H.264'], {
-    encoderSpeed: 4, videoBitrate: undefined, maxRate: 8000,
+    encoderSpeed: 4, videoBitrate: undefined, maxRate: undefined,
   });
   assert.deepEqual(presets.Streaming.outputTierDefaults['720p'].codec['H.264'], {
-    encoderSpeed: 2, videoBitrate: undefined, maxRate: 4000,
+    encoderSpeed: 2, videoBitrate: undefined, maxRate: undefined,
   });
   assert.deepEqual(presets['Music Video'].outputTierDefaults['360p'].codec['H.264'], {
-    encoderSpeed: 2, videoBitrate: undefined, maxRate: 4000,
+    encoderSpeed: 2, videoBitrate: undefined, maxRate: undefined,
   });
+  assert.doesNotMatch(presetFile, /^(?:video_bitrate|max_rate)(?:_[^=]+)?=/m);
 });
 
 test('rejects out-of-range editable preset values', () => {
   assert.throws(
-    () => parseBuiltInPresets(presetFile.replace('[Version: 2eee326]', '[Version: current]')),
-    /must begin with \[Version: <commit>\]/,
+    () => parseBuiltInPresets(presetFile.replace('[Version: 2.9.0]', '[Version: current]')),
+    /must begin with \[Version: <major.minor.patch>\]/,
   );
   assert.throws(
     () => parseBuiltInPresets(presetFile.replace('rc_lookahead=26', 'rc_lookahead=43')),
@@ -145,14 +146,6 @@ test('rejects out-of-range editable preset values', () => {
   assert.throws(
     () => parseBuiltInPresets(presetFile.replace('encoder_speed_4k=6', 'encoder_speed_4k=8')),
     /encoder_speed_4k must be an integer from 1 to 7/,
-  );
-  assert.throws(
-    () => parseBuiltInPresets(presetFile.replace('max_rate_4k=11000', 'max_rate_4k=0')),
-    /max_rate_4k must be an integer from 1 to 1000000/,
-  );
-  assert.throws(
-    () => parseBuiltInPresets(presetFile.replace('max_rate_h264_1080p=10000', 'max_rate_h264_1080p=0')),
-    /max_rate_h264_1080p must be an integer from 1 to 1000000/,
   );
   assert.throws(
     () => parseBuiltInPresets(presetFile.replace('dynamic_range_compression=0', 'dynamic_range_compression=2')),

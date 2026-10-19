@@ -5,6 +5,7 @@ import { APP_NAME, PRESET_SOURCE_URL } from './config';
 import { logActivity } from './app-logger';
 import { parseBuiltInPresetConfiguration } from './presets';
 import { synchronizePresetFile, validateRemotePresetContents } from './preset-sync';
+import { compareIniVersions, iniVersion, sourceIniIsNewer } from './ini-version.ts';
 
 const installedPresetFilePath = () => app.isPackaged
   ? path.join(process.resourcesPath, 'presets.ini')
@@ -54,23 +55,58 @@ export const initializeBuiltInPresets = () => {
     try {
       const remoteContents = await fetchRemotePresets();
       const presetVersion = parseBuiltInPresetConfiguration(remoteContents).version;
-      try {
-        const updated = await synchronizePresetFile(installed, remoteContents);
-        await fs.promises.rm(managed, { force: true }).catch(() => undefined);
-        activePresetFilePath = installed;
-        logActivity('INFO', updated ? 'presets.remote.updated' : 'presets.remote.current', {
-          version: presetVersion, source: PRESET_SOURCE_URL, destination: installed,
-        });
-      } catch (error) {
-        const updated = await synchronizePresetFile(managed, remoteContents);
-        activePresetFilePath = managed;
-        logActivity('WARN', 'presets.remote.managed-fallback', {
-          version: presetVersion, source: PRESET_SOURCE_URL, destination: managed, updated,
-          reason: error instanceof Error ? error.message : String(error),
-        });
+      if (!iniVersion(remoteContents)) throw new Error('Remote presets.ini has no valid [Version: major.minor.patch] header');
+      const [managedContents, installedContents] = await Promise.all([
+        fs.promises.readFile(managed, 'utf8').catch(() => ''),
+        fs.promises.readFile(installed, 'utf8').catch(() => ''),
+      ]);
+      const managedValid = await validPresetFile(managed);
+      const newestLocal = [managedValid ? managedContents : '', installedContents].reduce((newest, candidate) => {
+        if (!candidate) return newest;
+        const order = compareIniVersions(iniVersion(candidate), iniVersion(newest));
+        return !newest || order !== null && order > 0 ? candidate : newest;
+      }, '');
+      const latestContents = sourceIniIsNewer(remoteContents, newestLocal) ? remoteContents : newestLocal || remoteContents;
+      if (latestContents === remoteContents && sourceIniIsNewer(remoteContents, installedContents)) {
+        try {
+          await synchronizePresetFile(installed, remoteContents);
+          activePresetFilePath = installed;
+          logActivity('INFO', 'presets.remote.updated', {
+            version: presetVersion, source: PRESET_SOURCE_URL, destination: installed,
+          });
+          return;
+        } catch (error) {
+          await synchronizePresetFile(managed, remoteContents);
+          activePresetFilePath = managed;
+          logActivity('WARN', 'presets.remote.managed-fallback', {
+            version: presetVersion, source: PRESET_SOURCE_URL, destination: managed,
+            reason: error instanceof Error ? error.message : String(error),
+          });
+          return;
+        }
       }
+      if (latestContents === managedContents && managedValid) activePresetFilePath = managed;
+      else if (latestContents === installedContents && installedContents) activePresetFilePath = installed;
+      else {
+        await synchronizePresetFile(managed, latestContents);
+        activePresetFilePath = managed;
+      }
+      logActivity('INFO', latestContents === remoteContents ? 'presets.remote.current' : 'presets.local.newer', {
+        version: iniVersion(latestContents) ?? presetVersion,
+        source: PRESET_SOURCE_URL, destination: activePresetFilePath,
+      });
     } catch (error) {
-      if (await validPresetFile(managed)) activePresetFilePath = managed;
+      const managedValid = await validPresetFile(managed);
+      const [managedContents, installedContents] = await Promise.all([
+        managedValid ? fs.promises.readFile(managed, 'utf8').catch(() => '') : Promise.resolve(''),
+        fs.promises.readFile(installed, 'utf8').catch(() => ''),
+      ]);
+      const newestLocal = [managedContents, installedContents].reduce((newest, candidate) => {
+        const order = compareIniVersions(iniVersion(candidate), iniVersion(newest));
+        return candidate && (!newest || order !== null && order > 0) ? candidate : newest;
+      }, '');
+      if (newestLocal === managedContents && managedValid) activePresetFilePath = managed;
+      else if (installedContents) activePresetFilePath = installed;
       logActivity('WARN', 'presets.remote.unavailable', {
         version: await presetVersionForFile(activePresetFilePath),
         source: PRESET_SOURCE_URL, fallback: activePresetFilePath,

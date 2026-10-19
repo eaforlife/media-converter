@@ -21,7 +21,7 @@ EA Media Tools is an Electron desktop app written in TypeScript. Electron Forge 
 - Read the relevant implementation and its tests before changing behavior. Preserve Electron main/preload/renderer boundaries and validate all IPC inputs.
 - Prefer small, cohesive modules. Keep pure media/workflow logic out of `main.ts` and DOM/UI logic out of non-renderer modules.
 - Add or update a colocated `src/<module>.test.ts` for behavior changes. Keep `package.json`'s explicit test file list in sync when adding a test file.
-- Keep configuration and preset parsing backward-compatible unless the task explicitly changes the file format.
+- Keep configuration and preset parsing backward-compatible unless the task explicitly changes the file format. Their leading `[Version: major.minor.patch]` tags are compared numerically; startup replaces local data only when the Git source has a newer tag. Bump the file's tag whenever its source content changes; same-tag content differences are ignored. Legacy untagged and commit-hash-tagged files are treated as older.
 - Avoid unrelated edits to release metadata, runtime data, generated output, and documentation.
 
 ## Project decisions and configuration
@@ -36,6 +36,7 @@ EA Media Tools is an Electron desktop app written in TypeScript. Electron Forge 
 ## Current configuration map
 
 - `[App]`: app identity, repositories, remote config/preset sources, and runtime release APIs.
+- `[Version: major.minor.patch]` at the top of `config.ini` and `presets.ini`: source freshness tag.
 - `[UI Defaults]`: default video preset, default codec, and Main10 initial state.
 - `[Video Behavior]`: app-wide buffer multiplier (default 3× max rate). Buffer size is calculated from the selected codec max rate and is not stored separately.
 - `[Video Output: 4k|1080p|720p|360p]`: output dimensions and H.264 bitrate/max-rate defaults; 360p is Cellular. These rates alone follow the selected output tier.

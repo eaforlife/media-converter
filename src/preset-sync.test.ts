@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { parseAppConfiguration } from './config.ts';
+import { compareIniVersions, iniVersion, sourceIniIsNewer } from './ini-version.ts';
 import { presetContentsMatch, synchronizePresetFile, validateRemotePresetContents } from './preset-sync.ts';
 
 const presetFile = fs.readFileSync(new URL('../presets.ini', import.meta.url), 'utf8');
@@ -19,6 +20,16 @@ test('downloads predefined defaults from presets.ini on the main repository bran
 test('compares preset contents independently of BOM and platform line endings', () => {
   assert.equal(presetContentsMatch(presetFile, `\uFEFF${presetFile.replace(/\n/g, '\r\n')}`), true);
   assert.equal(presetContentsMatch(presetFile, presetFile.replace('quality_nvenc_4k=31', 'quality_nvenc_4k=30')), false);
+});
+
+test('INI version tags normalize minor-only versions and only replace older local data', () => {
+  assert.equal(iniVersion('[Version: 2.9]\n'), '2.9.0');
+  assert.equal(iniVersion(configFile), '2.9.0');
+  assert.equal(compareIniVersions('2.10.0', '2.9.9'), 1);
+  assert.equal(compareIniVersions('2.9.0', '2.9'), 0);
+  assert.equal(sourceIniIsNewer('[Version: 2.9.0]\n', '[Version: 2.8.7]\n'), true);
+  assert.equal(sourceIniIsNewer('[Version: 2.9.0]\n', '[Version: 3.0.0]\n'), false);
+  assert.equal(sourceIniIsNewer('[Version: 2.9.0]\n', '[Version: deadbee]\n'), true);
 });
 
 test('validates a remote preset before atomically replacing the local file', async (context) => {
