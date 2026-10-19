@@ -13,7 +13,7 @@ const presetFile = fs.readFileSync(new URL('../presets.ini', import.meta.url), '
 test('loads ordered built-in preset values from presets.ini', () => {
   const configuration = parseBuiltInPresetConfiguration(presetFile);
   const presets = configuration.presets;
-  assert.equal(configuration.version, '2.9.0');
+  assert.equal(configuration.version, '2.9.1');
   assert.deepEqual(Object.keys(presets), ['Archive', 'Regular', 'Streaming', 'Cellular', 'Music Video']);
   assert.equal(presets.Streaming.audioCodec, 'opus');
   assert.equal(presets.Streaming.frameRate, 23.976);
@@ -37,7 +37,7 @@ test('loads ordered built-in preset values from presets.ini', () => {
   assert.equal(presets.Streaming.bufferMultiplier, 3);
   assert.equal(presets.Streaming.encoderTune.nvenc, 'hq');
   assert.equal(presets.Streaming.encoderTune.amf, 'high_quality');
-  assert.equal(presets.Streaming.quality.nvenc, '31');
+  assert.equal(presets.Streaming.quality.nvenc, '32');
   assert.equal(presets.Regular.quality.nvenc, '24');
   assert.equal(presets.Regular.quality.amf, '22');
   assert.equal(presets.Regular.quality.software, '25');
@@ -93,9 +93,9 @@ test('streaming tiers retain their own speed and CQ around the shared UHQ-compat
   const presets = parseBuiltInPresets(presetFile);
   assert.deepEqual(
     [presets.Streaming.encoderSpeed, presets.Streaming.quality.nvenc],
-    [2, '31'],
+    [2, '32'],
   );
-  assert.equal(presets.Streaming.outputTierDefaults['1080p'].quality.nvenc, '31');
+  assert.equal(presets.Streaming.outputTierDefaults['1080p'].quality.nvenc, '32');
   assert.deepEqual(
     [presets.Cellular.encoderSpeed, presets.Cellular.quality.nvenc],
     [2, '32'],
@@ -136,7 +136,7 @@ test('preset file does not duplicate app-wide codec bitrate rates', () => {
 
 test('rejects out-of-range editable preset values', () => {
   assert.throws(
-    () => parseBuiltInPresets(presetFile.replace('[Version: 2.9.0]', '[Version: current]')),
+    () => parseBuiltInPresets(presetFile.replace('[Version: 2.9.1]', '[Version: current]')),
     /must begin with \[Version: <major.minor.patch>\]/,
   );
   assert.throws(

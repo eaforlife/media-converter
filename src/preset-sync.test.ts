@@ -19,7 +19,7 @@ test('downloads predefined defaults from presets.ini on the main repository bran
 
 test('compares preset contents independently of BOM and platform line endings', () => {
   assert.equal(presetContentsMatch(presetFile, `\uFEFF${presetFile.replace(/\n/g, '\r\n')}`), true);
-  assert.equal(presetContentsMatch(presetFile, presetFile.replace('quality_nvenc_4k=31', 'quality_nvenc_4k=30')), false);
+  assert.equal(presetContentsMatch(presetFile, presetFile.replace('quality_nvenc_4k=32', 'quality_nvenc_4k=30')), false);
 });
 
 test('INI version tags normalize minor-only versions and only replace older local data', () => {
@@ -36,7 +36,7 @@ test('validates a remote preset before atomically replacing the local file', asy
   const directory = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'ea-preset-sync-'));
   context.after(() => fs.promises.rm(directory, { recursive: true, force: true }));
   const target = path.join(directory, 'presets.ini');
-  const oldPreset = presetFile.replace('quality_nvenc_4k=31', 'quality_nvenc_4k=30');
+  const oldPreset = presetFile.replace('quality_nvenc_4k=32', 'quality_nvenc_4k=30');
   await fs.promises.writeFile(target, oldPreset, 'utf8');
 
   assert.equal(await synchronizePresetFile(target, presetFile), true);
