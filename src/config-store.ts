@@ -8,7 +8,9 @@ import {
 import { logActivity } from './app-logger';
 import { presetContentsMatch } from './preset-sync';
 import type { HardwareCapabilities } from './shared-types';
-import { configSourceContentsMatch, replaceConfigContentBeforeCache, setConfigAppVersion } from './config-sync';
+import {
+  configSourceContentsMatch, removeSystemCapabilityCache, replaceConfigContentBeforeCache, setConfigAppVersion,
+} from './config-sync';
 
 export const configFilePath = () => app.isPackaged
   ? path.join(process.resourcesPath, 'config.ini')
@@ -78,7 +80,9 @@ export const loadAppConfiguration = async (): Promise<AppConfiguration> => {
   const installed = configFilePath();
   const installedContents = await fs.promises.readFile(installed, 'utf8').catch(() => '');
   if (!installedContents || !await validConfigFile(installed)) throw new Error('The bundled config.ini is missing or invalid');
-  let updatedContents = setConfigAppVersion(installedContents, app.getVersion());
+  const appVersionChanged = appVersionForConfig(installedContents) !== app.getVersion();
+  const currentForVersion = appVersionChanged ? removeSystemCapabilityCache(installedContents) : installedContents;
+  let updatedContents = setConfigAppVersion(currentForVersion, app.getVersion());
   if (app.isPackaged) {
     const sourceUrl = parseAppConfiguration(updatedContents).app.configSourceUrl;
     try {
@@ -136,6 +140,17 @@ export const saveSystemCapabilityCache = async (
   const configuration = parseAppConfiguration(updated);
   setAppConfiguration(configuration);
   return configuration.systemCapabilities;
+};
+
+export const invalidateSystemCapabilityCacheForInstall = async () => {
+  const destination = configFilePath();
+  const contents = await fs.promises.readFile(destination, 'utf8');
+  const updated = removeSystemCapabilityCache(contents);
+  if (updated === contents) return false;
+  validateConfigContents(updated);
+  await synchronizeConfigFile(destination, updated);
+  if (activeConfigFilePath === destination) setAppConfiguration(parseAppConfiguration(updated));
+  return true;
 };
 
 export type UpdatePolicy = { urgentUpdate: boolean; minVersion: string };

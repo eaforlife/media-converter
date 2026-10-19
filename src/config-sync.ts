@@ -24,6 +24,16 @@ export const replaceConfigContentBeforeCache = (source: string, installed: strin
   return `${sourcePrefix.join('\n')}${installedCache.length ? `\n\n${installedCache.join('\n').replace(/\n+$/, '')}` : ''}\n`;
 };
 
+export const removeSystemCapabilityCache = (contents: string) => {
+  const lines = normalizedLines(contents);
+  const start = managedCacheStart(lines);
+  if (start < 0) return contents;
+  const next = lines.findIndex((line, index) => index > start && /^\s*\[[^\]]+\]\s*$/.test(line));
+  lines.splice(start, (next < 0 ? lines.length : next) - start);
+  while (lines.length && !lines.at(-1)?.trim()) lines.pop();
+  return `${lines.join('\n')}\n`;
+};
+
 export const setConfigAppVersion = (contents: string, version: string) => {
   const lines = normalizedLines(contents);
   const header = /^\s*\[App Version: [^\]]+\]\s*$/;

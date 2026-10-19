@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { configSourceContentsMatch, replaceConfigContentBeforeCache, setConfigAppVersion } from './config-sync.ts';
+import {
+  configSourceContentsMatch, removeSystemCapabilityCache, replaceConfigContentBeforeCache, setConfigAppVersion,
+} from './config-sync.ts';
 
 test('config source refresh replaces defaults but preserves the installed capability cache', () => {
   const installed = '[App Version: 2.9.2]\n\n[App]\nname=Old\n\n[System Capability Cache]\ncache_tag=1\ndriver_version=555.1\ncapabilities_json={"encoders":[]}\n';
@@ -20,4 +22,9 @@ test('config source comparison ignores capability cache changes and handles Wind
 
 test('source config app version is set to the running app version', () => {
   assert.equal(setConfigAppVersion('[App Version: 2.9.2]\n[App]\n', '2.9.3'), '[App Version: 2.9.3]\n[App]\n');
+});
+
+test('removing the capability cache keeps all app defaults intact', () => {
+  const contents = '[App Version: 2.9.2]\n[App]\nname=EA Media Tools\n[System Capability Cache]\ndriver_version=555.1\n';
+  assert.equal(removeSystemCapabilityCache(contents), '[App Version: 2.9.2]\n[App]\nname=EA Media Tools\n');
 });

@@ -22,7 +22,9 @@ import { probeMedia } from './media-probe';
 import { classifyMediaWorkflow } from './media-workflow';
 import { initializeRuntime, selectRuntimeChannel } from './runtime-manager';
 import { loadSettings, readConfig, saveSettings } from './settings-store';
-import { enforceUrgentUpdatePolicy, loadAppConfiguration, saveSystemCapabilityCache } from './config-store';
+import {
+  enforceUrgentUpdatePolicy, invalidateSystemCapabilityCacheForInstall, loadAppConfiguration, saveSystemCapabilityCache,
+} from './config-store';
 import { loadBuiltInPresets, presetFilePath, readPresetFile } from './preset-store';
 import { customPresetFilePath, loadCustomPresets, readCustomPresetFile, saveCustomPresets } from './custom-preset-store';
 import {
@@ -87,13 +89,21 @@ const handleSquirrelEvent = () => {
   const event = process.argv[1];
   const target = path.basename(process.execPath);
   if (event === '--squirrel-install') {
-    runSquirrel([`--createShortcut=${target}`]);
+    void (async () => {
+      await invalidateSystemCapabilityCacheForInstall().catch((error) => {
+        logActivity('ERROR', 'hardware.capabilities.install-reset.failed', error instanceof Error ? error.message : String(error));
+      });
+      runSquirrel([`--createShortcut=${target}`]);
+    })();
     return true;
   }
   if (event === '--squirrel-updated') {
     // Squirrel and Electron can retain app.asar handles throughout this event. Queue
     // verified older versions for deletion by a detached helper after both have exited.
     void (async () => {
+      await invalidateSystemCapabilityCacheForInstall().catch((error) => {
+        logActivity('ERROR', 'hardware.capabilities.update-reset.failed', error instanceof Error ? error.message : String(error));
+      });
       const targets = await installCleanupTargets(path.dirname(process.execPath)).catch(() => []);
       const storageReady = await migrateStorageBeforeInstallCleanup(targets).catch((error) => {
         logActivity('ERROR', 'storage.migration.failed', error instanceof Error ? error.message : String(error));
