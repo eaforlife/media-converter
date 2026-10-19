@@ -2,6 +2,7 @@ import { app, net } from 'electron';
 import fs from 'node:fs';
 import path from 'node:path';
 import { APP_NAME, PRESET_SOURCE_URL } from './config';
+import { appStoragePath } from './app-storage';
 import { logActivity } from './app-logger';
 import { parseBuiltInPresetConfiguration } from './presets';
 import { synchronizePresetFile, validateRemotePresetContents } from './preset-sync';
@@ -11,7 +12,7 @@ const installedPresetFilePath = () => app.isPackaged
   ? path.join(process.resourcesPath, 'presets.ini')
   : path.join(app.getAppPath(), 'presets.ini');
 
-const managedPresetFilePath = () => path.join(app.getPath('userData'), 'managed-presets.ini');
+const managedPresetFilePath = () => path.join(appStoragePath(), 'managed-presets.ini');
 let activePresetFilePath: string | null = null;
 let presetInitialization: Promise<void> | null = null;
 

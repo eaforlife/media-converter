@@ -1,10 +1,10 @@
-import { app } from 'electron';
 import fs from 'node:fs';
 import path from 'node:path';
+import { appStoragePath } from './app-storage';
 import { parseCustomPresets, serializeCustomPresets } from './custom-presets';
 import type { SavedPreset } from './shared-types';
 
-export const customPresetFilePath = () => path.join(app.getPath('userData'), 'custom_preset.ini');
+export const customPresetFilePath = () => path.join(appStoragePath(), 'custom_preset.ini');
 
 export const loadCustomPresets = async () => {
   try {

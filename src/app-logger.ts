@@ -3,11 +3,12 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { cleanupRuntimeLogs, runtimeLogNeedsReset } from './install-cleanup';
 import { compactActivityLog } from './log-format';
+import { appStoragePath } from './app-storage';
 
 const MAX_LOG_BYTES = 5 * 1024 * 1024;
 let writeQueue = Promise.resolve();
 
-const logPath = () => path.join(app.getPath('userData'), 'app.log');
+const logPath = () => path.join(appStoragePath(), 'app.log');
 const logLine = (level: 'INFO' | 'WARN' | 'ERROR', event: string, details?: unknown) => {
   const suffix = details === undefined
     ? ''
@@ -29,7 +30,7 @@ const rotateIfNeeded = async () => {
 };
 
 export const initializeLogger = async () => {
-  const directory = app.getPath('userData');
+  const directory = appStoragePath();
   await fs.promises.mkdir(directory, { recursive: true });
   if (!app.isPackaged) {
     await fs.promises.rm(logPath(), { force: true }).catch(() => undefined);
@@ -47,7 +48,7 @@ export const initializeLogger = async () => {
 };
 
 export const rotateLogForUpdate = async (version: string) => {
-  const directory = app.getPath('userData');
+  const directory = appStoragePath();
   const current = logPath();
   await fs.promises.mkdir(directory, { recursive: true });
   await cleanupRuntimeLogs(directory);

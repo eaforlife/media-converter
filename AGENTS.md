@@ -11,6 +11,7 @@ EA Media Tools is an Electron desktop app written in TypeScript. Electron Forge 
 - `src/renderer.ts`, `src/index.css`, `index.html`: renderer UI and styling.
 - Other `src/*.ts` files: media, encoding, configuration, presets, and workflow modules. Most have a colocated `*.test.ts` file.
 - `src/shared-types.ts`: types shared across process boundaries.
+- `src/app-storage.ts`: packaged storage location for writable app data.
 - `forge.config.ts`, `vite.*.config.mts`, `tsconfig.json`, `eslint.config.mjs`: build and tooling configuration.
 - `scripts/`: packaging helpers; `.github/workflows/`: CI and release automation.
 - Root `config.ini` and `presets.ini` are packaged runtime data, not source modules.
@@ -21,7 +22,7 @@ EA Media Tools is an Electron desktop app written in TypeScript. Electron Forge 
 - Read the relevant implementation and its tests before changing behavior. Preserve Electron main/preload/renderer boundaries and validate all IPC inputs.
 - Prefer small, cohesive modules. Keep pure media/workflow logic out of `main.ts` and DOM/UI logic out of non-renderer modules.
 - Add or update a colocated `src/<module>.test.ts` for behavior changes. Keep `package.json`'s explicit test file list in sync when adding a test file.
-- Keep preset parsing backward-compatible unless the task explicitly changes the file format. `presets.ini` has a leading `[Version: major.minor.patch]` freshness tag for remote preset updates; bump it when preset source content changes. `config.ini` is copied from bundled app resources only when the managed file is absent or its `[App Version: major.minor.patch]` differs from the running app version. Ignore source-content differences for config.ini between app updates. Preserve `[System Capability Cache]` when replacing the managed base config.
+- Keep preset parsing backward-compatible unless the task explicitly changes the file format. `presets.ini` has a leading `[Version: major.minor.patch]` freshness tag for remote preset updates; bump it when preset source content changes. Packaged builds read and write `config.ini` directly in `process.resourcesPath`; preserve `[System Capability Cache]` when updating its app-version header. Mutable app data is stored in the same resources directory for packaged builds and `.app-data/` in development. Windows uninstalls must never recursively delete `process.resourcesPath`.
 - Avoid unrelated edits to release metadata, runtime data, generated output, and documentation.
 
 ## Project decisions and configuration
@@ -48,7 +49,8 @@ EA Media Tools is an Electron desktop app written in TypeScript. Electron Forge 
 - `[Music Video Workflow]`: music-video detection and caption behavior.
 - `[Video Filters]`: HDR tone-map filter templates.
 - `[Encoder: <ffmpeg encoder id>]`: encoder labels, vendor/codec, platform availability, and supported Main10/High profiles.
-- `[UI Defaults]`, `[Video Behavior]`, `[Video Output: *]`, `[Video Codec Rate Multipliers]`, and `[Main10 Defaults]` are parsed by `src/config.ts` and drive renderer defaults. The capability cache is stored in `[System Capability Cache]` in the managed per-user `config.ini` (not the packaged read-only resource); `cache_tag=1` and the GPU driver version identify a reusable cache. Rescan when the cache is absent, its tag is unsupported, or the driver version changes. Keep named-preset quality, tune, speed, format, audio, and intentional advanced-setting overrides in `presets.ini`.
+- Packaged writable state is stored beside bundled resources: `config.ini` (including `[System Capability Cache]`), `presets.ini`, `managed-presets.ini`, `custom_preset.ini`, `config` (saved UI settings), and `app.log`. This avoids Electron's roaming `userData` folder. Squirrel versions use separate install directories, so app updates can replace this state; migrate prior install data before deleting old version directories if future behavior must preserve it.
+- `[UI Defaults]`, `[Video Behavior]`, `[Video Output: *]`, `[Video Codec Rate Multipliers]`, and `[Main10 Defaults]` are parsed by `src/config.ts` and drive renderer defaults. The capability cache is stored in `[System Capability Cache]` in the same bundled `config.ini`; `cache_tag=1` and the GPU driver version identify a reusable cache. Rescan when the cache is absent, its tag is unsupported, or the driver version changes. Keep named-preset quality, tune, speed, format, audio, and intentional advanced-setting overrides in `presets.ini`.
 - `presets.ini` must not repeat app-wide output tiers, bitrate rates/ratios, or buffer multiplier. Legacy output sections and bitrate fields remain parser-compatible for older preset files, but the UI uses `config.ini` values. Keep `presets.ini` limited to named-preset overrides and settings that intentionally differ between presets, including audio codec, format, per-codec rates, and compression defaults.
 - The Video tab's language selector stays editable while video processing is enabled; `und` emits an undefined stream language. Video dispositions remain editable only in metadata-only mode.
 - Electron's taskbar bar is queue-wide: average each queued job's completion, count finished jobs as 100%, and reset at queue termination. rsgain's percentage output is normalized into the app's encode progress events; do not pass through its terminal bar as the queue bar.

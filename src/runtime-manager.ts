@@ -8,6 +8,7 @@ import {
 } from './config';
 import { logActivity } from './app-logger';
 import type { RuntimePhase, RuntimeState } from './shared-types';
+import { appStoragePath } from './app-storage';
 
 type FfmpegChannel = RuntimeState['ffmpegChannel'];
 type ReleaseAsset = { name: string; browser_download_url: string; size: number; digest?: string | null };
@@ -24,7 +25,7 @@ const executableName = (name: 'ffmpeg' | 'ffprobe' | 'rsgain') =>
 const getManagedRoot = () => app.isPackaged
   ? process.platform === 'win32'
     ? path.dirname(process.execPath)
-    : path.join(app.getPath('userData'), 'runtime')
+    : path.join(appStoragePath(), 'runtime')
   : process.cwd();
 
 const ffmpegPaths = (channel: FfmpegChannel): RuntimePaths => {

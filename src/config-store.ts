@@ -13,8 +13,6 @@ export const configFilePath = () => app.isPackaged
   ? path.join(process.resourcesPath, 'config.ini')
   : path.join(app.getAppPath(), 'config.ini');
 
-const managedConfigFilePath = () => path.join(app.getPath('userData'), 'config.ini');
-const legacyManagedConfigFilePath = () => path.join(app.getPath('userData'), 'managed-config.ini');
 let activeConfigFilePath: string | null = null;
 
 export const activeConfigPath = () => activeConfigFilePath ?? configFilePath();
@@ -72,12 +70,8 @@ const replaceSection = (contents: string, sectionName: string, replacement: stri
   return `${lines.join('\n')}\n\n${replacement.join('\n')}\n`;
 };
 
-const preserveSystemCapabilityCache = async (contents: string) => {
-  const existing = await Promise.all([
-    fs.promises.readFile(managedConfigFilePath(), 'utf8').catch(() => ''),
-    fs.promises.readFile(legacyManagedConfigFilePath(), 'utf8').catch(() => ''),
-  ]);
-  const cache = existing.map((item) => sectionLines(item, 'System Capability Cache')).find(Boolean);
+const preserveSystemCapabilityCache = (contents: string, current: string) => {
+  const cache = sectionLines(current, 'System Capability Cache');
   if (!cache) return contents;
   const preserved = replaceSection(contents, 'System Capability Cache', cache);
   try {
@@ -101,28 +95,17 @@ const appVersionForConfig = (contents: string) => contents.match(/^\s*\[App Vers
 
 export const loadAppConfiguration = async (): Promise<AppConfiguration> => {
   const installed = configFilePath();
-  const managed = managedConfigFilePath();
-  const [installedContents, managedContents] = await Promise.all([
-    fs.promises.readFile(installed, 'utf8').catch(() => ''),
-    fs.promises.readFile(managed, 'utf8').catch(() => ''),
-  ]);
-  const currentManaged = appVersionForConfig(managedContents) === app.getVersion()
-    && await validConfigFile(managed);
-  if (currentManaged) {
-    activeConfigFilePath = managed;
-  } else if (!installedContents || !await validConfigFile(installed)) {
-    if (await validConfigFile(managed)) activeConfigFilePath = managed;
-    else if (await validConfigFile(legacyManagedConfigFilePath())) activeConfigFilePath = legacyManagedConfigFilePath();
-    else throw new Error('The bundled config.ini is missing or invalid');
-  } else {
+  const installedContents = await fs.promises.readFile(installed, 'utf8').catch(() => '');
+  if (!installedContents || !await validConfigFile(installed)) throw new Error('The bundled config.ini is missing or invalid');
+  if (appVersionForConfig(installedContents) !== app.getVersion()) {
     const base = installedContents.replace(/^\s*\[App Version: [^\]]+\]\s*$/m, `[App Version: ${app.getVersion()}]`);
-    const withCache = validateConfigContents(await preserveSystemCapabilityCache(base));
-    await synchronizeConfigFile(managed, withCache);
-    activeConfigFilePath = managed;
+    const withCache = validateConfigContents(preserveSystemCapabilityCache(base, installedContents));
+    await synchronizeConfigFile(installed, withCache);
+    activeConfigFilePath = installed;
     logActivity('INFO', 'config.install-version.updated', {
-      appVersion: app.getVersion(), destination: managed, previousAppVersion: appVersionForConfig(managedContents) || null,
+      appVersion: app.getVersion(), destination: installed, previousAppVersion: appVersionForConfig(installedContents) || null,
     });
-  }
+  } else activeConfigFilePath = installed;
   try {
     const configuration = parseAppConfiguration(await readConfigFile());
     setAppConfiguration(configuration);

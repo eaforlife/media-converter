@@ -1,9 +1,9 @@
-import { app } from 'electron';
 import fs from 'node:fs';
 import path from 'node:path';
 import type { AdvancedVideoSettings, AppSettings, FilterSettings, SavedPreset, ScaleMode } from './shared-types';
 import { presetFrameRateValue } from './presets';
 import { APP_CONFIG } from './config.ts';
+import { appStoragePath } from './app-storage';
 
 const DEFAULT_SETTINGS: AppSettings = {
   hardwareAcceleration: true,
@@ -142,7 +142,7 @@ ${settings.workingPreset ? serializePreset(settings.workingPreset, '    ') : ''}
 </eaMediaToolsSettings>
 `;
 
-const configPath = () => path.join(app.getPath('userData'), 'config');
+const configPath = () => path.join(appStoragePath(), 'config');
 
 export const loadSettings = async (): Promise<AppSettings> => {
   try {
@@ -164,7 +164,7 @@ export const loadSettings = async (): Promise<AppSettings> => {
 };
 
 export const saveSettings = async (settings: AppSettings) => {
-  const directory = app.getPath('userData');
+  const directory = appStoragePath();
   const destination = configPath();
   const temporary = `${destination}.tmp`;
   await fs.promises.mkdir(directory, { recursive: true });

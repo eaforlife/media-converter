@@ -69,10 +69,7 @@ const handleSquirrelEvent = () => {
   }
   if (event === '--squirrel-uninstall') {
     void (async () => {
-      const cleanupTargets = new Set([app.getPath('userData'), app.getPath('sessionData')]);
       await cleanupPreviews().catch(() => undefined);
-      await Promise.all([...cleanupTargets].map((targetPath) =>
-        fs.promises.rm(targetPath, { recursive: true, force: true }).catch(() => undefined)));
       runSquirrel([`--removeShortcut=${target}`]);
     })();
     return true;
