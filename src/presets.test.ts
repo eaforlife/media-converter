@@ -13,7 +13,7 @@ const presetFile = fs.readFileSync(new URL('../presets.ini', import.meta.url), '
 test('loads ordered built-in preset values from presets.ini', () => {
   const configuration = parseBuiltInPresetConfiguration(presetFile);
   const presets = configuration.presets;
-  assert.equal(configuration.version, '2.9.2');
+  assert.equal(configuration.version, '2.9.3');
   assert.deepEqual(Object.keys(presets), ['Archive', 'Regular', 'Streaming', 'Cellular', 'Music Video']);
   assert.equal(presets.Streaming.audioCodec, 'opus');
   assert.equal(presets.Streaming.frameRate, 23.976);
@@ -118,7 +118,7 @@ test('streaming tiers retain their speed and advanced settings around the shared
 test('preset file does not duplicate app-wide codec bitrate rates', () => {
   const presets = parseBuiltInPresets(presetFile);
   assert.deepEqual(presets.Regular.outputTierDefaults['1080p'].codec['H.264'], {
-    encoderSpeed: 4, videoBitrate: undefined, maxRate: undefined,
+    encoderSpeed: undefined, videoBitrate: undefined, maxRate: undefined,
   });
   assert.deepEqual(presets.Streaming.outputTierDefaults['720p'].codec['H.264'], {
     encoderSpeed: 2, videoBitrate: undefined, maxRate: undefined,
@@ -131,7 +131,7 @@ test('preset file does not duplicate app-wide codec bitrate rates', () => {
 
 test('rejects out-of-range editable preset values', () => {
   assert.throws(
-    () => parseBuiltInPresets(presetFile.replace('[Version: 2.9.2]', '[Version: current]')),
+    () => parseBuiltInPresets(presetFile.replace('[Version: 2.9.3]', '[Version: current]')),
     /must begin with \[Version: <major.minor.patch>\]/,
   );
   assert.throws(
