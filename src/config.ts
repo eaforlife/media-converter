@@ -257,9 +257,9 @@ export const EMPTY_APP_CONFIGURATION: AppConfiguration = Object.freeze({
   }),
   systemCapabilities: null,
   personalizedDefaults: Object.freeze({
-    hardwareAcceleration: true, useStableFfmpeg: true, simultaneousEncoding: true,
-    smartFileNaming: true, lastPreset: 'Streaming', lastSourceDirectory: '',
-    workingPreset: null, separateAudioDirectory: true,
+    hardwareAcceleration: false, useStableFfmpeg: true, simultaneousEncoding: false,
+    smartFileNaming: false, lastPreset: '', lastSourceDirectory: '',
+    workingPreset: null, separateAudioDirectory: false,
   }),
   audioBitrates: Object.freeze({ aac: Object.freeze([]), opus: Object.freeze([]) }),
   audioFilters: Object.freeze({

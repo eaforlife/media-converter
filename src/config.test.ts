@@ -2,46 +2,65 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import test from 'node:test';
 import { parseAppConfiguration } from './config.ts';
+import { parseIniSections } from './presets.ts';
 
 const configFile = fs.readFileSync(new URL('../config.ini', import.meta.url), 'utf8');
+const configSections = parseIniSections(configFile);
+const configValue = (section: string, key: string) => {
+  const value = configSections.get(section)?.get(key);
+  assert.notEqual(value, undefined, `[${section}] ${key} should exist in config.ini`);
+  return value!;
+};
 
 test('loads app defaults from config.ini', () => {
   const configuration = parseAppConfiguration(configFile);
-  assert.equal(configuration.app.name, 'EA Media Tools');
-  assert.equal(configuration.app.updateRepository, 'eaforlife/media-converter');
-  assert.equal(configuration.app.configSourceUrl, 'https://raw.githubusercontent.com/eaforlife/media-converter/main/config.ini');
-  assert.deepEqual(configuration.mediaExtensions.video.slice(0, 3), ['mp4', 'mkv', 'mov']);
-  assert.equal(configuration.videoDefaults.outputProfiles['4k'].maxRate, 8000);
+  assert.equal(configuration.app.name, configValue('App', 'name'));
+  assert.equal(configuration.app.updateRepository, configValue('App', 'update_repository'));
+  assert.equal(configuration.app.configSourceUrl, configValue('App', 'config_source_url'));
+  assert.deepEqual(configuration.mediaExtensions.video, configValue('Media Extensions', 'video').split(','));
+  assert.equal(configuration.videoDefaults.outputProfiles['4k'].maxRate,
+    Number(configSections.get('Video Output: 4k')?.get('h264_max_rate')));
   assert.deepEqual(configuration.videoDefaults.codecRateMultipliers, {
-    hevc: 0.5, hevcMain10: 0.45, av1: 0.30, av1TenBit: 0.20,
+    hevc: Number(configSections.get('Video Codec Rate Multipliers')?.get('hevc')),
+    hevcMain10: Number(configSections.get('Video Codec Rate Multipliers')?.get('hevc_main10')),
+    av1: Number(configSections.get('Video Codec Rate Multipliers')?.get('av1')),
+    av1TenBit: Number(configSections.get('Video Codec Rate Multipliers')?.get('av1_10bit')),
   });
 });
 
 test('requires the remote config source to use HTTPS', () => {
   assert.throws(
-    () => parseAppConfiguration(configFile.replace('https://raw.githubusercontent.com/eaforlife/media-converter/main/config.ini', 'http://example.test/config.ini')),
+    () => parseAppConfiguration(configFile.replace(configValue('App', 'config_source_url'), 'http://example.test/config.ini')),
     /config_source_url must be a valid HTTPS URL/,
   );
 });
 
 test('loads app-level audio choices and filters from config.ini', () => {
   const configuration = parseAppConfiguration(configFile);
-  assert.deepEqual(configuration.audioBitrates.opus, ['32k', '48k', '64k', '80k', '96k', '112k', '128k']);
+  assert.deepEqual(configuration.audioBitrates.opus, configValue('Audio Bitrates', 'opus').split(','));
   assert.doesNotMatch(configFile, /\[Audio Preset:/);
-  assert.equal(configuration.audioFilters.downmix51.includes('pan=stereo'), true);
-  assert.equal(configuration.musicVideoWorkflow.maxDurationSeconds, 480);
-  assert.equal(configuration.musicVideoWorkflow.extractClosedCaptions, true);
-  assert.equal(configuration.videoFilters.cudaTonemap.includes('tonemap_cuda'), true);
+  assert.equal(configuration.audioFilters.downmix51, configValue('Audio Filters', 'downmix_5_1'));
+  assert.equal(configuration.musicVideoWorkflow.maxDurationSeconds,
+    Number(configValue('Music Video Workflow', 'max_duration_seconds')));
+  assert.equal(configuration.musicVideoWorkflow.extractClosedCaptions,
+    configValue('Music Video Workflow', 'extract_closed_captions') === '1');
+  assert.equal(configuration.videoFilters.cudaTonemap, configValue('Video Filters', 'cuda_tonemap'));
 });
 
 test('loads available encoders from config.ini', () => {
   const configuration = parseAppConfiguration(configFile);
-  assert.ok(configuration.encoders.some((encoder) =>
-    encoder.id === 'hevc_nvenc' && encoder.main10Enabled && !encoder.highEnabled && encoder.platforms?.includes('win32')));
-  assert.ok(configuration.encoders.some((encoder) =>
-    encoder.id === 'av1_nvenc' && encoder.main10Enabled && !encoder.highEnabled));
-  assert.ok(configuration.encoders.some((encoder) =>
-    encoder.id === 'h264_nvenc' && !encoder.main10Enabled && encoder.highEnabled));
+  const configuredEncoders = [...configSections.entries()].filter(([name]) => name.startsWith('Encoder: '));
+  assert.equal(configuration.encoders.length, configuredEncoders.length);
+  for (const [sectionName, values] of configuredEncoders) {
+    const encoder = configuration.encoders.find(({ id }) => id === sectionName.slice('Encoder: '.length));
+    assert.ok(encoder, `${sectionName} should be parsed`);
+    assert.equal(encoder.label, values.get('label'));
+    assert.equal(encoder.vendor, values.get('vendor'));
+    assert.equal(encoder.codec, values.get('codec'));
+    assert.deepEqual(encoder.platforms, values.get('platforms')?.split(','));
+    assert.equal(encoder.main10Enabled, values.get('main10') === '1');
+    assert.equal(encoder.highEnabled, values.get('high') === '1');
+  }
 });
 
 test('loads tagged hardware capability data from the bundled config section', () => {
@@ -52,9 +71,10 @@ test('loads tagged hardware capability data from the bundled config section', ()
 
 test('loads independently tagged personalized defaults from config.ini', () => {
   const configuration = parseAppConfiguration(configFile);
-  assert.equal(configuration.personalizedDefaults.lastPreset, 'Streaming');
-  assert.equal(configuration.personalizedDefaults.hardwareAcceleration, true);
-  assert.equal(configuration.personalizedDefaults.workingPreset, null);
+  const defaults = JSON.parse(Buffer.from(configValue('Personalized Defaults', 'settings_json'), 'base64').toString('utf8'));
+  assert.equal(configuration.personalizedDefaults.lastPreset, defaults.lastPreset);
+  assert.equal(configuration.personalizedDefaults.hardwareAcceleration, defaults.hardwareAcceleration);
+  assert.equal(configuration.personalizedDefaults.workingPreset, defaults.workingPreset);
   assert.throws(
     () => parseAppConfiguration(configFile.replace('defaults_tag=1', 'defaults_tag=2')),
     /defaults_tag must be 1/,

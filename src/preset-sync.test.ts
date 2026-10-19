@@ -40,7 +40,7 @@ test('current presets inherit app rates and Music Video preserves intentional wo
 test('INI version tags normalize minor-only versions and only replace older local data', () => {
   assert.equal(iniVersion('[Version: 2.9]\n'), '2.9.0');
   assert.equal(iniVersion(configFile), null);
-  assert.match(configFile, /^\[App Version: 2\.9\.5\]/);
+  assert.match(configFile, /^\[App Version: 2\.9\.6\]/);
   assert.equal(compareIniVersions('2.10.0', '2.9.9'), 1);
   assert.equal(compareIniVersions('2.9.0', '2.9'), 0);
   assert.equal(sourceIniIsNewer('[Version: 2.9.0]\n', '[Version: 2.8.7]\n'), true);

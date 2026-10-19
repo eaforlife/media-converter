@@ -112,7 +112,7 @@ let customPresetDraftName = '';
 let customPresetEditorOpen = false;
 let sourceMode: 'file' | 'folder' | null = null;
 let folderSeriesLayout: FolderSeriesLayout | null = null;
-let appSettings: AppSettings = { hardwareAcceleration: true, useStableFfmpeg: true, simultaneousEncoding: true, smartFileNaming: true, lastPreset: 'Streaming', lastSourceDirectory: '', customPresets: [], workingPreset: null, separateAudioDirectory: true };
+let appSettings = { ...APP_CONFIG.personalizedDefaults, customPresets: [] as SavedPreset[] } satisfies AppSettings;
 const settingsByPath = new Map<string, JobSettings>();
 const manualBufferSettings = new WeakSet<JobSettings>();
 let encodeQueueProgress: EncodeQueueProgressState | null = null;
@@ -131,8 +131,10 @@ const toggleSwitch = (control: HTMLElement) => {
   return enabled;
 };
 const emptyAdvancedVideo = (): AdvancedVideoSettings => ({
-  bFrames: false, multipass: 0, bRefMode: 'disabled', adaptiveBFrames: false,
-  sceneCutDetection: false, rcLookahead: 0, nonReferenceP: false, spatialAq: 0, temporalAq: false,
+  bFrames: APP_CONFIG.videoDefaults.main10Advanced.bFrames,
+  multipass: 0, bRefMode: 'disabled', adaptiveBFrames: false,
+  sceneCutDetection: false, rcLookahead: 0, nonReferenceP: false,
+  spatialAq: APP_CONFIG.videoDefaults.main10Advanced.spatialAq, temporalAq: false,
 });
 const copyAdvancedVideo = (settings: AdvancedVideoSettings) => ({ ...settings });
 const formatSize = (bytes: number) => {
@@ -296,20 +298,21 @@ const hdrLabel = (source: SourceFile) => {
 };
 const persistAppSettings = () => window.mediaAPI.saveSettings(appSettings).catch(() => undefined);
 const defaultFilters = (source: SourceFile): FilterSettings => ({
-  autoCrop: true,
-  toneMapHdrToSdr: true,
-  pixelFormat10Bit: shouldDefaultToHevcMain10(source.media?.video),
-  scale: 'disabled',
-  scaleLocked: false,
-  remuxAudio: true,
-  remuxSubtitles: true,
-  stripMetadata: true,
-  doNotReplaceAudio: false,
-  extractClosedCaptions: false,
-  downmixToStereo: true,
-  dynamicRangeCompression: true,
-  resampleLosslessTo48k: true,
-  normalizeAudio: true,
+  autoCrop: APP_CONFIG.personalizedDefaults.workingPreset?.filters.autoCrop ?? true,
+  toneMapHdrToSdr: APP_CONFIG.personalizedDefaults.workingPreset?.filters.toneMapHdrToSdr ?? true,
+  pixelFormat10Bit: APP_CONFIG.personalizedDefaults.workingPreset?.filters.pixelFormat10Bit
+    ?? shouldDefaultToHevcMain10(source.media?.video),
+  scale: APP_CONFIG.personalizedDefaults.workingPreset?.filters.scale ?? 'disabled',
+  scaleLocked: APP_CONFIG.personalizedDefaults.workingPreset?.filters.scaleLocked ?? false,
+  remuxAudio: APP_CONFIG.personalizedDefaults.workingPreset?.filters.remuxAudio ?? true,
+  remuxSubtitles: APP_CONFIG.personalizedDefaults.workingPreset?.filters.remuxSubtitles ?? true,
+  stripMetadata: APP_CONFIG.personalizedDefaults.workingPreset?.filters.stripMetadata ?? true,
+  doNotReplaceAudio: APP_CONFIG.personalizedDefaults.workingPreset?.filters.doNotReplaceAudio ?? false,
+  extractClosedCaptions: APP_CONFIG.personalizedDefaults.workingPreset?.filters.extractClosedCaptions ?? false,
+  downmixToStereo: APP_CONFIG.personalizedDefaults.workingPreset?.filters.downmixToStereo ?? true,
+  dynamicRangeCompression: APP_CONFIG.personalizedDefaults.workingPreset?.filters.dynamicRangeCompression ?? true,
+  resampleLosslessTo48k: APP_CONFIG.personalizedDefaults.workingPreset?.filters.resampleLosslessTo48k ?? true,
+  normalizeAudio: APP_CONFIG.personalizedDefaults.workingPreset?.filters.normalizeAudio ?? true,
 });
 const metadataDispositionRecord = (record: Record<number, { metadata: EditableStreamMetadata }>) =>
   Object.fromEntries(Object.entries(record).map(([index, setting]) => [index, { flags: setting.metadata.flags }]));
