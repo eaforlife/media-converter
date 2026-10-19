@@ -11,6 +11,10 @@ test('loads app defaults from config.ini', () => {
   assert.equal(configuration.app.updateRepository, 'eaforlife/media-converter');
   assert.equal(configuration.app.configSourceUrl, 'https://raw.githubusercontent.com/eaforlife/media-converter/main/config.ini');
   assert.deepEqual(configuration.mediaExtensions.video.slice(0, 3), ['mp4', 'mkv', 'mov']);
+  assert.equal(configuration.videoDefaults.outputProfiles['4k'].maxRate, 8000);
+  assert.deepEqual(configuration.videoDefaults.codecRateMultipliers, {
+    hevc: 0.5, hevcMain10: 0.45, av1: 0.30, av1TenBit: 0.20,
+  });
 });
 
 test('requires the remote config source to use HTTPS', () => {

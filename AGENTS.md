@@ -43,7 +43,7 @@ EA Media Tools is an Electron desktop app written in TypeScript. Electron Forge 
 - `[UI Defaults]`: default video preset, default codec, and Main10 initial state.
 - `[Video Behavior]`: app-wide buffer multiplier (default 3× max rate). Buffer size is calculated from the selected codec max rate and is not stored separately.
 - `[Video Output: 4k|1080p|720p|360p]`: output dimensions and H.264 bitrate/max-rate defaults; 360p is Cellular. These rates alone follow the selected output tier.
-- `[Video Codec Rate Multipliers]`: max-rate and bitrate ratios against H.264: HEVC 0.5, HEVC Main10 0.6, AV1 0.75, AV1 10-bit 0.8. Buffer size follows the final max rate at the `[Video Behavior]` multiplier.
+- `[Video Codec Rate Multipliers]`: max-rate and bitrate ratios against H.264: HEVC 0.5, HEVC Main10 0.45, AV1 0.30, AV1 10-bit 0.20. Buffer size follows the final max rate at the `[Video Behavior]` multiplier.
 - `[Main10 Defaults]`: spatial AQ and B-frame defaults when the user enables 10-bit output.
 - `[Media Extensions]`: supported input extensions.
 - `[Audio Bitrates]` and `[Audio Filters]`: audio bitrate selector choices and app-wide filter templates. Audio codec, format, per-codec rates, and compression defaults live in each named preset section in `presets.ini`.
@@ -67,7 +67,7 @@ EA Media Tools is an Electron desktop app written in TypeScript. Electron Forge 
 - Tests do not provide runtime defaults: `config.test.ts` and `video-output-profile.test.ts` load `config.ini`, while preset tests load `presets.ini` and verify parsing/resolution. Keep each knob's expected default in one focused invariant test where possible; avoid repeating the same exact CQ/rate value in parser tests and resolved-output tests. Make synchronization fixtures alter content independently of a particular knob value so normal default edits do not silently invalidate the fixture.
 - `EMPTY_APP_CONFIGURATION` in `src/config.ts` is only the pre-load fallback; packaged/runtime defaults come from parsed `config.ini`. Do not treat test expectations or the fallback object as a second runtime configuration source.
 
-Current video defaults: config selects Streaming, HEVC, Main10 off. Main10/10-bit output uses spatial AQ 6 and disables B-frames when enabled. H.264 max rates are 4K 10000, 1080p 7500, 720p 4000, Cellular 2500 kbit/s; HEVC is 0.5x, HEVC Main10 0.6x, AV1 0.75x, and AV1 10-bit 0.8x H.264. Rate and buffer values follow the output tier. Other knobs should not depend on source/downscale resolution unless documented in config or the preset.
+Current video defaults: config selects Streaming, HEVC, Main10 off. Main10/10-bit output uses spatial AQ 6 and disables B-frames when enabled. H.264 max rates are 4K 8000, 1080p 7500, 720p 4000, Cellular 2500 kbit/s; HEVC is 0.5x, HEVC Main10 0.45x, AV1 0.30x, and AV1 10-bit 0.20x H.264. Rate and buffer values follow the output tier. Other knobs should not depend on source/downscale resolution unless documented in config or the preset.
 
 Runtime target: compare stable and prerelease Jellyfin FFmpeg major.minor versions. When they match, use stable and do not expose/download prerelease. When prerelease is newer by major.minor, expose the toggle and keep both channels installed for switching. Persist GPU driver version and tested decoder/encoder capabilities; repeat hardware tests only when the relevant driver/runtime identity changes. These are desired behaviors; verify implementation before assuming they are complete.
 
