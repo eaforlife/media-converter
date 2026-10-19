@@ -249,16 +249,11 @@ export const EMPTY_APP_CONFIGURATION: AppConfiguration = Object.freeze({
   }),
   mediaExtensions: Object.freeze({ video: Object.freeze([]), audio: Object.freeze([]) }),
   videoDefaults: Object.freeze({
-    preset: 'Streaming', codec: 'HEVC', main10: false,
-    outputProfiles: Object.freeze({
-      '4k': { tier: '4k', scale: ['3180', '-2'], videoBitrate: 0, maxRate: 10000 },
-      '1080p': { tier: '1080p', scale: ['1860', '-2'], videoBitrate: 0, maxRate: 7500 },
-      '720p': { tier: '720p', scale: ['1300', '-2'], videoBitrate: 0, maxRate: 4000 },
-      '360p': { tier: '360p', scale: ['-2', '540'], videoBitrate: 0, maxRate: 2500 },
-    }) as AppConfiguration['videoDefaults']['outputProfiles'],
-    codecRateMultipliers: Object.freeze({ hevc: 0.5, hevcMain10: 0.6, av1: 0.75, av1TenBit: 0.8 }),
-    main10Advanced: Object.freeze({ spatialAq: 6, bFrames: false }),
-    bufferMultiplier: 3,
+    preset: '', codec: 'H.264', main10: false,
+    outputProfiles: Object.freeze({}) as AppConfiguration['videoDefaults']['outputProfiles'],
+    codecRateMultipliers: Object.freeze({ hevc: 1, hevcMain10: 1, av1: 1, av1TenBit: 1 }),
+    main10Advanced: Object.freeze({ spatialAq: 0, bFrames: false }),
+    bufferMultiplier: 1,
   }),
   systemCapabilities: null,
   personalizedDefaults: Object.freeze({

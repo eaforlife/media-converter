@@ -26,7 +26,7 @@ import {
   cudaCropBridgeFilters, cudaHardwareDecodeArguments, cudaScaleFilter, cuvidDecoderArguments, cuvidDecoderCropArguments, cuvidDecoderName, hardwareUploadFilter,
   protectedHardwareDecodeArguments, strictVideoTranscodeArguments,
 } from './video-safety';
-import { bufferSizeFor, scaleDimensionsFor, videoOutputProfile } from './video-output-profile';
+import { bufferSizeFor, resolveVideoOutputRates, scaleDimensionsFor, videoOutputProfile } from './video-output-profile';
 import { applyEncodeProgress, canFinishEncodeQueue, createEncodeQueueProgress, isQueueTerminal } from './encode-progress-state';
 import type { EncodeJobProgressState, EncodeQueueProgressState } from './encode-progress-state';
 import { formatSessionFfmpegCommand } from './ffmpeg-command-display';
@@ -212,9 +212,7 @@ const videoOutputDefaultsFor = (
       : main10 ? multipliers.av1TenBit : multipliers.av1;
   return {
     ...defaults,
-    videoBitrate: Math.round(profile.videoBitrate * multiplier),
-    maxRate: Math.round(profile.maxRate * multiplier),
-    bufferSize: bufferSizeFor(Math.round(profile.maxRate * multiplier), APP_CONFIG.videoDefaults.bufferMultiplier),
+    ...resolveVideoOutputRates(profile, preset.outputTierDefaults[tier], multiplier, APP_CONFIG.videoDefaults.bufferMultiplier),
   };
 };
 const deliveryQuality = (
@@ -450,7 +448,8 @@ const applyMusicVideoPreset = (source: SourceFile) => {
   const settings = settingsByPath.get(source.path) ?? initialSettings(source);
   settingsByPath.set(source.path, settings);
   const encoder = hardwareEncoderFor(preset.preferredVideoCodec);
-  const outputDefaults = videoOutputDefaultsFor(preset, outputProfile.tier, encoder);
+  const defaultMain10 = shouldDefaultToMain10(source, preset.name, outputProfile.tier, encoder);
+  const outputDefaults = videoOutputDefaultsFor(preset, outputProfile.tier, encoder, defaultMain10);
   Object.assign(settings, {
     preset: 'Music Video', format: preset.format, encoder,
     encoderSpeed: normalizeEncoderSpeed(outputDefaults.encoderSpeed),
@@ -467,7 +466,7 @@ const applyMusicVideoPreset = (source: SourceFile) => {
   settings.filters = {
     ...defaultFilters(source), scale: preset.scale, scaleLocked: preset.scaleLocked, stripMetadata: false,
     extractClosedCaptions: APP_CONFIG.musicVideoWorkflow.extractClosedCaptions,
-    pixelFormat10Bit: shouldDefaultToMain10(source, preset.name, outputProfile.tier, encoder),
+    pixelFormat10Bit: defaultMain10,
     dynamicRangeCompression: preset.dynamicRangeCompression,
   };
   for (const track of source.media?.audio ?? []) {
@@ -651,7 +650,8 @@ const applyBuiltInScaleProfile = (
     ? APP_CONFIG.videoDefaults.codec
     : preferredVideoCodecForPreset(defaults, outputProfile.tier);
   const encoder = hardwareEncoderFor(selectedCodec);
-  const outputDefaults = videoOutputDefaultsFor(defaults, outputProfile.tier, encoder);
+  const defaultMain10 = shouldDefaultToMain10(source, defaults.name, outputProfile.tier, encoder);
+  const outputDefaults = videoOutputDefaultsFor(defaults, outputProfile.tier, encoder, defaultMain10);
   const profileDefaults = outputDefaults.deliveryPreset;
   settings.filters.scale = scale;
   settings.filters.scaleLocked = defaults.scaleLocked;
@@ -667,7 +667,7 @@ const applyBuiltInScaleProfile = (
   settings.bufferSize = String(defaults.bitrateControl ? outputDefaults.bufferSize : 0);
   settings.deliveryMode = profileDefaults.deliveryMode;
   settings.advancedVideo = resolvePresetAdvancedVideo(profileDefaults, preferredCodecForEncoder(encoder), outputProfile.tier);
-  settings.filters.pixelFormat10Bit = shouldDefaultToMain10(source, defaults.name, outputProfile.tier, encoder);
+  settings.filters.pixelFormat10Bit = defaultMain10;
   for (const track of source.media?.audio ?? []) {
     const audio = settings.audio[track.index];
     if (audio && audio.codec !== 'copy') {
@@ -886,9 +886,12 @@ const shouldDefaultToMain10 = (
   preset: string,
   tier: ReturnType<typeof videoOutputProfile>['tier'],
   encoder: string,
-) => APP_CONFIG.videoDefaults.main10 && encoderMain10Enabled(encoder) && (
-  shouldDefaultToHevcMain10(source.media?.video)
-  || (preferredCodecForEncoder(encoder) === 'AV1' && (preset === 'Cellular' || (preset === 'Streaming' && (tier === '720p' || tier === '360p'))))
+) => encoderMain10Enabled(encoder) && (
+  builtInPreset(preset)?.defaultMain10 === true
+  || (APP_CONFIG.videoDefaults.main10 && (
+    shouldDefaultToHevcMain10(source.media?.video)
+    || (preferredCodecForEncoder(encoder) === 'AV1' && (preset === 'Cellular' || (preset === 'Streaming' && (tier === '720p' || tier === '360p'))))
+  ))
 );
 
 const qsvDecoderName = (source: SourceFile) => {

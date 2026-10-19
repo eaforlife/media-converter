@@ -5,6 +5,7 @@ import path from 'node:path';
 import test from 'node:test';
 import { parseAppConfiguration } from './config.ts';
 import { compareIniVersions, iniVersion, sourceIniIsNewer } from './ini-version.ts';
+import { parseBuiltInPresetConfiguration } from './presets.ts';
 import { presetContentsMatch, synchronizePresetFile, validateRemotePresetContents } from './preset-sync.ts';
 
 const presetFile = fs.readFileSync(new URL('../presets.ini', import.meta.url), 'utf8');
@@ -23,10 +24,29 @@ test('compares preset contents independently of BOM and platform line endings', 
   assert.equal(presetContentsMatch(presetFile, changedPreset), false);
 });
 
+test('Streaming and Music Video use 5000 kbps H.264 baselines', () => {
+  const { presets } = parseBuiltInPresetConfiguration(presetFile);
+  const config = parseAppConfiguration(configFile);
+  for (const presetName of ['Streaming', 'Music Video']) {
+    for (const tier of ['4k', '1080p', '720p', '360p'] as const) {
+      assert.ok(presets[presetName].outputTierDefaults[tier].maxRate);
+      assert.equal(presets[presetName].outputTierDefaults[tier].maxRate,
+        presets.Streaming.outputTierDefaults[tier].maxRate);
+    }
+  }
+  assert.equal(presets.Streaming.outputTierDefaults['1080p'].maxRate,
+    presets.Streaming.outputTierDefaults['4k'].maxRate);
+  assert.equal(presets.Streaming.quality.nvenc, '32');
+  assert.equal(presets['Music Video'].defaultMain10, true);
+  assert.equal(presets['Music Video'].advancedVideo.spatialAq, config.videoDefaults.main10Advanced.spatialAq);
+  assert.equal(presets['Music Video'].advancedVideo.bFrames, false);
+  assert.equal(presets['Music Video'].encoderSpeed, 6);
+});
+
 test('INI version tags normalize minor-only versions and only replace older local data', () => {
   assert.equal(iniVersion('[Version: 2.9]\n'), '2.9.0');
   assert.equal(iniVersion(configFile), null);
-  assert.match(configFile, /^\[App Version: 2\.9\.3\]/);
+  assert.match(configFile, /^\[App Version: 2\.9\.4\]/);
   assert.equal(compareIniVersions('2.10.0', '2.9.9'), 1);
   assert.equal(compareIniVersions('2.9.0', '2.9'), 0);
   assert.equal(sourceIniIsNewer('[Version: 2.9.0]\n', '[Version: 2.8.7]\n'), true);

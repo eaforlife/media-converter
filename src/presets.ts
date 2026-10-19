@@ -38,6 +38,7 @@ export type BuiltInPresetDefinition = {
   frameRate: PresetFrameRate;
   format: 'mp4' | 'mkv';
   preferredVideoCodec: PreferredVideoCodec;
+  defaultMain10: boolean;
   encoderSpeed: number;
   encoderProfile: Partial<Record<PreferredVideoCodec, string>>;
   outputTierDefaults: Record<OutputTier, OutputTierDefaults>;
@@ -193,6 +194,7 @@ export const parseBuiltInPresetConfiguration = (ini: string): BuiltInPresetConfi
       frameRate: presetFrameRateValue(optional('frame_rate') || 'passthrough', label('frame_rate')),
       format: enumValue(get('format'), ['mp4', 'mkv'], label('format')),
       preferredVideoCodec: enumValue(get('preferred_video_codec'), ['H.264', 'HEVC', 'AV1'], label('preferred_video_codec')),
+      defaultMain10: optionalBooleanValue('default_main10') ?? false,
       encoderSpeed: numberValue(get('encoder_speed'), label('encoder_speed'), 1, 7),
       encoderProfile: Object.fromEntries(Object.entries(CODEC_KEYS).map(([codec, key]) => [
         codec, optional(`profile_${key}`) || undefined,
