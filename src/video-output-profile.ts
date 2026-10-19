@@ -45,11 +45,10 @@ export const bufferSizeFor = (maxRate: number, multiplier: number) =>
 
 export const resolveVideoOutputRates = (
   profile: Pick<VideoOutputProfile, 'videoBitrate' | 'maxRate'>,
-  presetOverrides: { videoBitrate?: number; maxRate?: number },
   codecMultiplier: number,
   bufferMultiplier: number,
 ) => {
-  const videoBitrate = Math.round((presetOverrides.videoBitrate ?? profile.videoBitrate) * codecMultiplier);
-  const maxRate = Math.round((presetOverrides.maxRate ?? profile.maxRate) * codecMultiplier);
+  const videoBitrate = Math.round(profile.videoBitrate * codecMultiplier);
+  const maxRate = Math.round(profile.maxRate * codecMultiplier);
   return { videoBitrate, maxRate, bufferSize: bufferSizeFor(maxRate, bufferMultiplier) };
 };

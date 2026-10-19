@@ -7,11 +7,12 @@ import {
   bufferSizeFor, resolveVideoOutputRates, scaleDimensionsFor, videoOutputProfile,
 } from './video-output-profile.ts';
 
-const configuration = parseBuiltInPresetConfiguration(
+const presetConfiguration = parseBuiltInPresetConfiguration(
   fs.readFileSync(new URL('../presets.ini', import.meta.url), 'utf8'),
 );
 const appConfiguration = parseAppConfiguration(fs.readFileSync(new URL('../config.ini', import.meta.url), 'utf8'));
 const profiles = appConfiguration.videoDefaults.outputProfiles;
+const configuration = { ...presetConfiguration, outputProfiles: profiles };
 
 test('loads H.264 bitrate baselines and output dimensions from config.ini', () => {
   const cases = [
@@ -38,7 +39,7 @@ test('explicit scaling uses the configured output profile instead of the source 
 });
 
 test('resolves every Streaming tier CQ and backend quality from presets.ini', () => {
-  const streaming = configuration.presets.Streaming;
+  const streaming = presetConfiguration.presets.Streaming;
   for (const tier of ['4k', '1080p', '720p', '360p'] as const) {
     equal(resolvePresetOutputDefaults(configuration, streaming, tier, 'nvenc').quality, streaming.quality.nvenc);
   }
@@ -54,12 +55,12 @@ test('resolves Cellular delivery and Music Video tier overrides from presets.ini
 
   const music4k = resolvePresetOutputDefaults(configuration, configuration.presets['Music Video'], '4k', 'nvenc');
   equal(music4k.encoderSpeed, configuration.presets['Music Video'].encoderSpeed);
-  equal(music4k.maxRate, configuration.presets['Music Video'].outputTierDefaults['4k'].maxRate);
+  equal(music4k.maxRate, profiles['4k'].maxRate);
   deepStrictEqual(music4k.resolution, ['2960', '-2']);
 
   const music1080 = resolvePresetOutputDefaults(configuration, configuration.presets['Music Video'], '1080p', 'nvenc');
   equal(music1080.encoderSpeed, configuration.presets['Music Video'].encoderSpeed);
-  equal(music1080.maxRate, configuration.presets['Music Video'].outputTierDefaults['1080p'].maxRate);
+  equal(music1080.maxRate, profiles['1080p'].maxRate);
   deepStrictEqual(music1080.resolution, ['-2', '-2']);
 });
 
@@ -77,38 +78,37 @@ test('resolves preset profiles and speed tiers independently from configured rat
 
   for (const expected of cases) {
     const defaults = resolvePresetOutputDefaults(
-      configuration, configuration.presets[expected.preset], expected.tier, 'nvenc', 'H.264',
+    configuration, configuration.presets[expected.preset], expected.tier, 'nvenc',
     );
     const preset = configuration.presets[expected.preset];
     const tierDefaults = preset.outputTierDefaults[expected.tier];
     equal(defaults.encoderProfile, preset.encoderProfile['H.264'] ?? '');
-    equal(defaults.encoderSpeed, tierDefaults.codec['H.264']?.encoderSpeed ?? tierDefaults.encoderSpeed ?? preset.encoderSpeed);
-    equal(defaults.maxRate, tierDefaults.codec['H.264']?.maxRate ?? tierDefaults.maxRate ?? configuration.outputProfiles[expected.tier].maxRate);
+    equal(defaults.encoderSpeed, tierDefaults.encoderSpeed ?? preset.encoderSpeed);
+    equal(defaults.maxRate, profiles[expected.tier].maxRate);
   }
 
   const streamingHevc = resolvePresetOutputDefaults(
-    configuration, configuration.presets.Streaming, '1080p', 'nvenc', 'HEVC',
+    configuration, configuration.presets.Streaming, '1080p', 'nvenc',
   );
-  equal(streamingHevc.encoderProfile, 'main10');
   equal(streamingHevc.encoderSpeed, configuration.presets.Streaming.encoderSpeed);
-  equal(streamingHevc.maxRate, configuration.presets.Streaming.outputTierDefaults['1080p'].maxRate);
+  equal(streamingHevc.maxRate, profiles['1080p'].maxRate);
   const streamingAv1 = resolvePresetOutputDefaults(
-    configuration, configuration.presets.Streaming, '1080p', 'nvenc', 'AV1',
+    configuration, configuration.presets.Streaming, '1080p', 'nvenc',
   );
-  equal(streamingAv1.maxRate, configuration.presets.Streaming.outputTierDefaults['1080p'].maxRate);
+  equal(streamingAv1.maxRate, profiles['1080p'].maxRate);
   const cellularAv1 = resolvePresetOutputDefaults(
-    configuration, configuration.presets.Cellular, '360p', 'nvenc', 'AV1',
+    configuration, configuration.presets.Cellular, '360p', 'nvenc',
   );
-  equal(cellularAv1.maxRate, 0);
+  equal(cellularAv1.maxRate, profiles['360p'].maxRate);
 });
 
 test('H.264 output rate baselines scale using only config.ini codec ratios', () => {
   const { codecRateMultipliers: ratios } = appConfiguration.videoDefaults;
   const h264 = profiles['1080p'].maxRate;
-  equal(Math.round(h264 * ratios.hevc), resolveVideoOutputRates(profiles['1080p'], {}, ratios.hevc, 1).maxRate);
-  equal(Math.round(h264 * ratios.hevcMain10), resolveVideoOutputRates(profiles['1080p'], {}, ratios.hevcMain10, 1).maxRate);
-  equal(Math.round(h264 * ratios.av1), resolveVideoOutputRates(profiles['1080p'], {}, ratios.av1, 1).maxRate);
-  equal(Math.round(h264 * ratios.av1TenBit), resolveVideoOutputRates(profiles['1080p'], {}, ratios.av1TenBit, 1).maxRate);
+  equal(Math.round(h264 * ratios.hevc), resolveVideoOutputRates(profiles['1080p'], ratios.hevc, 1).maxRate);
+  equal(Math.round(h264 * ratios.hevcMain10), resolveVideoOutputRates(profiles['1080p'], ratios.hevcMain10, 1).maxRate);
+  equal(Math.round(h264 * ratios.av1), resolveVideoOutputRates(profiles['1080p'], ratios.av1, 1).maxRate);
+  equal(Math.round(h264 * ratios.av1TenBit), resolveVideoOutputRates(profiles['1080p'], ratios.av1TenBit, 1).maxRate);
 });
 
 test('disabled scaling emits no scale filter while retaining the source rate tier', () => {
@@ -124,14 +124,12 @@ test('buffer sizing follows the app-wide config multiplier when max rate changes
   equal(bufferSizeFor(hevcRate, appConfiguration.videoDefaults.bufferMultiplier), hevcRate * appConfiguration.videoDefaults.bufferMultiplier);
 });
 
-test('preset rate overrides use config.ini codec ratios and buffer multiplier', () => {
-  const preset = configuration.presets.Streaming;
+test('codec rates use config.ini ratios and buffer multiplier', () => {
   const tier = '1080p';
-  const override = preset.outputTierDefaults[tier];
-  const h264 = resolveVideoOutputRates(profiles[tier], override, 1, appConfiguration.videoDefaults.bufferMultiplier);
-  equal(h264.maxRate, override.maxRate);
+  const h264 = resolveVideoOutputRates(profiles[tier], 1, appConfiguration.videoDefaults.bufferMultiplier);
+  equal(h264.maxRate, profiles[tier].maxRate);
   const ratio = appConfiguration.videoDefaults.codecRateMultipliers.hevcMain10;
-  const hevcMain10 = resolveVideoOutputRates(profiles[tier], override, ratio, appConfiguration.videoDefaults.bufferMultiplier);
+  const hevcMain10 = resolveVideoOutputRates(profiles[tier], ratio, appConfiguration.videoDefaults.bufferMultiplier);
   equal(hevcMain10.maxRate, Math.round(h264.maxRate * ratio));
   equal(hevcMain10.bufferSize, hevcMain10.maxRate * appConfiguration.videoDefaults.bufferMultiplier);
 });

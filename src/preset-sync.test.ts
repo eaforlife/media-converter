@@ -24,19 +24,13 @@ test('compares preset contents independently of BOM and platform line endings', 
   assert.equal(presetContentsMatch(presetFile, changedPreset), false);
 });
 
-test('Streaming and Music Video use 5000 kbps H.264 baselines', () => {
+test('current presets inherit app rates and Music Video preserves intentional workflow defaults', () => {
   const { presets } = parseBuiltInPresetConfiguration(presetFile);
   const config = parseAppConfiguration(configFile);
-  for (const presetName of ['Streaming', 'Music Video']) {
-    for (const tier of ['4k', '1080p', '720p', '360p'] as const) {
-      assert.ok(presets[presetName].outputTierDefaults[tier].maxRate);
-      assert.equal(presets[presetName].outputTierDefaults[tier].maxRate,
-        presets.Streaming.outputTierDefaults[tier].maxRate);
-    }
+  for (const tier of ['4k', '1080p', '720p', '360p'] as const) {
+    assert.equal(config.videoDefaults.outputProfiles[tier].maxRate > 0, true);
   }
-  assert.equal(presets.Streaming.outputTierDefaults['1080p'].maxRate,
-    presets.Streaming.outputTierDefaults['4k'].maxRate);
-  assert.equal(presets.Streaming.quality.nvenc, '32');
+  assert.equal(presets['Music Video'].quality.nvenc, presets.Streaming.quality.nvenc);
   assert.equal(presets['Music Video'].defaultMain10, true);
   assert.equal(presets['Music Video'].advancedVideo.spatialAq, config.videoDefaults.main10Advanced.spatialAq);
   assert.equal(presets['Music Video'].advancedVideo.bFrames, false);

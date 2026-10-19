@@ -195,7 +195,8 @@ const outputDefaultsFor = (
   tier: ReturnType<typeof videoOutputProfile>['tier'],
   encoder: string,
 ) => resolvePresetOutputDefaults(
-  requiredBuiltInPresetConfiguration(), preset, tier, encoderFamily(encoder), preferredCodecForEncoder(encoder),
+    requiredBuiltInPresetConfiguration(),
+    preset, tier, encoderFamily(encoder),
 );
 const videoOutputDefaultsFor = (
   preset: BuiltInPresetDefinition,
@@ -212,7 +213,7 @@ const videoOutputDefaultsFor = (
       : main10 ? multipliers.av1TenBit : multipliers.av1;
   return {
     ...defaults,
-    ...resolveVideoOutputRates(profile, preset.outputTierDefaults[tier], multiplier, APP_CONFIG.videoDefaults.bufferMultiplier),
+    ...resolveVideoOutputRates(profile, multiplier, APP_CONFIG.videoDefaults.bufferMultiplier),
   };
 };
 const deliveryQuality = (

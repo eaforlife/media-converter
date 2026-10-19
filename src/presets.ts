@@ -20,16 +20,9 @@ type OutputTierDefaults = {
   preferredVideoCodec?: PreferredVideoCodec;
   encoderSpeed?: number;
   resolution?: readonly [string, string];
-  videoBitrate?: number;
-  maxRate?: number;
   deliveryPreset?: string;
   multipass?: AdvancedVideoSettings['multipass'];
   quality: Partial<Record<EncoderFamily, string>>;
-  codec: Partial<Record<PreferredVideoCodec, {
-    encoderSpeed?: number;
-    videoBitrate?: number;
-    maxRate?: number;
-  }>>;
 };
 
 export type BuiltInPresetDefinition = {
@@ -49,8 +42,6 @@ export type BuiltInPresetDefinition = {
   scaleLocked: boolean;
   deliveryMode: boolean;
   bitrateControl: boolean;
-  bufferMultiplier: number;
-  bitrateMultiplier: Partial<Record<PreferredVideoCodec, number>>;
   audioCodec: PresetAudioCodec;
   audioRates: AudioRates;
   dynamicRangeCompression: boolean;
@@ -137,28 +128,11 @@ export const parseBuiltInPresetConfiguration = (ini: string): BuiltInPresetConfi
   for (const name of REQUIRED_BUILT_IN_PRESET_NAMES) {
     if (!sections.has(name)) throw new Error(`presets.ini is missing the [${name}] section`);
   }
-  const outputProfiles = Object.fromEntries(OUTPUT_TIERS.map((tier) => {
-    const name = `Output: ${tier}`;
-    const values = sections.get(name);
-    // Legacy output sections are accepted for older remote preset files. The
-    // active UI profiles always come from config.ini.
-    if (!values) return [tier, Object.freeze({
-      tier, scale: (tier === '360p' ? ['-2', '540'] : ['-2', '-2']) as readonly [string, string],
-      videoBitrate: 0, maxRate: 0,
-    })];
-    const get = (key: string) => {
-      const value = values.get(key);
-      if (value === undefined || value === '') throw new Error(`[${name}] is missing ${key}`);
-      return value;
-    };
-    return [tier, Object.freeze({
-      tier,
-      scale: resolutionValue(get('resolution'), `[${name}] resolution`),
-      videoBitrate: numberValue(get('video_bitrate'), `[${name}] video_bitrate`, 0, 1_000_000),
-      maxRate: numberValue(get('max_rate'), `[${name}] max_rate`, 1, 1_000_000),
-    })];
-  })) as VideoOutputProfiles;
-  const metadataSections = new Set([versionSection, ...OUTPUT_TIERS.map((tier) => `Output: ${tier}`)]);
+  const outputProfiles = Object.fromEntries(OUTPUT_TIERS.map((tier) => [tier, Object.freeze({
+    tier, scale: (tier === '360p' ? ['-2', '540'] : ['-2', '-2']) as readonly [string, string],
+    videoBitrate: 0, maxRate: 0,
+  })])) as VideoOutputProfiles;
+  const metadataSections = new Set([versionSection]);
   const parsed: Record<string, BuiltInPresetDefinition> = {};
   for (const [name, values] of sections) {
     if (name === 'Custom') throw new Error('presets.ini cannot define the reserved [Custom] section');
@@ -196,9 +170,7 @@ export const parseBuiltInPresetConfiguration = (ini: string): BuiltInPresetConfi
       preferredVideoCodec: enumValue(get('preferred_video_codec'), ['H.264', 'HEVC', 'AV1'], label('preferred_video_codec')),
       defaultMain10: optionalBooleanValue('default_main10') ?? false,
       encoderSpeed: numberValue(get('encoder_speed'), label('encoder_speed'), 1, 7),
-      encoderProfile: Object.fromEntries(Object.entries(CODEC_KEYS).map(([codec, key]) => [
-        codec, optional(`profile_${key}`) || undefined,
-      ])) as Partial<Record<PreferredVideoCodec, string>>,
+      encoderProfile: {},
       outputTierDefaults: Object.fromEntries(OUTPUT_TIERS.map((tier) => [tier, {
         preferredVideoCodec: optional(`preferred_video_codec_${tier}`)
           ? enumValue(optional(`preferred_video_codec_${tier}`), ['H.264', 'HEVC', 'AV1'], label(`preferred_video_codec_${tier}`))
@@ -207,20 +179,11 @@ export const parseBuiltInPresetConfiguration = (ini: string): BuiltInPresetConfi
         resolution: optional(`resolution_${tier}`)
           ? resolutionValue(optional(`resolution_${tier}`), label(`resolution_${tier}`))
           : undefined,
-        videoBitrate: optionalNumberValue(optional(`video_bitrate_${tier}`), label(`video_bitrate_${tier}`), 0, 1_000_000),
-        maxRate: optionalNumberValue(optional(`max_rate_${tier}`), label(`max_rate_${tier}`), 1, 1_000_000),
         deliveryPreset: optional(`delivery_preset_${tier}`) || undefined,
         multipass: optionalNumberValue(optional(`multipass_${tier}`), label(`multipass_${tier}`), 0, 2) as AdvancedVideoSettings['multipass'] | undefined,
         quality: Object.fromEntries(ENCODER_FAMILIES.map((family) => [
           family, optional(`quality_${family}_${tier}`) || undefined,
         ])) as Partial<Record<EncoderFamily, string>>,
-        codec: Object.fromEntries(Object.entries(CODEC_KEYS).map(([codec, key]) => [codec, {
-          encoderSpeed: optionalNumberValue(optional(`encoder_speed_${key}_${tier}`), label(`encoder_speed_${key}_${tier}`), 1, 7),
-          videoBitrate: optionalNumberValue(optional(`video_bitrate_${key}_${tier}`), label(`video_bitrate_${key}_${tier}`), 0, 1_000_000),
-          maxRate: optionalNumberValue(optional(`max_rate_${key}_${tier}`), label(`max_rate_${key}_${tier}`), 1, 1_000_000),
-        }])) as Partial<Record<PreferredVideoCodec, {
-          encoderSpeed?: number; videoBitrate?: number; maxRate?: number;
-        }>>,
       }])) as Record<OutputTier, OutputTierDefaults>,
       encoderTune: {
         nvenc: optional('tune_nvenc'), amf: optional('tune_amf'), qsv: optional('tune_qsv'),
@@ -236,17 +199,6 @@ export const parseBuiltInPresetConfiguration = (ini: string): BuiltInPresetConfi
       scaleLocked: booleanValue(get('scale_locked'), label('scale_locked')),
       deliveryMode: booleanValue(get('delivery_mode'), label('delivery_mode')),
       bitrateControl: booleanValue(get('bitrate_control'), label('bitrate_control')),
-      bufferMultiplier: optional('buffer_multiplier')
-        ? numberValue(optional('buffer_multiplier'), label('buffer_multiplier'), 0, 20) : 3,
-      bitrateMultiplier: Object.fromEntries(Object.entries(CODEC_KEYS).map(([codec, key]) => {
-        const value = optional(`bitrate_multiplier_${key}`);
-        if (!value) return [codec, undefined];
-        const multiplier = Number(value);
-        if (!Number.isFinite(multiplier) || multiplier <= 0 || multiplier > 10) {
-          throw new Error(`${label(`bitrate_multiplier_${key}`)} must be greater than 0 and at most 10`);
-        }
-        return [codec, multiplier];
-      })) as Partial<Record<PreferredVideoCodec, number>>,
       audioCodec: enumValue(get('audio_codec'), ['aac', 'opus'], label('audio_codec')),
       audioRates: {
         aac: { stereo: get('audio_aac_stereo'), surround: get('audio_aac_downmix') },
@@ -309,23 +261,20 @@ export const resolvePresetOutputDefaults = (
   preset: BuiltInPresetDefinition,
   tier: OutputTier,
   family: EncoderFamily,
-  codec: PreferredVideoCodec = preset.preferredVideoCodec,
 ) => {
   const outputProfile = configuration.outputProfiles[tier];
   const overrides = preset.outputTierDefaults[tier];
-  const codecOverrides = overrides.codec[codec] ?? {};
-  const bitrateMultiplier = preset.bitrateMultiplier[codec] ?? 1;
   const deliveryPreset = overrides.deliveryPreset
     ? configuration.presets[overrides.deliveryPreset]
     : preset;
   if (!deliveryPreset) throw new Error(`The ${overrides.deliveryPreset} preset is unavailable`);
   return {
     deliveryPreset,
-    encoderSpeed: codecOverrides.encoderSpeed ?? overrides.encoderSpeed ?? preset.encoderSpeed,
-    encoderProfile: preset.encoderProfile[codec] ?? '',
+    encoderSpeed: overrides.encoderSpeed ?? preset.encoderSpeed,
+    encoderProfile: '',
     resolution: overrides.resolution ?? outputProfile.scale,
     quality: overrides.quality[family] ?? deliveryPreset.quality[family],
-    videoBitrate: Math.round((codecOverrides.videoBitrate ?? overrides.videoBitrate ?? outputProfile.videoBitrate) * bitrateMultiplier),
-    maxRate: Math.round((codecOverrides.maxRate ?? overrides.maxRate ?? outputProfile.maxRate) * bitrateMultiplier),
+    videoBitrate: outputProfile.videoBitrate,
+    maxRate: outputProfile.maxRate,
   };
 };
