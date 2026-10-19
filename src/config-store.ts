@@ -8,6 +8,7 @@ import {
 import { logActivity } from './app-logger';
 import { presetContentsMatch } from './preset-sync';
 import type { HardwareCapabilities } from './shared-types';
+import { configSourceContentsMatch, replaceConfigContentBeforeCache, setConfigAppVersion } from './config-sync';
 
 export const configFilePath = () => app.isPackaged
   ? path.join(process.resourcesPath, 'config.ini')
@@ -51,14 +52,6 @@ const synchronizeConfigFile = async (target: string, remoteContents: string) => 
   return true;
 };
 
-const sectionLines = (contents: string, sectionName: string) => {
-  const lines = contents.replace(/^\uFEFF/, '').split(/\r?\n/);
-  const start = lines.findIndex((line) => line.trim() === `[${sectionName}]`);
-  if (start < 0) return null;
-  const nextSection = lines.findIndex((line, index) => index > start && /^\s*\[[^\]]+\]\s*$/.test(line));
-  return lines.slice(start, nextSection < 0 ? lines.length : nextSection);
-};
-
 const replaceSection = (contents: string, sectionName: string, replacement: string[]) => {
   const lines = contents.replace(/^\uFEFF/, '').split(/\r?\n/);
   const start = lines.findIndex((line) => line.trim() === `[${sectionName}]`);
@@ -68,18 +61,6 @@ const replaceSection = (contents: string, sectionName: string, replacement: stri
   }
   while (lines.length && !lines.at(-1)?.trim()) lines.pop();
   return `${lines.join('\n')}\n\n${replacement.join('\n')}\n`;
-};
-
-const preserveSystemCapabilityCache = (contents: string, current: string) => {
-  const cache = sectionLines(current, 'System Capability Cache');
-  if (!cache) return contents;
-  const preserved = replaceSection(contents, 'System Capability Cache', cache);
-  try {
-    parseAppConfiguration(preserved);
-    return preserved;
-  } catch {
-    return contents;
-  }
 };
 
 const validConfigFile = async (target: string) => {
@@ -97,15 +78,32 @@ export const loadAppConfiguration = async (): Promise<AppConfiguration> => {
   const installed = configFilePath();
   const installedContents = await fs.promises.readFile(installed, 'utf8').catch(() => '');
   if (!installedContents || !await validConfigFile(installed)) throw new Error('The bundled config.ini is missing or invalid');
-  if (appVersionForConfig(installedContents) !== app.getVersion()) {
-    const base = installedContents.replace(/^\s*\[App Version: [^\]]+\]\s*$/m, `[App Version: ${app.getVersion()}]`);
-    const withCache = validateConfigContents(preserveSystemCapabilityCache(base, installedContents));
-    await synchronizeConfigFile(installed, withCache);
-    activeConfigFilePath = installed;
+  let updatedContents = setConfigAppVersion(installedContents, app.getVersion());
+  if (app.isPackaged) {
+    const sourceUrl = parseAppConfiguration(updatedContents).app.configSourceUrl;
+    try {
+      const sourceContents = validateConfigContents(await fetchText(sourceUrl, 8_000));
+      const sourceForRunningApp = setConfigAppVersion(sourceContents, app.getVersion());
+      const candidate = validateConfigContents(replaceConfigContentBeforeCache(sourceForRunningApp, updatedContents));
+      if (!configSourceContentsMatch(candidate, updatedContents)) {
+        updatedContents = candidate;
+        logActivity('INFO', 'config.source.updated', { source: sourceUrl, destination: installed });
+      }
+    } catch (error) {
+      logActivity('WARN', 'config.source.unavailable', {
+        source: sourceUrl,
+        reason: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+  validateConfigContents(updatedContents);
+  if (updatedContents !== installedContents) {
+    await synchronizeConfigFile(installed, updatedContents);
     logActivity('INFO', 'config.install-version.updated', {
       appVersion: app.getVersion(), destination: installed, previousAppVersion: appVersionForConfig(installedContents) || null,
     });
-  } else activeConfigFilePath = installed;
+  }
+  activeConfigFilePath = installed;
   try {
     const configuration = parseAppConfiguration(await readConfigFile());
     setAppConfiguration(configuration);

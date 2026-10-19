@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { updateElectronApp, UpdateSourceType } from 'update-electron-app';
 import { APP_CONFIG, APP_NAME, APP_UPDATE_REPOSITORY } from './config';
+import { migrateCustomPresetFile, removeLegacyDataDirectories } from './app-storage-migration';
 import {
   APP_UPDATE_INTERVAL, electronUpdateFeedUrl, friendlyUpdateError, isUpdateCheckAlreadyRunningError,
   manualUpdateUnavailableMessage, releaseChangelogUrl, shouldInitializeAppUpdater,
@@ -48,6 +49,39 @@ const runSquirrel = (args: string[]) => {
   child.on('close', () => app.quit());
 };
 
+const legacyDataDirectories = () => [
+  ...(process.env.APPDATA ? [
+    path.join(process.env.APPDATA, 'EA Media Tools'),
+    path.join(process.env.APPDATA, 'EA Media Conversion Tools'),
+  ] : []),
+  ...(process.env.LOCALAPPDATA ? [path.join(process.env.LOCALAPPDATA, 'ea_media_tools')] : []),
+];
+
+const migrateStorageBeforeInstallCleanup = async (previousInstallDirectories: readonly string[]) => {
+  const legacyDirectories = legacyDataDirectories();
+  const migration = await migrateCustomPresetFile(
+    process.resourcesPath,
+    previousInstallDirectories
+      .filter((directory) => /^app-\d/i.test(path.basename(directory)))
+      .sort((left, right) => path.basename(right).localeCompare(path.basename(left), undefined, { numeric: true }))
+      .map((directory) => path.join(directory, 'resources')),
+    legacyDirectories,
+  );
+  if (!migration.safeToCleanPrevious) {
+    logActivity('ERROR', 'storage.migration.failed', {
+      reason: 'Custom presets could not be safely copied; prior install folders were retained',
+    });
+    return false;
+  }
+  const cleanup = await removeLegacyDataDirectories(legacyDirectories, path.dirname(process.execPath));
+  logActivity('INFO', 'storage.migration.completed', {
+    copiedFrom: migration.copiedFrom,
+    removedLegacyDirectories: cleanup.removed,
+    preservedLegacyDirectories: cleanup.preserved,
+  });
+  return true;
+};
+
 const handleSquirrelEvent = () => {
   if (process.platform !== 'win32') return false;
   const event = process.argv[1];
@@ -61,7 +95,11 @@ const handleSquirrelEvent = () => {
     // verified older versions for deletion by a detached helper after both have exited.
     void (async () => {
       const targets = await installCleanupTargets(path.dirname(process.execPath)).catch(() => []);
-      scheduleInstallCleanupAfterExit(targets);
+      const storageReady = await migrateStorageBeforeInstallCleanup(targets).catch((error) => {
+        logActivity('ERROR', 'storage.migration.failed', error instanceof Error ? error.message : String(error));
+        return false;
+      });
+      if (storageReady) scheduleInstallCleanupAfterExit(targets);
       await rotateLogForUpdate(app.getVersion()).catch(() => undefined);
       runSquirrel([`--createShortcut=${target}`]);
     })();
@@ -143,7 +181,10 @@ const initializeStartupInstallCleanup = (webContents: Electron.WebContents) => {
   }
   startupInstallCleanup = (async () => {
     try {
-      const result = await cleanupPreviousInstall(path.dirname(process.execPath), ({ completed, total }) => {
+      const currentInstallDirectory = path.dirname(process.execPath);
+      const targets = await installCleanupTargets(currentInstallDirectory);
+      if (!await migrateStorageBeforeInstallCleanup(targets)) return;
+      const result = await cleanupPreviousInstall(currentInstallDirectory, ({ completed, total }) => {
         const message = `Removing previous installation files · ${completed + 1} of ${total}`;
         logActivity('INFO', 'install.cleanup.progress', { completed, total });
         sendStartupProgress(webContents, message, 'verifying');

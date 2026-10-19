@@ -14,6 +14,7 @@ export type AppConfiguration = {
     codename: string;
     updateRepository: string;
     presetSourceUrl: string;
+    configSourceUrl: string;
     ffmpegReleaseApi: string;
     ffmpegReleasesApi: string;
     rsgainReleaseApi: string;
@@ -78,6 +79,12 @@ const requireValue = (section: Map<string, string>, sectionName: string, key: st
   if (value === undefined) throw new Error(`[${sectionName}] is missing ${key}`);
   return value;
 };
+const requireHttpsUrl = (value: string, label: string) => {
+  let parsed: URL;
+  try { parsed = new URL(value); } catch { throw new Error(`${label} must be a valid HTTPS URL`); }
+  if (parsed.protocol !== 'https:') throw new Error(`${label} must be a valid HTTPS URL`);
+  return value;
+};
 
 export const parseAppConfiguration = (ini: string): AppConfiguration => {
   const sections = parseIniSections(ini);
@@ -138,6 +145,7 @@ export const parseAppConfiguration = (ini: string): AppConfiguration => {
       codename: requireValue(app, 'App', 'codename'),
       updateRepository: requireValue(app, 'App', 'update_repository'),
       presetSourceUrl: requireValue(app, 'App', 'preset_source_url'),
+      configSourceUrl: requireHttpsUrl(requireValue(app, 'App', 'config_source_url'), '[App] config_source_url'),
       ffmpegReleaseApi: requireValue(app, 'App', 'ffmpeg_release_api'),
       ffmpegReleasesApi: requireValue(app, 'App', 'ffmpeg_releases_api'),
       rsgainReleaseApi: requireValue(app, 'App', 'rsgain_release_api'),
@@ -230,6 +238,7 @@ export const EMPTY_APP_CONFIGURATION: AppConfiguration = Object.freeze({
     codename: '',
     updateRepository: '',
     presetSourceUrl: '',
+    configSourceUrl: '',
     ffmpegReleaseApi: '',
     ffmpegReleasesApi: '',
     rsgainReleaseApi: '',
