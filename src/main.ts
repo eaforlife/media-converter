@@ -14,14 +14,14 @@ import { initializeLogger, logActivity, readLog, rotateLogForUpdate } from './ap
 import {
   cleanupPreviousInstall, installCleanupTargets, scheduleInstallCleanupAfterExit,
 } from './install-cleanup';
-import { detectHardwareCapabilities } from './hardware-capabilities';
+import { detectDriverVersion, detectHardwareCapabilities } from './hardware-capabilities';
 import { cancelEncoding, cancelEncodingAndWait, isEncodingActive, startEncodeQueue } from './encode-runner';
 import { analyzeVisual, cleanupPreviews, initializePreviewStorage, releasePreviews } from './media-analysis';
 import { probeMedia } from './media-probe';
 import { classifyMediaWorkflow } from './media-workflow';
 import { initializeRuntime, selectRuntimeChannel } from './runtime-manager';
 import { loadSettings, readConfig, saveSettings } from './settings-store';
-import { enforceUrgentUpdatePolicy, loadAppConfiguration } from './config-store';
+import { enforceUrgentUpdatePolicy, loadAppConfiguration, saveSystemCapabilityCache } from './config-store';
 import { loadBuiltInPresets, presetFilePath, readPresetFile } from './preset-store';
 import { customPresetFilePath, loadCustomPresets, readCustomPresetFile, saveCustomPresets } from './custom-preset-store';
 import {
@@ -123,6 +123,7 @@ const sendStartupProgress = (
     ffmpegVersion: null,
     releaseTag: null,
     ffmpegChannel: 'stable',
+    prereleaseAvailable: false,
     rsgainAvailable: false,
     rsgainPath: '',
     rsgainVersion: null,
@@ -630,6 +631,7 @@ const registerIpc = () => {
       updateEnabled: app.isPackaged && process.platform !== 'linux',
       ffmpegAvailable: false, ffmpegPath: activeFfmpeg(), ffprobePath: activeFfprobe(),
       ffmpegVersion: null, releaseTag: null, ffmpegChannel: 'stable',
+      prereleaseAvailable: false,
       rsgainAvailable: false, rsgainPath: '', rsgainVersion: null,
       ccextractorAvailable: false, ccextractorPath: '', ccextractorVersion: null,
     } satisfies RuntimeState);
@@ -650,7 +652,26 @@ const registerIpc = () => {
   ipcMain.handle('hardware:detect', () => {
     const ffmpegPath = activeFfmpeg();
     if (!ffmpegPath) throw new Error('FFmpeg is unavailable for hardware capability checks');
-    hardwareCheck ??= detectHardwareCapabilities(ffmpegPath);
+    if (!hardwareCheck) {
+      hardwareCheck = (async () => {
+        const driverVersion = await detectDriverVersion();
+        const ffmpegVersion = runtimeState?.ffmpegVersion ?? 'unknown';
+        const cached = APP_CONFIG.systemCapabilities;
+        if (driverVersion !== 'unknown' && cached?.driverVersion === driverVersion) {
+          logActivity('INFO', 'hardware.capabilities.cache-hit', { driverVersion, ffmpegVersion, checkedAt: cached.checkedAt });
+          return cached.capabilities;
+        }
+        logActivity('INFO', 'hardware.capabilities.cache-miss', {
+          driverVersion, ffmpegVersion, cachedDriverVersion: cached?.driverVersion ?? null,
+          cachedFfmpegVersion: cached?.ffmpegVersion ?? null,
+        });
+        const detected = await detectHardwareCapabilities(ffmpegPath, driverVersion, ffmpegVersion);
+        if (driverVersion !== 'unknown' && ffmpegVersion !== 'unknown') {
+          await saveSystemCapabilityCache(driverVersion, ffmpegVersion, detected);
+        }
+        return detected;
+      })();
+    }
     return hardwareCheck;
   });
   ipcMain.handle('log:read', () => readLog());

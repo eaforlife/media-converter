@@ -7,12 +7,14 @@ import {
 } from './config';
 import { logActivity } from './app-logger';
 import { presetContentsMatch } from './preset-sync';
+import type { HardwareCapabilities } from './shared-types';
 
 export const configFilePath = () => app.isPackaged
   ? path.join(process.resourcesPath, 'config.ini')
   : path.join(app.getAppPath(), 'config.ini');
 
-const managedConfigFilePath = () => path.join(app.getPath('userData'), 'managed-config.ini');
+const managedConfigFilePath = () => path.join(app.getPath('userData'), 'config.ini');
+const legacyManagedConfigFilePath = () => path.join(app.getPath('userData'), 'managed-config.ini');
 let activeConfigFilePath: string | null = null;
 
 export const activeConfigPath = () => activeConfigFilePath ?? configFilePath();
@@ -51,6 +53,34 @@ const synchronizeConfigFile = async (target: string, remoteContents: string) => 
   return true;
 };
 
+const sectionLines = (contents: string, sectionName: string) => {
+  const lines = contents.replace(/^\uFEFF/, '').split(/\r?\n/);
+  const start = lines.findIndex((line) => line.trim() === `[${sectionName}]`);
+  if (start < 0) return null;
+  const nextSection = lines.findIndex((line, index) => index > start && /^\s*\[[^\]]+\]\s*$/.test(line));
+  return lines.slice(start, nextSection < 0 ? lines.length : nextSection);
+};
+
+const replaceSection = (contents: string, sectionName: string, replacement: string[]) => {
+  const lines = contents.replace(/^\uFEFF/, '').split(/\r?\n/);
+  const start = lines.findIndex((line) => line.trim() === `[${sectionName}]`);
+  if (start >= 0) {
+    const nextSection = lines.findIndex((line, index) => index > start && /^\s*\[[^\]]+\]\s*$/.test(line));
+    lines.splice(start, (nextSection < 0 ? lines.length : nextSection) - start);
+  }
+  while (lines.length && !lines.at(-1)?.trim()) lines.pop();
+  return `${lines.join('\n')}\n\n${replacement.join('\n')}\n`;
+};
+
+const preserveSystemCapabilityCache = async (contents: string) => {
+  const existing = await Promise.all([
+    fs.promises.readFile(managedConfigFilePath(), 'utf8').catch(() => ''),
+    fs.promises.readFile(legacyManagedConfigFilePath(), 'utf8').catch(() => ''),
+  ]);
+  const cache = existing.map((item) => sectionLines(item, 'System Capability Cache')).find(Boolean);
+  return cache ? replaceSection(contents, 'System Capability Cache', cache) : contents;
+};
+
 const validConfigFile = async (target: string) => {
   try {
     parseAppConfiguration(await fs.promises.readFile(target, 'utf8'));
@@ -68,26 +98,41 @@ export const loadAppConfiguration = async (): Promise<AppConfiguration> => {
     try {
       const remoteContents = validateConfigContents(await fetchText(CONFIG_SOURCE_URL));
       try {
-        const updated = await synchronizeConfigFile(installed, remoteContents);
-        await fs.promises.rm(managed, { force: true }).catch(() => undefined);
-        activeConfigFilePath = installed;
+        const updatedInstalled = await synchronizeConfigFile(installed, remoteContents);
+        const localContents = validateConfigContents(await preserveSystemCapabilityCache(remoteContents));
+        const updated = await synchronizeConfigFile(managed, localContents);
+        activeConfigFilePath = managed;
         logActivity('INFO', updated ? 'config.remote.updated' : 'config.remote.current', {
-          source: CONFIG_SOURCE_URL, destination: installed,
+          source: CONFIG_SOURCE_URL, destination: managed, installedUpdated: updatedInstalled,
         });
       } catch (error) {
-        const updated = await synchronizeConfigFile(managed, remoteContents);
+        const localContents = validateConfigContents(await preserveSystemCapabilityCache(remoteContents));
+        await synchronizeConfigFile(managed, localContents).catch(async () => {
+          if (!await validConfigFile(managed)) throw error;
+        });
         activeConfigFilePath = managed;
         logActivity('WARN', 'config.remote.managed-fallback', {
-          source: CONFIG_SOURCE_URL, destination: managed, updated,
+          source: CONFIG_SOURCE_URL, destination: activeConfigFilePath,
           reason: error instanceof Error ? error.message : String(error),
         });
       }
     } catch (error) {
       if (await validConfigFile(managed)) activeConfigFilePath = managed;
+      else if (await validConfigFile(legacyManagedConfigFilePath())) activeConfigFilePath = legacyManagedConfigFilePath();
       logActivity('WARN', 'config.remote.unavailable', {
         source: CONFIG_SOURCE_URL, fallback: activeConfigFilePath,
         reason: error instanceof Error ? error.message : String(error),
       });
+    }
+  } else {
+    try {
+      const sourceContents = validateConfigContents(await fs.promises.readFile(installed, 'utf8'));
+      const localContents = validateConfigContents(await preserveSystemCapabilityCache(sourceContents));
+      await synchronizeConfigFile(managed, localContents);
+      activeConfigFilePath = managed;
+    } catch (error) {
+      if (await validConfigFile(managed)) activeConfigFilePath = managed;
+      else throw error;
     }
   }
   try {
@@ -99,6 +144,28 @@ export const loadAppConfiguration = async (): Promise<AppConfiguration> => {
     throw error;
   }
   return APP_CONFIG;
+};
+
+export const saveSystemCapabilityCache = async (
+  driverVersion: string,
+  ffmpegVersion: string,
+  capabilities: HardwareCapabilities,
+) => {
+  const destination = activeConfigPath();
+  const contents = await fs.promises.readFile(destination, 'utf8');
+  const section = [
+    '[System Capability Cache]',
+    `driver_version=${driverVersion}`,
+    `ffmpeg_version=${ffmpegVersion}`,
+    `checked_at=${capabilities.checkedAt}`,
+    `capabilities_json=${JSON.stringify(capabilities)}`,
+  ];
+  const updated = replaceSection(contents, 'System Capability Cache', section);
+  validateConfigContents(updated);
+  await synchronizeConfigFile(destination, updated);
+  const configuration = parseAppConfiguration(updated);
+  setAppConfiguration(configuration);
+  return configuration.systemCapabilities;
 };
 
 export type UpdatePolicy = { urgentUpdate: boolean; minVersion: string };

@@ -137,7 +137,12 @@ export const parseBuiltInPresetConfiguration = (ini: string): BuiltInPresetConfi
   const outputProfiles = Object.fromEntries(OUTPUT_TIERS.map((tier) => {
     const name = `Output: ${tier}`;
     const values = sections.get(name);
-    if (!values) throw new Error(`presets.ini is missing the [${name}] section`);
+    // Legacy output sections are accepted for older remote preset files. The
+    // active UI profiles always come from config.ini.
+    if (!values) return [tier, Object.freeze({
+      tier, scale: (tier === '360p' ? ['-2', '540'] : ['-2', '-2']) as readonly [string, string],
+      videoBitrate: 0, maxRate: 0,
+    })];
     const get = (key: string) => {
       const value = values.get(key);
       if (value === undefined || value === '') throw new Error(`[${name}] is missing ${key}`);
@@ -227,7 +232,8 @@ export const parseBuiltInPresetConfiguration = (ini: string): BuiltInPresetConfi
       scaleLocked: booleanValue(get('scale_locked'), label('scale_locked')),
       deliveryMode: booleanValue(get('delivery_mode'), label('delivery_mode')),
       bitrateControl: booleanValue(get('bitrate_control'), label('bitrate_control')),
-      bufferMultiplier: numberValue(get('buffer_multiplier'), label('buffer_multiplier'), 0, 20),
+      bufferMultiplier: optional('buffer_multiplier')
+        ? numberValue(optional('buffer_multiplier'), label('buffer_multiplier'), 0, 20) : 3,
       bitrateMultiplier: Object.fromEntries(Object.entries(CODEC_KEYS).map(([codec, key]) => {
         const value = optional(`bitrate_multiplier_${key}`);
         if (!value) return [codec, undefined];

@@ -133,6 +133,8 @@ export type VideoEncoderCapability = {
 
 export type HardwareCapabilities = {
   checkedAt: string;
+  driverVersion: string;
+  ffmpegVersion: string;
   adapters: string[];
   ignoredAdapters: string[];
   cudaAvailable: boolean;
@@ -203,6 +205,7 @@ export type RuntimeState = {
   ffmpegVersion: string | null;
   releaseTag: string | null;
   ffmpegChannel: 'stable' | 'unstable';
+  prereleaseAvailable: boolean;
   rsgainAvailable: boolean;
   rsgainPath: string;
   rsgainVersion: string | null;

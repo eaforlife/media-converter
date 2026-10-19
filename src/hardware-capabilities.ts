@@ -171,6 +171,42 @@ const getPlatformAdapters = () => process.platform === 'win32'
     ? getMacAdapters()
     : getLinuxAdapters();
 
+export const detectDriverVersion = async () => {
+  if (process.platform === 'win32') {
+    try {
+      const output = await execute('powershell.exe', [
+        '-NoProfile', '-NonInteractive', '-Command',
+        'Get-CimInstance Win32_VideoController | Where-Object { $_.Name -notmatch "virtual|remote|indirect|mirage|dummy|spacedesk|parsec|citrix|vmware|hyper-v|basic display" } | Select-Object Name,DriverVersion | Sort-Object Name | ConvertTo-Json -Compress',
+      ]);
+      const rows = JSON.parse(output.trim()) as Array<{ Name?: string; DriverVersion?: string }> | { Name?: string; DriverVersion?: string };
+      const adapters = Array.isArray(rows) ? rows : [rows];
+      const versions = adapters.map((row) => `${row.Name ?? 'GPU'}:${row.DriverVersion ?? ''}`).filter((value) => !value.endsWith(':'));
+      if (versions.length) return versions.join('|');
+    } catch { /* A missing query result disables reuse of the cached test. */ }
+  } else if (process.platform === 'linux') {
+    try {
+      const cards = await fs.promises.readdir('/sys/class/drm');
+      const versions = await Promise.all(cards.filter((entry) => /^card\d+$/.test(entry)).map(async (card) => {
+        const modulePath = `/sys/class/drm/${card}/device/driver/module/version`;
+        const version = (await fs.promises.readFile(modulePath, 'utf8').catch(() => '')).trim();
+        const driver = (await fs.promises.realpath(`/sys/class/drm/${card}/device/driver`).catch(() => '')).split('/').at(-1);
+        return version ? `${driver ?? card}:${version}` : '';
+      }));
+      if (versions.filter(Boolean).length) return versions.filter(Boolean).sort().join('|');
+    } catch { /* Fall through to an uncached check. */ }
+    try {
+      const nvidiaVersion = (await execute('nvidia-smi', ['--query-gpu=driver_version', '--format=csv,noheader']))
+        .split(/\r?\n/).map((value) => value.trim()).filter(Boolean);
+      if (nvidiaVersion.length) return `NVIDIA:${[...new Set(nvidiaVersion)].sort().join('|')}`;
+    } catch { /* Fall through to an uncached check. */ }
+  } else if (process.platform === 'darwin') {
+    try {
+      return `macOS-${(await execute('sw_vers', ['-productVersion'])).trim()}`;
+    } catch { /* Fall through to an uncached check. */ }
+  }
+  return 'unknown';
+};
+
 const canEncode = async (ffmpegPath: string, encoder: string, tenBit = false) => {
   const args = [
     '-hide_banner', '-loglevel', 'error', '-f', 'lavfi', '-i',
@@ -247,7 +283,11 @@ const availableHardwareDecoders = async (ffmpegPath: string) => {
 
 type Candidate = typeof APP_CONFIG.encoders[number];
 
-export const detectHardwareCapabilities = async (ffmpegPath: string): Promise<HardwareCapabilities> => {
+export const detectHardwareCapabilities = async (
+  ffmpegPath: string,
+  driverVersion = 'unknown',
+  ffmpegVersion = 'unknown',
+): Promise<HardwareCapabilities> => {
   const displayAdapters = await getPlatformAdapters();
   const adapters = displayAdapters.primary;
   logActivity('INFO', 'hardware.detection.started', { adapters, ignoredAdapters: displayAdapters.ignored, ffmpegPath });
@@ -304,7 +344,8 @@ export const detectHardwareCapabilities = async (ffmpegPath: string): Promise<Ha
   }
   const nvdecAvailable = cudaAvailable;
   const result = {
-    checkedAt: new Date().toISOString(), adapters, ignoredAdapters: displayAdapters.ignored, cudaAvailable, nvdecAvailable,
+    checkedAt: new Date().toISOString(), driverVersion, ffmpegVersion,
+    adapters, ignoredAdapters: displayAdapters.ignored, cudaAvailable, nvdecAvailable,
     cuvidDecoders: decoders.cuvid, amfDecodeAvailable, qsvDecodeAvailable,
     qsvDecoders: decoders.qsv, vaapiAvailable, vaapiDevice, encoders,
   };

@@ -44,6 +44,9 @@ export const cuvidDecoderCropArguments = (
   ? ['-c:v:0', decoder, '-crop', margins]
   : [];
 
+export const cuvidDecoderArguments = (decoder: string | null, availableDecoders: readonly string[]) =>
+  decoder && availableDecoders.includes(decoder) ? ['-c:v:0', decoder] : [];
+
 export const cudaHardwareDecodeArguments = (decoderCropArguments: readonly string[]) => [
   '-init_hw_device', 'cuda=cu:0', '-filter_hw_device', 'cu', '-hwaccel', 'cuda',
   '-hwaccel_output_format', 'cuda',

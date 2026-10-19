@@ -1,5 +1,5 @@
 import { booleanValue, parseIniSections } from './presets.ts';
-import type { VideoEncoderCapability } from './shared-types';
+import type { HardwareCapabilities, VideoEncoderCapability } from './shared-types';
 
 export const CONFIG_SOURCE_URL = 'https://raw.githubusercontent.com/eaforlife/media-converter/main/config.ini';
 export const URGENT_UPDATE_SOURCE_URL = 'https://raw.githubusercontent.com/eaforlife/media-converter/main/updatepolicy';
@@ -37,11 +37,17 @@ export type AppConfiguration = {
       scale: readonly [string, string];
       videoBitrate: number;
       maxRate: number;
-      bufferSize: number;
     }>>;
     codecRateMultipliers: Readonly<{ hevc: number; hevcMain10: number; av1: number; av1TenBit: number }>;
     main10Advanced: Readonly<{ spatialAq: number; bFrames: boolean }>;
+    bufferMultiplier: number;
   };
+  systemCapabilities: Readonly<{
+    driverVersion: string;
+    ffmpegVersion: string;
+    checkedAt: string;
+    capabilities: HardwareCapabilities;
+  }> | null;
   audioPresets: Record<'Streaming' | 'Archive' | 'Passthrough', AudioPresetConfig>;
   audioBitrates: { aac: readonly string[]; opus: readonly string[] };
   audioFilters: {
@@ -98,7 +104,6 @@ export const parseAppConfiguration = (ini: string): AppConfiguration => {
       scale: Object.freeze([resolution[0], resolution[1]]) as readonly [string, string],
       videoBitrate: numberValue(requireValue(section, sectionName, 'h264_bitrate'), `[${sectionName}] h264_bitrate`, 0, 1_000_000),
       maxRate: numberValue(requireValue(section, sectionName, 'h264_max_rate'), `[${sectionName}] h264_max_rate`, 1, 1_000_000),
-      bufferSize: numberValue(requireValue(section, sectionName, 'h264_buffer_size'), `[${sectionName}] h264_buffer_size`, 0, 1_000_000),
     })];
   })) as AppConfiguration['videoDefaults']['outputProfiles'];
   const rateMultipliers = requireSection(sections, 'Video Codec Rate Multipliers');
@@ -110,6 +115,7 @@ export const parseAppConfiguration = (ini: string): AppConfiguration => {
     return value;
   };
   const main10Advanced = requireSection(sections, 'Main10 Defaults');
+  const videoBehavior = requireSection(sections, 'Video Behavior');
   const defaultCodec = requireValue(uiDefaults, 'UI Defaults', 'default_video_codec') as AppConfiguration['videoDefaults']['codec'];
   if (!['H.264', 'HEVC', 'AV1'].includes(defaultCodec)) throw new Error('[UI Defaults] default_video_codec is invalid');
   const audioBitrates = requireSection(sections, 'Audio Bitrates');
@@ -179,7 +185,29 @@ export const parseAppConfiguration = (ini: string): AppConfiguration => {
         spatialAq: numberValue(requireValue(main10Advanced, 'Main10 Defaults', 'spatial_aq'), '[Main10 Defaults] spatial_aq', 0, 15),
         bFrames: booleanValue(requireValue(main10Advanced, 'Main10 Defaults', 'b_frames'), '[Main10 Defaults] b_frames'),
       }),
+      bufferMultiplier: numberValue(requireValue(videoBehavior, 'Video Behavior', 'buffer_multiplier'), '[Video Behavior] buffer_multiplier', 1, 10),
     }),
+    systemCapabilities: (() => {
+      const cache = sections.get('System Capability Cache');
+      if (!cache) return null;
+      const raw = cache.get('capabilities_json');
+      if (!raw) return null;
+      let capabilities: HardwareCapabilities;
+      try {
+        capabilities = JSON.parse(raw) as HardwareCapabilities;
+      } catch {
+        throw new Error('[System Capability Cache] capabilities_json must be valid JSON');
+      }
+      if (!capabilities || !Array.isArray(capabilities.encoders) || !Array.isArray(capabilities.adapters)) {
+        throw new Error('[System Capability Cache] capabilities_json has an invalid shape');
+      }
+      return Object.freeze({
+        driverVersion: cache.get('driver_version') ?? '',
+        ffmpegVersion: cache.get('ffmpeg_version') ?? '',
+        checkedAt: cache.get('checked_at') ?? '',
+        capabilities: Object.freeze(capabilities),
+      });
+    })(),
     audioPresets: Object.freeze({
       Streaming: Object.freeze(audioPreset('Streaming')),
       Archive: Object.freeze(audioPreset('Archive')),
@@ -240,14 +268,16 @@ export const EMPTY_APP_CONFIGURATION: AppConfiguration = Object.freeze({
   videoDefaults: Object.freeze({
     preset: 'Streaming', codec: 'HEVC', main10: false,
     outputProfiles: Object.freeze({
-      '4k': { tier: '4k', scale: ['3180', '-2'], videoBitrate: 0, maxRate: 10000, bufferSize: 30000 },
-      '1080p': { tier: '1080p', scale: ['1860', '-2'], videoBitrate: 0, maxRate: 7500, bufferSize: 22500 },
-      '720p': { tier: '720p', scale: ['1300', '-2'], videoBitrate: 0, maxRate: 4000, bufferSize: 12000 },
-      '360p': { tier: '360p', scale: ['-2', '540'], videoBitrate: 0, maxRate: 2500, bufferSize: 7500 },
+      '4k': { tier: '4k', scale: ['3180', '-2'], videoBitrate: 0, maxRate: 10000 },
+      '1080p': { tier: '1080p', scale: ['1860', '-2'], videoBitrate: 0, maxRate: 7500 },
+      '720p': { tier: '720p', scale: ['1300', '-2'], videoBitrate: 0, maxRate: 4000 },
+      '360p': { tier: '360p', scale: ['-2', '540'], videoBitrate: 0, maxRate: 2500 },
     }) as AppConfiguration['videoDefaults']['outputProfiles'],
     codecRateMultipliers: Object.freeze({ hevc: 0.5, hevcMain10: 0.6, av1: 0.75, av1TenBit: 0.8 }),
     main10Advanced: Object.freeze({ spatialAq: 6, bFrames: false }),
+    bufferMultiplier: 3,
   }),
+  systemCapabilities: null,
   audioPresets: Object.freeze({
     Streaming: Object.freeze({
       codec: 'copy', extension: null, stereoBitrate: '', downmixBitrate: '', dynamicRangeCompression: false,

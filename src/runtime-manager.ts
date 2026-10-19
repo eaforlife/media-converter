@@ -16,6 +16,7 @@ type RuntimeManifest = { releaseTag: string; assetName: string; installedAt: str
 type LocalRuntime = { available: boolean; version: string | null };
 type RuntimePaths = { directory: string; ffmpeg: string; ffprobe: string; manifest: string };
 type Notify = (phase: RuntimePhase, message: string, progress?: number | null) => void;
+let prereleaseAvailable = false;
 
 const executableName = (name: 'ffmpeg' | 'ffprobe' | 'rsgain') =>
   process.platform === 'win32' ? `${name}.exe` : name;
@@ -127,6 +128,17 @@ const fetchPrerelease = async () => {
   const release = releases.find((candidate) => candidate.prerelease && !candidate.draft);
   if (!release) throw new Error('GitHub did not return a Jellyfin FFmpeg prerelease');
   return release;
+};
+const releaseMajorMinor = (release: GitHubRelease) => {
+  const match = release.tag_name.match(/^v?(\d+)\.(\d+)\.(\d+)/i);
+  return match ? [Number(match[1]), Number(match[2])] as const : null;
+};
+export const prereleaseIsNewer = (stable: GitHubRelease, prerelease: GitHubRelease) => {
+  const stableVersion = releaseMajorMinor(stable);
+  const prereleaseVersion = releaseMajorMinor(prerelease);
+  if (!stableVersion || !prereleaseVersion) return false;
+  return prereleaseVersion[0] > stableVersion[0]
+    || prereleaseVersion[0] === stableVersion[0] && prereleaseVersion[1] > stableVersion[1];
 };
 const fetchRsgainRelease = () => fetchJson<GitHubRelease>(RSGAIN_RELEASE_API);
 const fetchCcExtractorRelease = () => fetchJson<GitHubRelease>(CCEXTRACTOR_RELEASE_API);
@@ -324,11 +336,14 @@ const installFfmpeg = async (
   }
 };
 
-const ensureFfmpeg = async (channel: FfmpegChannel, notify: Notify): Promise<LocalRuntime> => {
+const ensureFfmpeg = async (
+  channel: FfmpegChannel,
+  release: GitHubRelease,
+  notify: Notify,
+): Promise<LocalRuntime> => {
   const paths = ffmpegPaths(channel);
   const label = channel === 'stable' ? 'stable' : 'pre-release';
   notify('checking-release', `Checking the latest ${label} Jellyfin FFmpeg release`);
-  const release = channel === 'stable' ? await fetchStableRelease() : await fetchPrerelease();
   const [local, manifest] = await Promise.all([inspectFfmpeg(paths), readManifest(paths.manifest)]);
   if (local.available && manifest?.releaseTag === release.tag_name) return local;
   await installFfmpeg(release, selectFfmpegAsset(release.assets), paths, label, notify);
@@ -452,6 +467,7 @@ const stateForManagedChannel = async (
     ffmpegAvailable: ffmpeg.available, ffmpegPath: paths.ffmpeg, ffprobePath: paths.ffprobe,
     ffmpegVersion: ffmpeg.version, releaseTag: ffmpegManifest?.releaseTag ?? null,
     ffmpegChannel: channel,
+    prereleaseAvailable,
     rsgainAvailable: rsgain.available, rsgainPath: gainPaths.executable,
     rsgainVersion: rsgain.version ?? rsgainManifest?.releaseTag ?? null,
     ccextractorAvailable: ccextractor.available, ccextractorPath: captionPaths.executable,
@@ -482,13 +498,14 @@ const developmentState = async (channel: FfmpegChannel): Promise<RuntimeState> =
     progress: null, appVersion: app.getVersion(), isPackaged: false, updateEnabled: false,
     ffmpegAvailable: local.available, ffmpegPath: paths.ffmpeg, ffprobePath: paths.ffprobe,
     ffmpegVersion: local.version, releaseTag: null, ffmpegChannel: channel,
+    prereleaseAvailable: false,
     rsgainAvailable: false, rsgainPath: '', rsgainVersion: null,
     ccextractorAvailable: false, ccextractorPath: '', ccextractorVersion: null,
   };
 };
 
 export const selectRuntimeChannel = async (useStable: boolean): Promise<RuntimeState> => {
-  const channel: FfmpegChannel = useStable ? 'stable' : 'unstable';
+  const channel: FfmpegChannel = useStable || !prereleaseAvailable ? 'stable' : 'unstable';
   if (!app.isPackaged) return developmentState(channel);
   const state = await stateForManagedChannel(channel, 'ready', '');
   state.message = state.ffmpegAvailable
@@ -499,8 +516,25 @@ export const selectRuntimeChannel = async (useStable: boolean): Promise<RuntimeS
 };
 
 export const initializeRuntime = async (webContents: WebContents, useStable = true): Promise<RuntimeState> => {
-  const activeChannel: FfmpegChannel = useStable ? 'stable' : 'unstable';
-  if (!app.isPackaged) return developmentState(activeChannel);
+  if (!app.isPackaged) return developmentState(useStable ? 'stable' : 'unstable');
+  let stableRelease: GitHubRelease | null = null;
+  let prerelease: GitHubRelease | null = null;
+  const errors: string[] = [];
+  try {
+    [stableRelease, prerelease] = await Promise.all([
+      fetchStableRelease(), fetchPrerelease().catch((error) => {
+        logActivity('WARN', 'runtime.ffmpeg.prerelease-check.failed', {
+          reason: error instanceof Error ? error.message : String(error),
+        });
+        return null;
+      }),
+    ]);
+  } catch (error) {
+    errors.push(`stable: ${error instanceof Error ? error.message : String(error)}`);
+    logActivity('ERROR', 'runtime.ffmpeg.stable-check.failed', { reason: errors.at(-1) });
+  }
+  prereleaseAvailable = Boolean(stableRelease && prerelease && prereleaseIsNewer(stableRelease, prerelease));
+  const activeChannel: FfmpegChannel = useStable || !prereleaseAvailable ? 'stable' : 'unstable';
   let state = await stateForManagedChannel(activeChannel, 'checking-local', 'Verifying pre-requisites');
   const notify: Notify = (phase, message, progress = null) => {
     const displayMessage = phase === 'ready' || phase === 'error'
@@ -513,11 +547,12 @@ export const initializeRuntime = async (webContents: WebContents, useStable = tr
     if (!webContents.isDestroyed()) webContents.send('runtime:progress', { ...state });
   };
   notify('checking-local', 'Verifying pre-requisites');
-  const errors: string[] = [];
   const channels: FfmpegChannel[] = activeChannel === 'stable' ? ['stable', 'unstable'] : ['unstable', 'stable'];
   for (const channel of channels) {
+    const release = channel === 'stable' ? stableRelease : prereleaseAvailable ? prerelease : null;
+    if (!release) continue;
     try {
-      await ensureFfmpeg(channel, notify);
+      await ensureFfmpeg(channel, release, notify);
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);
       errors.push(`${channel}: ${detail}`);

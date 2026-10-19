@@ -37,17 +37,22 @@ EA Media Tools is an Electron desktop app written in TypeScript. Electron Forge 
 
 - `[App]`: app identity, repositories, remote config/preset sources, and runtime release APIs.
 - `[UI Defaults]`: default video preset, default codec, and Main10 initial state.
-- `[Video Output: 4k|1080p|720p|360p]`: resolution and H.264 bitrate, max-rate, and buffer values; the 360p tier is used by Cellular.
-- `[Video Codec Rate Multipliers]`: ratios applied to output-tier H.264 rate and buffer values: HEVC 0.5, HEVC Main10 0.6, AV1 0.75, AV1 10-bit 0.8.
+- `[Video Behavior]`: app-wide buffer multiplier (default 3× max rate). Buffer size is calculated from the selected codec max rate and is not stored separately.
+- `[Video Output: 4k|1080p|720p|360p]`: output dimensions and H.264 bitrate/max-rate defaults; 360p is Cellular. These rates alone follow the selected output tier.
+- `[Video Codec Rate Multipliers]`: max-rate and bitrate ratios against H.264: HEVC 0.5, HEVC Main10 0.6, AV1 0.75, AV1 10-bit 0.8. Buffer size follows the final max rate at the `[Video Behavior]` multiplier.
 - `[Main10 Defaults]`: spatial AQ and B-frame defaults when the user enables 10-bit output.
 - `[Media Extensions]`: supported input extensions.
 - `[Audio Preset: *]`, `[Audio Bitrates]`, `[Audio Filters]`: audio workflow defaults, choices, and filter templates.
 - `[Music Video Workflow]`: music-video detection and caption behavior.
 - `[Video Filters]`: HDR tone-map filter templates.
 - `[Encoder: <ffmpeg encoder id>]`: encoder labels, vendor/codec, platform availability, and supported Main10/High profiles.
-- `[UI Defaults]`, `[Video Output: *]`, `[Video Codec Rate Multipliers]`, and `[Main10 Defaults]` are parsed by `src/config.ts` and drive renderer defaults. Keep preset-specific quality, tune, speed, format, and advanced settings in `presets.ini`.
+- `[UI Defaults]`, `[Video Behavior]`, `[Video Output: *]`, `[Video Codec Rate Multipliers]`, and `[Main10 Defaults]` are parsed by `src/config.ts` and drive renderer defaults. The capability cache is stored in `[System Capability Cache]` in the active user config; cache GPU encoder/decoder tests by driver version and rescan when it is absent or the driver changes. Keep named-preset quality, tune, speed, format, audio, and intentional advanced-setting overrides in `presets.ini`.
+- `presets.ini` must not repeat app-wide output tiers, bitrate rates/ratios, or buffer multiplier. Legacy output sections and bitrate fields remain parser-compatible for older preset files, but the UI uses `config.ini` values. Keep `presets.ini` limited to named-preset overrides and settings that intentionally differ between presets.
 - The Video tab's language selector stays editable while video processing is enabled; `und` emits an undefined stream language. Video dispositions remain editable only in metadata-only mode.
 - Electron's taskbar bar is queue-wide: average each queued job's completion, count finished jobs as 100%, and reset at queue termination. rsgain's percentage output is normalized into the app's encode progress events; do not pass through its terminal bar as the queue bar.
+- NVIDIA decode selects the matching available `*_cuvid` decoder (NVDEC) by default. Keep CUDA as FFmpeg's hardware-frame/filter device; crop is passed to CUVID only when that decoder supports it.
+- Editing Max Rate changes the buffer to `max_rate × buffer_multiplier` and converts the selection to Custom, which enables manual buffer editing. Subsequent Max Rate edits recalculate the buffer.
+- The stable/prerelease Jellyfin FFmpeg selector is shown only when the prerelease major.minor is newer than stable; matching major.minor versions use stable and do not download the prerelease.
 
 Current video defaults: config selects Streaming, HEVC, Main10 off. Main10/10-bit output uses spatial AQ 6 and disables B-frames when enabled. H.264 max rates are 4K 10000, 1080p 7500, 720p 4000, Cellular 2500 kbit/s; HEVC is 0.5x, HEVC Main10 0.6x, AV1 0.75x, and AV1 10-bit 0.8x H.264. Rate and buffer values follow the output tier. Other knobs should not depend on source/downscale resolution unless documented in config or the preset.
 

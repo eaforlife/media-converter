@@ -23,7 +23,7 @@ import { isValidCustomPresetName } from './custom-presets';
 import { externalSubtitleInputArguments, subtitleInputSpecifier } from './external-subtitles';
 import { aspectPreservingDimensions, cuvidCropMargins, detectedCrop } from './video-crop';
 import {
-  cudaCropBridgeFilters, cudaHardwareDecodeArguments, cudaScaleFilter, cuvidDecoderCropArguments, cuvidDecoderName, hardwareUploadFilter,
+  cudaCropBridgeFilters, cudaHardwareDecodeArguments, cudaScaleFilter, cuvidDecoderArguments, cuvidDecoderCropArguments, cuvidDecoderName, hardwareUploadFilter,
   protectedHardwareDecodeArguments, strictVideoTranscodeArguments,
 } from './video-safety';
 import { bufferSizeFor, scaleDimensionsFor, videoOutputProfile } from './video-output-profile';
@@ -103,7 +103,7 @@ let encodingActive = false;
 let toastTimer: number | undefined;
 let runtimeState: RuntimeState | null = null;
 let hardwareCapabilities: HardwareCapabilities = {
-  checkedAt: '', adapters: [], ignoredAdapters: [], cudaAvailable: false, nvdecAvailable: false,
+  checkedAt: '', driverVersion: 'unknown', ffmpegVersion: 'unknown', adapters: [], ignoredAdapters: [], cudaAvailable: false, nvdecAvailable: false,
   cuvidDecoders: [], amfDecodeAvailable: false, qsvDecodeAvailable: false,
   qsvDecoders: [], vaapiAvailable: false, vaapiDevice: null, encoders: [],
 };
@@ -212,7 +212,7 @@ const videoOutputDefaultsFor = (
     ...defaults,
     videoBitrate: Math.round(profile.videoBitrate * multiplier),
     maxRate: Math.round(profile.maxRate * multiplier),
-    bufferSize: Math.round(profile.bufferSize * multiplier),
+    bufferSize: bufferSizeFor(Math.round(profile.maxRate * multiplier), APP_CONFIG.videoDefaults.bufferMultiplier),
   };
 };
 const deliveryQuality = (
@@ -447,7 +447,7 @@ const applyMusicVideoPreset = (source: SourceFile) => {
     encoderTune: normalizeEncoderTune(encoder, presetTune(preset, encoder)),
     encoderProfile: outputDefaults.encoderProfile,
     resolution: outputDefaults.resolution.join(':'), quality: outputDefaults.quality,
-    videoBitrate: String(outputDefaults.videoBitrate), maxRate: String(outputDefaults.maxRate), bufferMultiplier: preset.bufferMultiplier,
+    videoBitrate: String(outputDefaults.videoBitrate), maxRate: String(outputDefaults.maxRate), bufferMultiplier: APP_CONFIG.videoDefaults.bufferMultiplier,
     bufferSize: String(outputDefaults.bufferSize),
     frameRate: preset.frameRate, frameRateOverride: false,
     deliveryMode: preset.deliveryMode,
@@ -481,7 +481,7 @@ const initialSettings = (source: SourceFile): JobSettings => {
   const settings: JobSettings = {
     preset: 'Streaming', format: preset.format, encoder, encoderSpeed: normalizeEncoderSpeed(outputDefaults.encoderSpeed), encoderTune: normalizeEncoderTune(encoder, presetTune(preset, encoder)), encoderProfile: outputDefaults.encoderProfile,
     resolution: outputDefaults.resolution.join(':'), quality: outputDefaults.quality,
-    videoBitrate: String(outputDefaults.videoBitrate), maxRate: String(outputDefaults.maxRate), bufferMultiplier: preset.bufferMultiplier,
+    videoBitrate: String(outputDefaults.videoBitrate), maxRate: String(outputDefaults.maxRate), bufferMultiplier: APP_CONFIG.videoDefaults.bufferMultiplier,
     bufferSize: String(outputDefaults.bufferSize),
     frameRate: preset.frameRate,
     frameRateOverride: frameRateOverrideState(source.media?.video?.frameRate, preset.frameRate).enabled,
@@ -561,7 +561,7 @@ const applyPreset = (source: SourceFile, preset: string, persist = true) => {
     quality: defaults ? outputDefaults!.quality : normalizeQuality(saved!.quality),
     videoBitrate: defaults ? String(defaults.bitrateControl ? outputDefaults!.videoBitrate : 0) : saved!.videoBitrate,
     maxRate: defaults ? String(defaults.bitrateControl ? outputDefaults!.maxRate : 0) : saved!.maxRate,
-    bufferMultiplier: defaults ? defaults.bufferMultiplier : saved!.bufferMultiplier,
+    bufferMultiplier: defaults ? APP_CONFIG.videoDefaults.bufferMultiplier : saved!.bufferMultiplier,
     bufferSize: defaults ? String(defaults.bitrateControl ? outputDefaults!.bufferSize : 0) : saved!.bufferSize,
     frameRate: defaults ? defaults.frameRate : saved!.frameRate,
     frameRateOverride: defaults
@@ -630,7 +630,7 @@ const applyBuiltInScaleProfile = (
   settings.quality = outputDefaults.quality;
   settings.videoBitrate = String(defaults.bitrateControl ? outputDefaults.videoBitrate : 0);
   settings.maxRate = String(defaults.bitrateControl ? outputDefaults.maxRate : 0);
-  settings.bufferMultiplier = defaults.bufferMultiplier;
+  settings.bufferMultiplier = APP_CONFIG.videoDefaults.bufferMultiplier;
   settings.bufferSize = String(defaults.bitrateControl ? outputDefaults.bufferSize : 0);
   settings.deliveryMode = profileDefaults.deliveryMode;
   settings.advancedVideo = resolvePresetAdvancedVideo(profileDefaults, preferredCodecForEncoder(encoder), outputProfile.tier);
@@ -876,14 +876,16 @@ const hardwareInputArguments = (source: SourceFile, settings: JobSettings, force
   if (canUseCuda) {
     const video = source.media?.video;
     const crop = video && settings.filters.autoCrop ? detectedCropForSource(source) : null;
-    const decoder = crop ? cuvidDecoderName(video?.codec) : null;
+    const decoder = cuvidDecoderName(video?.codec);
     const decoderCrop = video && crop
       ? cuvidCropMargins(crop, video.width, video.height)
       : null;
-    const decoderCropArgs = cuvidDecoderCropArguments(decoder, decoderCrop, hardwareCapabilities.cuvidDecoders);
+    const decoderCropArgs = decoder && crop
+      ? cuvidDecoderCropArguments(decoder, decoderCrop, hardwareCapabilities.cuvidDecoders)
+      : cuvidDecoderArguments(decoder, hardwareCapabilities.cuvidDecoders);
     return {
       args: cudaHardwareDecodeArguments(decoderCropArgs),
-      cropHandledByDecoder: decoderCropArgs.length > 0, backend: 'cuda' as const,
+      cropHandledByDecoder: decoderCropArgs.includes('-crop'), backend: 'cuda' as const,
     };
   }
   if (settings.encoder.endsWith('_amf') && hardwareCapabilities.amfDecodeAvailable) {
@@ -1616,7 +1618,7 @@ const showAppMenu = () => {
   const menu = document.createElement('div');
   menu.className = 'app-menu';
   const runtimeSelector = sources.length === 0 && Boolean(document.querySelector('.welcome-shell'))
-    ? `<label class="menu-check runtime-channel-toggle"><input id="stable-ffmpeg" type="checkbox"${checked(appSettings.useStableFfmpeg)}/><span><strong>Stable</strong><small>Use the stable Jellyfin FFmpeg runtime</small></span></label>`
+    ? runtimeState?.prereleaseAvailable ? `<label class="menu-check runtime-channel-toggle"><input id="stable-ffmpeg" type="checkbox"${checked(appSettings.useStableFfmpeg)}/><span><strong>Stable</strong><small>Use the stable Jellyfin FFmpeg runtime</small></span></label>` : ''
     : '';
   const simultaneousSelector = sources.length > 1 && !document.querySelector('.welcome-shell')
     ? `<label class="menu-check simultaneous-encoding-toggle"><input id="simultaneous-encoding" type="checkbox"${checked(appSettings.simultaneousEncoding)}/><span><strong>Simultaneous encoding</strong><small>Process compatible batch files in parallel</small></span></label>`
@@ -1634,7 +1636,7 @@ const showAppMenu = () => {
       runtimeState = selectedRuntime;
       appSettings.useStableFfmpeg = useStable;
       hardwareCapabilities = {
-        checkedAt: '', adapters: [], ignoredAdapters: [], cudaAvailable: false, nvdecAvailable: false,
+        checkedAt: '', driverVersion: 'unknown', ffmpegVersion: 'unknown', adapters: [], ignoredAdapters: [], cudaAvailable: false, nvdecAvailable: false,
         cuvidDecoders: [], amfDecodeAvailable: false, qsvDecodeAvailable: false,
         qsvDecoders: [], vaapiAvailable: false, vaapiDevice: null, encoders: [],
       };
@@ -2191,7 +2193,8 @@ const bindContentEvents = () => {
     const field = control.dataset.videoRate as 'videoBitrate' | 'maxRate' | 'bufferSize';
     settings[field] = String(Math.max(0, Number(control.value) || 0));
     if (field === 'maxRate') {
-      settings.bufferSize = String(bufferSizeFor(Number(settings.maxRate), settings.bufferMultiplier));
+      settings.bufferMultiplier = APP_CONFIG.videoDefaults.bufferMultiplier;
+      settings.bufferSize = String(bufferSizeFor(Number(settings.maxRate), APP_CONFIG.videoDefaults.bufferMultiplier));
       const buffer = document.querySelector<HTMLInputElement>('[data-video-rate="bufferSize"]');
       if (buffer) buffer.value = settings.bufferSize;
     }
@@ -2199,6 +2202,7 @@ const bindContentEvents = () => {
   document.querySelectorAll<HTMLInputElement>('[data-video-rate]').forEach((control) => {
     control.addEventListener('input', () => {
       updateVideoRate(control);
+      if (control.dataset.videoRate === 'maxRate') markCustom(settings);
       updateCommand();
     });
     control.addEventListener('change', () => {
@@ -2345,7 +2349,7 @@ const bindContentEvents = () => {
       const rates = videoOutputDefaultsFor(preset, outputProfile.tier, settings.encoder, settings.filters.pixelFormat10Bit);
       settings.videoBitrate = String(rates.videoBitrate);
       settings.maxRate = String(rates.maxRate);
-      settings.bufferSize = String(rates.bufferSize);
+      settings.bufferSize = String(bufferSizeFor(Number(settings.maxRate), APP_CONFIG.videoDefaults.bufferMultiplier));
       if (settings.filters.pixelFormat10Bit) {
         settings.advancedVideo.bFrames = APP_CONFIG.videoDefaults.main10Advanced.bFrames;
         settings.advancedVideo.spatialAq = APP_CONFIG.videoDefaults.main10Advanced.spatialAq;
@@ -2520,7 +2524,7 @@ const startApplication = async () => {
     }
     await new Promise((resolve) => window.setTimeout(resolve, runtimeState?.phase === 'error' ? 900 : 350));
   } catch (error) {
-    runtimeState = { phase: 'error', message: error instanceof Error ? error.message : 'Unable to initialize FFmpeg', progress: null, appVersion: '2.6.8', isPackaged: false, updateEnabled: false, ffmpegAvailable: false, ffmpegPath: '', ffprobePath: '', ffmpegVersion: null, releaseTag: null, ffmpegChannel: appSettings.useStableFfmpeg ? 'stable' : 'unstable', rsgainAvailable: false, rsgainPath: '', rsgainVersion: null, ccextractorAvailable: false, ccextractorPath: '', ccextractorVersion: null };
+    runtimeState = { phase: 'error', message: error instanceof Error ? error.message : 'Unable to initialize FFmpeg', progress: null, appVersion: '2.6.8', isPackaged: false, updateEnabled: false, ffmpegAvailable: false, ffmpegPath: '', ffprobePath: '', ffmpegVersion: null, releaseTag: null, ffmpegChannel: appSettings.useStableFfmpeg ? 'stable' : 'unstable', prereleaseAvailable: false, rsgainAvailable: false, rsgainPath: '', rsgainVersion: null, ccextractorAvailable: false, ccextractorPath: '', ccextractorVersion: null };
     renderBootstrap(runtimeState); await new Promise((resolve) => window.setTimeout(resolve, 900));
   } finally { removeProgressListener(); }
   if (!builtInPresetConfiguration) return;
