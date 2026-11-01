@@ -26,6 +26,15 @@ test('loads app defaults from config.ini', () => {
     av1: Number(configSections.get('Video Codec Rate Multipliers')?.get('av1')),
     av1TenBit: Number(configSections.get('Video Codec Rate Multipliers')?.get('av1_10bit')),
   });
+  assert.equal(configuration.encodeConcurrency.minimumFpsPerJob,
+    Number(configSections.get('Encode Concurrency')?.get('minimum_fps_per_job')));
+});
+
+test('disables concurrent encoding when the FPS setting is missing or zero', () => {
+  const withoutConcurrency = configFile.replace(/\n\[Encode Concurrency\]\nminimum_fps_per_job=\d+\n/, '\n');
+  assert.equal(parseAppConfiguration(withoutConcurrency).encodeConcurrency.minimumFpsPerJob, 0);
+  assert.equal(parseAppConfiguration(configFile.replace('minimum_fps_per_job=300', 'minimum_fps_per_job=0'))
+    .encodeConcurrency.minimumFpsPerJob, 0);
 });
 
 test('requires the remote config source to use HTTPS', () => {

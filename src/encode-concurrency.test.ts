@@ -48,6 +48,9 @@ test('adaptive concurrency is limited to supported NVENC sessions', () => {
   assert.equal(encoderConcurrencyLimit(Array.from({ length: 20 }, () => job('hevc_nvenc'))), NVENC_SESSION_LIMIT);
   assert.equal(encoderConcurrencyLimit([job('hevc_nvenc'), job('libx265')]), 1);
   assert.equal(encoderConcurrencyLimit([job('h264_qsv'), job('h264_qsv')]), 1);
+  assert.deepEqual(encodeConcurrencyPlan([job('hevc_nvenc'), job('hevc_nvenc')], true, 0), {
+    limit: 1, adaptive: false,
+  });
 });
 
 test('simultaneous encoding runs audio batches at a fixed safe limit and can be disabled', () => {
