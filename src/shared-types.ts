@@ -238,6 +238,10 @@ export type EncodeJob = {
   softwareDecodeFallbackArgs?: string[];
   replaceSourcePath?: string;
   closedCaptionFormat?: 'mov_text' | 'subrip' | 'webvtt';
+  closedCaptionMetadata?: {
+    language: string;
+    flags: StreamFlags;
+  };
   optionalClosedCaptions?: boolean;
   passthrough?: boolean;
   normalizeRoot?: string;

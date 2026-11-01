@@ -837,7 +837,10 @@ const registerIpc = () => {
       ? runtimeState.ccextractorPath
       : '';
     const rsgainPath = runtimeState?.rsgainAvailable ? runtimeState.rsgainPath : '';
-    return startEncodeQueue(ffmpegPath, ccextractorPath, rsgainPath, jobs, event.sender, simultaneousEncoding);
+    return startEncodeQueue(
+      ffmpegPath, ccextractorPath, rsgainPath, jobs, event.sender,
+      simultaneousEncoding, APP_CONFIG.encodeConcurrency.minimumFpsPerJob,
+    );
   });
 
   ipcMain.handle('subtitle:import', async (event, sourcePath: string, firstIndex: number): Promise<SubtitleImportResult> => {

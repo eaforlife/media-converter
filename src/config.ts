@@ -36,6 +36,7 @@ export type AppConfiguration = {
     main10Advanced: Readonly<{ spatialAq: number; bFrames: boolean }>;
     bufferMultiplier: number;
   };
+  encodeConcurrency: { minimumFpsPerJob: number };
   systemCapabilities: Readonly<{
     cacheTag: string;
     driverVersion: string;
@@ -117,6 +118,7 @@ export const parseAppConfiguration = (ini: string): AppConfiguration => {
   };
   const main10Advanced = requireSection(sections, 'Main10 Defaults');
   const videoBehavior = requireSection(sections, 'Video Behavior');
+  const encodeConcurrency = sections.get('Encode Concurrency');
   const defaultCodec = requireValue(uiDefaults, 'UI Defaults', 'default_video_codec') as AppConfiguration['videoDefaults']['codec'];
   if (!['H.264', 'HEVC', 'AV1'].includes(defaultCodec)) throw new Error('[UI Defaults] default_video_codec is invalid');
   const audioBitrates = requireSection(sections, 'Audio Bitrates');
@@ -171,6 +173,12 @@ export const parseAppConfiguration = (ini: string): AppConfiguration => {
         bFrames: booleanValue(requireValue(main10Advanced, 'Main10 Defaults', 'b_frames'), '[Main10 Defaults] b_frames'),
       }),
       bufferMultiplier: numberValue(requireValue(videoBehavior, 'Video Behavior', 'buffer_multiplier'), '[Video Behavior] buffer_multiplier', 1, 10),
+    }),
+    encodeConcurrency: Object.freeze({
+      minimumFpsPerJob: numberValue(
+        encodeConcurrency?.get('minimum_fps_per_job') ?? '0',
+        '[Encode Concurrency] minimum_fps_per_job', 0, 100_000,
+      ),
     }),
     systemCapabilities: (() => {
       const cache = sections.get('System Capability Cache');
@@ -255,6 +263,7 @@ export const EMPTY_APP_CONFIGURATION: AppConfiguration = Object.freeze({
     main10Advanced: Object.freeze({ spatialAq: 0, bFrames: false }),
     bufferMultiplier: 1,
   }),
+  encodeConcurrency: Object.freeze({ minimumFpsPerJob: 0 }),
   systemCapabilities: null,
   personalizedDefaults: Object.freeze({
     hardwareAcceleration: false, useStableFfmpeg: true, simultaneousEncoding: false,

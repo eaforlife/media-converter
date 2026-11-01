@@ -424,6 +424,7 @@ export const startEncodeQueue = async (
   jobs: EncodeJob[],
   webContents: WebContents,
   simultaneousEncoding = true,
+  minimumFpsPerJob = 0,
 ): Promise<EncodeStartResult> => {
   if (queueRunning) return { started: false, message: 'An encoding queue is already running.' };
   if (!ffmpegPath) return { started: false, message: 'FFmpeg is unavailable.' };
@@ -470,13 +471,13 @@ export const startEncodeQueue = async (
   queueFailureMessage = undefined;
   cancelledJobs.clear();
   const queueStartedAt = Date.now();
-  const concurrency = encodeConcurrencyPlan(jobs, simultaneousEncoding);
+  const concurrency = encodeConcurrencyPlan(jobs, simultaneousEncoding, minimumFpsPerJob);
   const concurrencyLimit = concurrency.limit;
   const useCooldown = jobs.some((job) => job.args.includes('-c:v'));
   logActivity('INFO', 'ffmpeg.queue.started', {
     jobs: jobs.length, concurrency: concurrency.adaptive ? 1 : concurrencyLimit, concurrencyLimit,
     simultaneousEncoding, adaptive: concurrency.adaptive, adaptiveSampleSeconds: concurrency.adaptive ? 10 : 0,
-    minimumFpsPerJob: 200, cooldownSeconds: useCooldown ? 10 : 0,
+    minimumFpsPerJob, cooldownSeconds: useCooldown ? 10 : 0,
   });
 
   const queuePromise = (async () => {
@@ -529,6 +530,7 @@ export const startEncodeQueue = async (
                     preparedJob.sourcePath,
                     captionOutput,
                     preparedJob.closedCaptionFormat,
+                    preparedJob.closedCaptionMetadata,
                   ),
                   ...(preparedJob.softwareDecodeFallbackArgs
                     ? {
@@ -537,6 +539,7 @@ export const startEncodeQueue = async (
                         preparedJob.sourcePath,
                         captionOutput,
                         preparedJob.closedCaptionFormat,
+                        preparedJob.closedCaptionMetadata,
                       ),
                     }
                     : {}),
@@ -611,6 +614,7 @@ export const startEncodeQueue = async (
           throughputConcurrencyLimit,
           targetConcurrency === 1 ? aggregateFps : null,
           concurrencyLimit,
+          minimumFpsPerJob,
         );
         if (previousThroughputLimit === null && throughputConcurrencyLimit !== null) {
           logActivity('INFO', 'ffmpeg.queue.concurrency.baseline', {
@@ -619,7 +623,7 @@ export const startEncodeQueue = async (
         }
         const effectiveLimit = throughputConcurrencyLimit ?? 1;
         const expanded = nextIndex < jobs.length
-          && canAddEncodeJob(aggregateFps, targetConcurrency, effectiveLimit);
+          && canAddEncodeJob(aggregateFps, targetConcurrency, effectiveLimit, minimumFpsPerJob);
         logActivity('INFO', 'ffmpeg.queue.concurrency.sample', {
           aggregateFps, activeTarget: targetConcurrency, throughputConcurrencyLimit,
           encoderConcurrencyLimit: concurrencyLimit, expanded,

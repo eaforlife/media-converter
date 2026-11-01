@@ -19,6 +19,9 @@ export const injectClosedCaptionInput = (
   sourcePath: string,
   subtitlePath: string,
   codec: ClosedCaptionCodec,
+  metadata: { language: string; flags: { default: boolean; forced: boolean; hearingImpaired: boolean } } = {
+    language: 'und', flags: { default: false, forced: false, hearingImpaired: false },
+  },
 ) => {
   const sourceIndex = args.indexOf(sourcePath);
   const inputOptionIndexes = args.flatMap((argument, index) => argument === '-i' ? [index] : []);
@@ -37,9 +40,13 @@ export const injectClosedCaptionInput = (
     ...withInput,
     '-map', `${captionInputIndex}:0`,
     `-c:s:${subtitleIndex}`, codec,
-    `-metadata:s:s:${subtitleIndex}`, 'language=und',
+    `-metadata:s:s:${subtitleIndex}`, `language=${metadata.language}`,
     `-metadata:s:s:${subtitleIndex}`, 'title=Closed Captions',
-    `-disposition:s:${subtitleIndex}`, 'hearing_impaired',
+    `-disposition:s:${subtitleIndex}`, [
+      ...(metadata.flags.default ? ['default'] : []),
+      ...(metadata.flags.forced ? ['forced'] : []),
+      ...(metadata.flags.hearingImpaired ? ['hearing_impaired'] : []),
+    ].join('+') || '0',
     args.at(-1) as string,
   ];
 };

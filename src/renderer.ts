@@ -327,10 +327,10 @@ const copyMetadata = (language: string, flags: StreamFlags): EditableStreamMetad
   flags: { ...flags },
 });
 const isMetadataOnly = (settings: JobSettings) =>
-  settings.format !== 'source'
-  && !settings.processing.video && !settings.processing.audio && !settings.processing.subtitles;
+  !settings.processing.video && !settings.processing.audio && !settings.processing.subtitles;
 const sourceHasMetadataChanges = (source: SourceFile, settings = getSettings(source)) => {
-  if ((source.media?.subtitles ?? []).some((track) => track.externalPath)) return true;
+  if (settings.processing.subtitles && (source.media?.subtitles ?? []).some((track) =>
+    track.externalPath && settings.subtitles[track.index]?.enabled)) return true;
   const video = source.media?.video;
   if (video && streamMetadataChanged(video, settings.videoMetadata)) return true;
   if ((source.media?.audio ?? []).some((track) =>
@@ -468,7 +468,7 @@ const applyMusicVideoPreset = (source: SourceFile) => {
     processing: { video: true, audio: true, subtitles: true },
   });
   settings.filters = {
-    ...defaultFilters(source), scale: preset.scale, scaleLocked: preset.scaleLocked, stripMetadata: false,
+    ...defaultFilters(source), scale: preset.scale, scaleLocked: false, stripMetadata: false,
     extractClosedCaptions: APP_CONFIG.musicVideoWorkflow.extractClosedCaptions,
     pixelFormat10Bit: defaultMain10,
     dynamicRangeCompression: preset.dynamicRangeCompression,
@@ -510,7 +510,8 @@ const initialSettings = (source: SourceFile): JobSettings => {
       metadata: copyMetadata(track.language, track.flags),
     }])),
     subtitles: Object.fromEntries((source.media?.subtitles ?? []).map((track) => [track.index, {
-      enabled: track.kind === 'text', codec: track.kind === 'text' ? 'mov_text' : 'copy',
+      enabled: track.kind === 'text' && ['subrip', 'srt', 'webvtt', 'text'].includes(track.codec.toLowerCase()),
+      codec: track.kind === 'text' ? 'mov_text' : 'copy',
       flags: { ...track.flags }, metadata: copyMetadata(track.language, track.flags),
     }])),
     filters: {
@@ -658,7 +659,7 @@ const applyBuiltInScaleProfile = (
   const outputDefaults = videoOutputDefaultsFor(defaults, outputProfile.tier, encoder, defaultMain10);
   const profileDefaults = outputDefaults.deliveryPreset;
   settings.filters.scale = scale;
-  settings.filters.scaleLocked = defaults.scaleLocked;
+  settings.filters.scaleLocked = defaults.name === 'Music Video' ? false : defaults.scaleLocked;
   settings.encoder = encoder;
   settings.encoderTune = normalizeEncoderTune(encoder, presetTune(defaults, encoder));
   settings.resolution = scale === 'disabled' ? defaults.resolution : outputDefaults.resolution.join(':');
@@ -910,6 +911,8 @@ const detectedCropForSource = (source: SourceFile) => {
   const video = source.media?.video;
   return video ? detectedCrop(source.media?.suggestedCrop, video.width, video.height) : null;
 };
+const mp4SubtitleConvertible = (track: SubtitleStreamInfo) =>
+  track.kind === 'text' && ['subrip', 'srt', 'webvtt', 'mov_text', 'text'].includes(track.codec.toLowerCase());
 const hardwareInputArguments = (source: SourceFile, settings: JobSettings, forceSoftwareDecode = false) => {
   if (settings.encoder.endsWith('_vaapi') && hardwareCapabilities.vaapiAvailable && hardwareCapabilities.vaapiDevice) {
     return {
@@ -990,12 +993,8 @@ const hardwareScaleDimensions = (source: SourceFile, settings: JobSettings): [st
   const video = source.media?.video;
   if (!video) return null;
   const dimensions = isMusicVideoWorkflow(source)
-    ? video.height >= 2160
-      ? outputDefaultsFor(
-        requiredBuiltInPreset('Music Video'),
-        outputProfileFor(source, 'auto', 'Music Video').tier,
-        settings.encoder,
-      ).resolution
+    ? settings.filters.scale !== 'disabled' && video.height > 1080
+      ? APP_CONFIG.videoDefaults.outputProfiles['1080p'].scale
       : null
     : scaleDimensionsFor(
       video.height,
@@ -1045,7 +1044,9 @@ const addStreamMetadataArguments = (
 
 const metadataOnlyArguments = (source: SourceFile, settings: JobSettings, outputPath: string) => {
   const subtitleTracks = source.media?.subtitles ?? [];
-  const externalTracks = subtitleTracks.filter((track) => track.externalPath);
+  const externalTracks = settings.processing.subtitles
+    ? subtitleTracks.filter((track) => track.externalPath && settings.subtitles[track.index]?.enabled)
+    : [];
   const embeddedTracks = subtitleTracks.filter((track) => !track.externalPath);
   const args = ['-i', source.path, ...externalSubtitleInputArguments(externalTracks), '-map', '0'];
   externalTracks.forEach((track) => args.push('-map', subtitleInputSpecifier(track, subtitleTracks)));
@@ -1265,6 +1266,7 @@ const getCommandArguments = (source: SourceFile, requestedOutputPath?: string, f
   if (settings.processing.subtitles) orderByFlags(subtitleTracks, (track) => settings.subtitles[track.index]?.flags ?? track.flags).forEach((track) => {
     const subtitle = settings.subtitles[track.index];
     if (!subtitle?.enabled) return;
+    if (settings.format === 'mp4' && !mp4SubtitleConvertible(track)) return;
     args.push('-map', subtitleInputSpecifier(track, subtitleTracks), `-c:s:${subtitleOutputIndex}`, settings.format === 'mp4' ? 'mov_text' : subtitle.codec);
     args.push(`-metadata:s:s:${subtitleOutputIndex}`, `language=${subtitle.metadata.language}`);
     args.push(`-disposition:s:${subtitleOutputIndex}`, dispositionValue(subtitle.flags));
@@ -1332,11 +1334,18 @@ const createEncodeJob = (source: SourceFile, queueIndex: number): EncodeJob | nu
     duration: source.media?.duration ?? null,
     args,
     ...(softwareDecodeFallbackArgs ? { softwareDecodeFallbackArgs } : {}),
-    ...(isMusicVideoWorkflow(source) && APP_CONFIG.musicVideoWorkflow.extractClosedCaptions && runtimeState?.ccextractorAvailable
+    ...(isMusicVideoWorkflow(source) && settings.processing.subtitles && APP_CONFIG.musicVideoWorkflow.extractClosedCaptions && runtimeState?.ccextractorAvailable
       ? {
         closedCaptionFormat: settings.format === 'mp4'
           ? 'mov_text' as const
           : settings.format === 'webm' ? 'webvtt' as const : 'subrip' as const,
+        closedCaptionMetadata: (() => {
+          const selected = Object.values(settings.subtitles).find((subtitle) => subtitle.enabled);
+          return selected ? { language: selected.metadata.language, flags: selected.flags } : {
+            language: 'und',
+            flags: { default: false, forced: false, hearingImpaired: false },
+          };
+        })(),
         optionalClosedCaptions: true,
       }
       : {}),
@@ -2109,14 +2118,14 @@ const renderFilterSettings = (source: SourceFile, settings: JobSettings) => {
   const crop = detectedCropForSource(source);
   const cropDetail = crop ? `Detected ${crop.filter}` : 'No crop detected; full frame will be retained';
   const musicVideoScale = isMusicVideoWorkflow(source)
-    ? outputDefaultsFor(requiredBuiltInPreset('Music Video'), '4k', settings.encoder).resolution.join(':')
+    ? APP_CONFIG.videoDefaults.outputProfiles['1080p'].scale.join(':')
     : '';
   return `<div class="filter-layout"><fieldset class="settings-card processing-fieldset ${settings.processing.video ? '' : 'processing-disabled'}"${settings.processing.video ? '' : ' disabled'}><div class="card-title"><div><span>PICTURE FILTERS</span><h3>Automatic processing</h3></div>${icon('sliders', 22)}</div>
     <div class="filter-options"><button type="button" class="toggle-row" role="switch" data-filter="autoCrop"${switchState(settings.filters.autoCrop)}><span><strong>Auto Crop</strong><small>${escapeHtml(cropDetail)}</small></span><i aria-hidden="true"></i></button>
     <button type="button" class="toggle-row ${isHdr ? '' : 'disabled'}" role="switch" data-filter="toneMapHdrToSdr"${switchState(settings.filters.toneMapHdrToSdr)}${isHdr ? '' : ' disabled'}><span><strong>HDR to SDR</strong><small>${isHdr ? `Tone-map ${escapeHtml(hdrLabel(source))} to SDR` : 'Unavailable because the source is SDR'}</small></span><i aria-hidden="true"></i></button>
     ${show10Bit ? `<button type="button" class="toggle-row ${allow10Bit ? '' : 'disabled'}" role="switch" data-filter="pixelFormat10Bit"${switchState(settings.filters.pixelFormat10Bit)}${allow10Bit ? '' : ' disabled'}><span><strong>10-bit output</strong><small>${allow10Bit ? outputCodec === 'HEVC' ? settings.encoder.endsWith('_nvenc') ? 'Use HEVC Main10 and CUDA-native p010le output without leaving GPU memory' : 'Use the HEVC Main10 profile and a 10-bit output pixel format' : settings.encoder.endsWith('_nvenc') ? 'Use the AV1 Main profile with CUDA-native p010le output without leaving GPU memory' : 'Use the AV1 Main profile and a 10-bit output pixel format' : `The detected ${escapeHtml(outputCodec)} encoder did not pass its 10-bit capability test`}</small></span><i aria-hidden="true"></i></button>` : ''}
     ${showH264High ? `<button type="button" class="toggle-row" role="switch" data-video-profile="h264-high"${switchState(h264High)}><span><strong>H.264 High profile</strong><small>Use the High output profile; enabled by default for H.264.</small></span><i aria-hidden="true"></i></button>` : ''}
-    <label class="scale-row"><span><strong>Auto scale</strong><small>${isMusicVideoWorkflow(source) ? `Music Video locks Auto Scale and only scales 4K sources to ${escapeHtml(musicVideoScale)}.` : settings.filters.scaleLocked ? 'Cellular locks scaling to 360p.' : 'Choose an automatic output height or leave scaling disabled.'}</small></span><select id="filter-scale"${settings.filters.scaleLocked ? ' disabled' : ''}><option value="auto"${selected(settings.filters.scale === 'auto')}>Auto Scale</option><option value="1080p"${selected(settings.filters.scale === '1080p')}>1080p</option><option value="720p"${selected(settings.filters.scale === '720p')}>720p</option><option value="360p"${selected(settings.filters.scale === '360p')}>360p</option><option value="disabled"${selected(settings.filters.scale === 'disabled')}>Disabled</option></select></label></div></fieldset>
+    <label class="scale-row"><span><strong>Auto scale</strong><small>${isMusicVideoWorkflow(source) ? `Only sources above 1080p are downscaled to ${escapeHtml(musicVideoScale)}. Set Disabled to turn downscaling off.` : settings.filters.scaleLocked ? 'Cellular locks scaling to 360p.' : 'Choose an automatic output height or leave scaling disabled.'}</small></span><select id="filter-scale"${settings.filters.scaleLocked ? ' disabled' : ''}>${isMusicVideoWorkflow(source) ? `<option value="auto"${selected(settings.filters.scale === 'auto')}>Downscale above 1080p</option><option value="disabled"${selected(settings.filters.scale === 'disabled')}>Disabled</option>` : `<option value="auto"${selected(settings.filters.scale === 'auto')}>Auto Scale</option><option value="1080p"${selected(settings.filters.scale === '1080p')}>1080p</option><option value="720p"${selected(settings.filters.scale === '720p')}>720p</option><option value="360p"${selected(settings.filters.scale === '360p')}>360p</option><option value="disabled"${selected(settings.filters.scale === 'disabled')}>Disabled</option>`}</select></label></div></fieldset>
     <fieldset class="settings-card processing-fieldset ${settings.processing.audio ? '' : 'processing-disabled'}"${settings.processing.audio ? '' : ' disabled'}><div class="card-title"><div><span>AUDIO FILTERS</span><h3>Surround processing</h3></div>${icon('audio', 22)}</div><div class="filter-options">
       <button type="button" class="toggle-row ${hasSurround ? '' : 'disabled'}" role="switch" data-audio-filter="dynamicRangeCompression"${switchState(settings.filters.dynamicRangeCompression)}${hasSurround ? '' : ' disabled'}><span><strong>Dynamic range compressor</strong><small>${hasSurround ? 'Apply Feishin\'s Default compressor immediately after each surround downmix.' : 'No enabled surround source was detected.'}</small></span><i aria-hidden="true"></i></button>
     </div></fieldset>
@@ -2140,7 +2149,7 @@ const importSubtitlesForSource = async (source: SourceFile, settings: JobSetting
   for (const track of imported) {
     source.media.subtitles.push(track);
     settings.subtitles[track.index] = {
-      enabled: true,
+      enabled: ['subrip', 'srt', 'webvtt', 'text'].includes(track.codec.toLowerCase()),
       codec: settings.format === 'mp4' ? 'mov_text' : settings.format === 'webm' ? 'webvtt' : 'subrip',
       flags: { ...track.flags },
       metadata: copyMetadata(track.language, track.flags),
