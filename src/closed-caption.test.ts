@@ -10,7 +10,7 @@ test('recognizes CEA-608 and CEA-708 streams as caption extraction sources', () 
 
 test('builds a CCExtractor SRT command without a shell', () => {
   assert.deepEqual(ccextractorArguments('C:\\input\\episode.mkv', 'C:\\temp\\captions.srt'), [
-    'C:\\input\\episode.mkv', '--out=srt', '-o', 'C:\\temp\\captions.srt',
+    'C:\\input\\episode.mkv', '--out=srt', '--no-progress-bar', '-o', 'C:\\temp\\captions.srt',
   ]);
 });
 

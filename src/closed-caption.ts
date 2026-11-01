@@ -14,6 +14,7 @@ const nextSubtitleIndex = (args: string[]) => {
 export const ccextractorArguments = (sourcePath: string, outputPath: string) => [
   sourcePath,
   '--out=srt',
+  '--no-progress-bar',
   '-o', outputPath,
 ];
 

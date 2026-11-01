@@ -124,7 +124,7 @@ const extractClosedCaptions = (
   webContents: WebContents,
 ) => new Promise<boolean>((resolve, reject) => {
   const args = ccextractorArguments(job.sourcePath, outputPath);
-  let stderr = '';
+  let output = '';
   let settled = false;
   emit(webContents, {
     phase: 'starting', jobIndex, totalJobs, sourceName: job.sourceName,
@@ -137,17 +137,35 @@ const extractClosedCaptions = (
   });
   const child = spawn(ccextractorPath, args, { windowsHide: true, shell: false });
   activeProcesses.set(jobIndex, child);
-  child.stderr.setEncoding('utf8');
-  child.stderr.on('data', (chunk: string) => { stderr = `${stderr}${chunk}`.slice(-1024 * 1024); });
-  child.on('error', (error) => {
+  const timeout = setTimeout(() => {
     if (settled) return;
     settled = true;
     activeProcesses.delete(jobIndex);
+    child.kill();
+    logActivity('ERROR', 'ccextractor.timeout', {
+      job: jobIndex, source: job.sourcePath, timeoutSeconds: 600,
+    });
+    reject(new Error('CCExtractor timed out after 10 minutes.'));
+  }, 10 * 60 * 1000);
+  timeout.unref();
+  child.stdout.setEncoding('utf8');
+  child.stdout.on('data', (chunk: string) => { output = `${output}${chunk}`.slice(-1024 * 1024); });
+  child.stderr.setEncoding('utf8');
+  child.stderr.on('data', (chunk: string) => { output = `${output}${chunk}`.slice(-1024 * 1024); });
+  child.on('error', (error) => {
+    if (settled) return;
+    settled = true;
+    clearTimeout(timeout);
+    activeProcesses.delete(jobIndex);
+    logActivity('ERROR', 'ccextractor.failed-to-start', {
+      job: jobIndex, source: job.sourcePath, error: error.message,
+    });
     reject(new Error(`CCExtractor could not start: ${error.message}`));
   });
   child.on('close', (code) => {
     if (settled) return;
     settled = true;
+    clearTimeout(timeout);
     activeProcesses.delete(jobIndex);
     const jobCancellationRequested = cancelledJobs.delete(jobIndex);
     if (cancellationRequested || jobCancellationRequested) {
@@ -155,12 +173,16 @@ const extractClosedCaptions = (
       return;
     }
     if (code !== 0 || !fs.existsSync(outputPath) || fs.statSync(outputPath).size === 0) {
+      logActivity('WARN', 'ccextractor.output-missing', {
+        job: jobIndex, source: job.sourcePath, output: outputPath, exitCode: code,
+        detail: output.trim().split(/\r?\n/).slice(-8).join('\n'),
+      });
       if (job.optionalClosedCaptions) {
         logActivity('INFO', 'ccextractor.not-found', { job: jobIndex, source: job.sourcePath });
         resolve(false);
         return;
       }
-      const detail = stderr.trim().split(/\r?\n/).slice(-6).join('\n');
+      const detail = output.trim().split(/\r?\n/).slice(-8).join('\n');
       reject(new Error(detail || 'CCExtractor did not find embedded CEA-608/708 captions.'));
       return;
     }
