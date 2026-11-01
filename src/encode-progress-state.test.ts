@@ -41,6 +41,32 @@ test('updates only the job page named by a progress event', () => {
   assert.deepEqual(encoded.jobs[1].command, ['ffmpeg', '-i', 'source-2.mkv']);
 });
 
+test('appends warning and error diagnostics to the live process output for that job', () => {
+  let state = createEncodeQueueProgress(jobs);
+  state = applyEncodeProgress(state, {
+    ...progress('starting', 1),
+    liveOutput: { kind: 'message', level: 'INFO', message: 'CCExtractor started.' },
+  });
+  state = applyEncodeProgress(state, {
+    ...progress('starting', 1),
+    liveOutput: { kind: 'message', level: 'WARN', message: 'CCExtractor exited with code 2.' },
+  });
+  state = applyEncodeProgress(state, {
+    ...progress('starting', 1), command: ['ffmpeg', '-i', 'source-1.mkv'],
+  });
+  state = applyEncodeProgress(state, {
+    ...progress('starting', 1),
+    liveOutput: { kind: 'message', level: 'ERROR', message: 'FFmpeg failed.' },
+  });
+  assert.deepEqual(state.jobs[0].liveOutput, [
+    { kind: 'message', level: 'INFO', message: 'CCExtractor started.' },
+    { kind: 'message', level: 'WARN', message: 'CCExtractor exited with code 2.' },
+    { kind: 'command', command: ['ffmpeg', '-i', 'source-1.mkv'] },
+    { kind: 'message', level: 'ERROR', message: 'FFmpeg failed.' },
+  ]);
+  assert.deepEqual(state.jobs[1].liveOutput, []);
+});
+
 test('preserves completed pages when the queue finishes', () => {
   let state = createEncodeQueueProgress(jobs);
   state = applyEncodeProgress(state, progress('completed', 1));

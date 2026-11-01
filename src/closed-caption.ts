@@ -3,6 +3,8 @@ export type ClosedCaptionCodec = 'mov_text' | 'subrip' | 'webvtt';
 export const isCeaCaptionStream = (track: { codec: string }) =>
   ['eia_608', 'eia_708'].includes(track.codec.toLocaleLowerCase());
 
+export const ccextractorNeedsAsciiPath = (filePath: string) => /[^\x20-\x7E]/.test(filePath);
+
 const nextSubtitleIndex = (args: string[]) => {
   const indexes = args.flatMap((argument) => {
     const match = argument.match(/^-c:s:(\d+)$/);
@@ -12,9 +14,9 @@ const nextSubtitleIndex = (args: string[]) => {
 };
 
 export const ccextractorArguments = (sourcePath: string, outputPath: string) => [
-  sourcePath,
   '--out=srt',
   '--no-progress-bar',
+  sourcePath,
   '-o', outputPath,
 ];
 

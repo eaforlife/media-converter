@@ -1387,23 +1387,29 @@ const renderLiveFfmpegOutput = () => {
   if (!output || !encodeQueueProgress) return;
   const previousScrollTop = output.scrollTop;
   const followingTail = output.scrollHeight - output.scrollTop - output.clientHeight <= 12;
-  const commands = encodeQueueProgress.jobs.filter((job) => job.command);
+  const entries = encodeQueueProgress.jobs.flatMap((job) => job.liveOutput.map((item) => ({ item, job })));
   output.replaceChildren();
-  if (!commands.length) {
+  if (!entries.length) {
     const waiting = document.createElement('p');
     waiting.className = 'encode-live-waiting';
     waiting.textContent = 'Waiting for the first FFmpeg process to start…';
     output.appendChild(waiting);
     return;
   }
-  commands.forEach((job) => {
+  entries.forEach(({ job, item }) => {
     const entry = document.createElement('section');
-    entry.className = 'encode-live-entry';
     const label = document.createElement('strong');
-    label.textContent = `encode ${job.jobIndex} · ${job.sourceName}`;
-    const command = document.createElement('pre');
-    command.textContent = `$ ${formatSessionFfmpegCommand(job.command ?? [])}`;
-    entry.append(label, command);
+    const detail = document.createElement('pre');
+    if (item.kind === 'command') {
+      entry.className = 'encode-live-entry';
+      label.textContent = `COMMAND · encode ${job.jobIndex} · ${job.sourceName}`;
+      detail.textContent = `$ ${formatSessionFfmpegCommand(item.command)}`;
+    } else {
+      entry.className = `encode-live-log ${item.level.toLowerCase()}`;
+      label.textContent = `${item.level} · encode ${job.jobIndex} · ${job.sourceName}`;
+      detail.textContent = item.message;
+    }
+    entry.append(label, detail);
     output.appendChild(entry);
   });
   output.scrollTop = followingTail ? output.scrollHeight : previousScrollTop;

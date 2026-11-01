@@ -2,10 +2,11 @@ import type { ChildProcessWithoutNullStreams } from 'node:child_process';
 import { spawn } from 'node:child_process';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { BrowserWindow, type WebContents } from 'electron';
 import { logActivity } from './app-logger';
-import { ccextractorArguments, injectClosedCaptionInput } from './closed-caption';
+import { ccextractorArguments, ccextractorNeedsAsciiPath, injectClosedCaptionInput } from './closed-caption';
 import {
   ADAPTIVE_SAMPLE_MS, averageAggregateFps, canAddEncodeJob, cancelAdaptiveQueueActivity, encodeConcurrencyPlan,
   forceCloseOwnedProcesses, lockThroughputConcurrencyLimit,
@@ -122,8 +123,9 @@ const extractClosedCaptions = (
   totalJobs: number,
   outputPath: string,
   webContents: WebContents,
+  inputPath = job.sourcePath,
 ) => new Promise<boolean>((resolve, reject) => {
-  const args = ccextractorArguments(job.sourcePath, outputPath);
+  const args = ccextractorArguments(inputPath, outputPath);
   let output = '';
   let settled = false;
   emit(webContents, {
@@ -131,9 +133,10 @@ const extractClosedCaptions = (
     outputPath: job.outputPath, percent: null, bitrate: '—', fps: '—',
     runTimeSeconds: 0, etaSeconds: null, speed: '—',
     message: 'Extracting embedded closed captions to SRT.',
+    liveOutput: { kind: 'message', level: 'INFO', message: 'CCExtractor: extracting embedded captions to SRT.' },
   });
   logActivity('INFO', 'ccextractor.started', {
-    job: jobIndex, source: job.sourcePath, output: outputPath, executable: ccextractorPath, args,
+    job: jobIndex, source: job.sourcePath, input: inputPath, output: outputPath, executable: ccextractorPath, args,
   });
   const child = spawn(ccextractorPath, args, { windowsHide: true, shell: false });
   activeProcesses.set(jobIndex, child);
@@ -144,6 +147,13 @@ const extractClosedCaptions = (
     child.kill();
     logActivity('ERROR', 'ccextractor.timeout', {
       job: jobIndex, source: job.sourcePath, timeoutSeconds: 600,
+    });
+    emit(webContents, {
+      phase: 'starting', jobIndex, totalJobs, sourceName: job.sourceName,
+      outputPath: job.outputPath, percent: null, bitrate: 'â€”', fps: 'â€”',
+      runTimeSeconds: 0, etaSeconds: null, speed: 'â€”',
+      message: 'CCExtractor timed out after 10 minutes.',
+      liveOutput: { kind: 'message', level: 'ERROR', message: 'CCExtractor timed out after 10 minutes.' },
     });
     reject(new Error('CCExtractor timed out after 10 minutes.'));
   }, 10 * 60 * 1000);
@@ -160,6 +170,13 @@ const extractClosedCaptions = (
     logActivity('ERROR', 'ccextractor.failed-to-start', {
       job: jobIndex, source: job.sourcePath, error: error.message,
     });
+    emit(webContents, {
+      phase: 'starting', jobIndex, totalJobs, sourceName: job.sourceName,
+      outputPath: job.outputPath, percent: null, bitrate: 'â€”', fps: 'â€”',
+      runTimeSeconds: 0, etaSeconds: null, speed: 'â€”',
+      message: `CCExtractor could not start: ${error.message}`,
+      liveOutput: { kind: 'message', level: 'ERROR', message: `CCExtractor could not start: ${error.message}` },
+    });
     reject(new Error(`CCExtractor could not start: ${error.message}`));
   });
   child.on('close', (code) => {
@@ -173,16 +190,23 @@ const extractClosedCaptions = (
       return;
     }
     if (code !== 0 || !fs.existsSync(outputPath) || fs.statSync(outputPath).size === 0) {
+      const detail = output.trim().split(/\r?\n/).slice(-8).join('\n');
       logActivity('WARN', 'ccextractor.output-missing', {
         job: jobIndex, source: job.sourcePath, output: outputPath, exitCode: code,
-        detail: output.trim().split(/\r?\n/).slice(-8).join('\n'),
+        detail,
+      });
+      emit(webContents, {
+        phase: 'starting', jobIndex, totalJobs, sourceName: job.sourceName,
+        outputPath: job.outputPath, percent: null, bitrate: 'â€”', fps: 'â€”',
+        runTimeSeconds: 0, etaSeconds: null, speed: 'â€”',
+        message: 'CCExtractor did not produce an SRT subtitle file.',
+        liveOutput: { kind: 'message', level: 'WARN', message: `CCExtractor exited with code ${code}: ${detail || 'No diagnostic output.'}` },
       });
       if (job.optionalClosedCaptions) {
         logActivity('INFO', 'ccextractor.not-found', { job: jobIndex, source: job.sourcePath });
         resolve(false);
         return;
       }
-      const detail = output.trim().split(/\r?\n/).slice(-8).join('\n');
       reject(new Error(detail || 'CCExtractor did not find embedded CEA-608/708 captions.'));
       return;
     }
@@ -521,7 +545,7 @@ export const startEncodeQueue = async (
           if (nextIndex >= jobs.length) return;
           const index = nextIndex;
           nextIndex += 1;
-          let captionOutput: string | null = null;
+          let captionTemporaryDirectory: string | null = null;
           try {
             let preparedJob = jobs[index];
             if (preparedJob.passthrough) {
@@ -535,14 +559,34 @@ export const startEncodeQueue = async (
               continue;
             }
             if (preparedJob.closedCaptionFormat) {
-              const outputParts = path.parse(preparedJob.outputPath);
-              captionOutput = path.join(
-                outputParts.dir,
-                `.${outputParts.name}.ea-captions-${crypto.randomUUID()}.srt`,
+              captionTemporaryDirectory = await fs.promises.mkdtemp(
+                path.join(os.tmpdir(), 'ea-media-tools-captions-'),
               );
-              activeCaptionOutputs.add(captionOutput);
+              activeCaptionOutputs.add(captionTemporaryDirectory);
+              const captionOutput = path.join(captionTemporaryDirectory, 'captions.srt');
+              let ccextractorInput = preparedJob.sourcePath;
+              if (ccextractorNeedsAsciiPath(ccextractorInput)) {
+                ccextractorInput = path.join(captionTemporaryDirectory, `source${path.extname(preparedJob.sourcePath) || '.mp4'}`);
+                let stagingMethod = 'hardlink';
+                try {
+                  await fs.promises.link(preparedJob.sourcePath, ccextractorInput);
+                } catch {
+                  stagingMethod = 'copy';
+                  await fs.promises.copyFile(preparedJob.sourcePath, ccextractorInput);
+                }
+                logActivity('INFO', 'ccextractor.source-staged', {
+                  job: index + 1, source: preparedJob.sourcePath, staged: ccextractorInput, method: stagingMethod,
+                });
+                emit(webContents, {
+                  phase: 'starting', jobIndex: index + 1, totalJobs: jobs.length,
+                  sourceName: preparedJob.sourceName, outputPath: preparedJob.outputPath,
+                  percent: null, bitrate: 'â€”', fps: 'â€”', runTimeSeconds: 0, etaSeconds: null, speed: 'â€”',
+                  message: 'Staged the caption source using an ASCII path for CCExtractor.',
+                  liveOutput: { kind: 'message', level: 'INFO', message: `CCExtractor: staged non-ASCII source path (${stagingMethod}).` },
+                });
+              }
               const captionsFound = await extractClosedCaptions(
-                ccextractorPath, preparedJob, index + 1, jobs.length, captionOutput, webContents,
+                ccextractorPath, preparedJob, index + 1, jobs.length, captionOutput, webContents, ccextractorInput,
               );
               if (captionsFound) {
                 preparedJob = {
@@ -614,9 +658,9 @@ export const startEncodeQueue = async (
             return;
           } finally {
             fpsWindows.delete(index);
-            if (captionOutput) {
-              await fs.promises.rm(captionOutput, { force: true }).catch(() => undefined);
-              activeCaptionOutputs.delete(captionOutput);
+            if (captionTemporaryDirectory) {
+              await fs.promises.rm(captionTemporaryDirectory, { recursive: true, force: true }).catch(() => undefined);
+              activeCaptionOutputs.delete(captionTemporaryDirectory);
             }
           }
         }
@@ -744,7 +788,7 @@ export const cancelEncodingAndWait = async () => {
   }
   await Promise.all([...activePartialOutputs].map(removePartialOutput));
   await Promise.all([...activeCaptionOutputs].map(async (captionPath) => {
-    await fs.promises.rm(captionPath, { force: true }).catch(() => undefined);
+    await fs.promises.rm(captionPath, { recursive: true, force: true }).catch(() => undefined);
     activeCaptionOutputs.delete(captionPath);
   }));
 };

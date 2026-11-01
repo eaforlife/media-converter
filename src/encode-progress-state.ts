@@ -1,4 +1,4 @@
-import type { EncodeJob, EncodeProgress } from './shared-types';
+import type { EncodeJob, EncodeLiveOutputEntry, EncodeProgress } from './shared-types';
 
 export type EncodeJobStatus =
   | 'pending'
@@ -22,6 +22,7 @@ export type EncodeJobProgressState = {
   speed: string;
   command?: string[];
   message?: string;
+  liveOutput: EncodeLiveOutputEntry[];
 };
 
 export type EncodeQueueStatus = 'running' | 'completed' | 'failed' | 'cancelled';
@@ -59,6 +60,7 @@ export const createEncodeQueueProgress = (jobs: EncodeJob[]): EncodeQueueProgres
     runTimeSeconds: 0,
     etaSeconds: null,
     speed: EMPTY_STAT,
+    liveOutput: [],
   })),
 });
 
@@ -96,6 +98,10 @@ export const applyEncodeProgress = (
 
   const status = jobStatus(progress.phase);
   if (!status) return state;
+  const job = state.jobs.find((item) => item.jobIndex === progress.jobIndex);
+  const liveOutput = job ? [...job.liveOutput] : [];
+  if (progress.liveOutput) liveOutput.push(progress.liveOutput);
+  if (progress.command) liveOutput.push({ kind: 'command', command: progress.command });
   return {
     ...state,
     jobs: state.jobs.map((job) => job.jobIndex === progress.jobIndex ? {
@@ -111,6 +117,7 @@ export const applyEncodeProgress = (
       speed: progress.speed,
       command: progress.command ?? job.command,
       message: progress.message,
+      liveOutput: liveOutput.slice(-100),
     } : job),
   };
 };

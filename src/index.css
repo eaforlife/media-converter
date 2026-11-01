@@ -598,6 +598,10 @@ input[type='number']:disabled { color: #737b87; background: #11151a; cursor: not
 .encode-live-entry + .encode-live-entry { border-top: 1px solid #1b2520; }
 .encode-live-entry strong { display: block; overflow: hidden; margin-bottom: 8px; color: #607269; font-size: 10px; letter-spacing: .07em; text-overflow: ellipsis; text-transform: uppercase; white-space: nowrap; }
 .encode-live-entry pre { overflow-wrap: anywhere; margin: 0; color: #a8e6b9; font: 12px/1.7 'Cascadia Mono', Consolas, monospace; white-space: pre-wrap; word-break: break-word; }
+.encode-live-log { min-width: 0; padding: 10px 16px; border-top: 1px solid #252c34; color: #c7cdd3; }
+.encode-live-log strong { display: block; margin-bottom: 5px; color: #d6a64f; font-size: 10px; letter-spacing: .07em; }
+.encode-live-log.error strong { color: #f07878; }
+.encode-live-log pre { overflow-wrap: anywhere; margin: 0; color: inherit; font: 12px/1.55 'Cascadia Mono', Consolas, monospace; white-space: pre-wrap; word-break: break-word; }
 .encode-modal footer { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 14px 18px; padding: 22px 26px 24px; }
 .encode-modal footer .encode-dialog-button { min-width: 142px; height: 48px; padding: 0 18px; border-radius: 8px; font-size: 14px; font-weight: 700; }
 .encode-pagination, .encode-modal-actions { display: flex; align-items: center; gap: 9px; }

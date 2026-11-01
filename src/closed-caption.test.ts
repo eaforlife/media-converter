@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { ccextractorArguments, injectClosedCaptionInput, isCeaCaptionStream } from './closed-caption.ts';
+import { ccextractorArguments, ccextractorNeedsAsciiPath, injectClosedCaptionInput, isCeaCaptionStream } from './closed-caption.ts';
 
 test('recognizes CEA-608 and CEA-708 streams as caption extraction sources', () => {
   assert.equal(isCeaCaptionStream({ codec: 'eia_608' }), true);
@@ -8,9 +8,14 @@ test('recognizes CEA-608 and CEA-708 streams as caption extraction sources', () 
   assert.equal(isCeaCaptionStream({ codec: 'subrip' }), false);
 });
 
+test('stages non-ASCII Windows paths before calling CCExtractor', () => {
+  assert.equal(ccextractorNeedsAsciiPath('C:\\Music\\ADÉLA\\video.mp4'), true);
+  assert.equal(ccextractorNeedsAsciiPath('C:\\Music\\Artist\\video.mp4'), false);
+});
+
 test('builds a CCExtractor SRT command without a shell', () => {
   assert.deepEqual(ccextractorArguments('C:\\input\\episode.mkv', 'C:\\temp\\captions.srt'), [
-    'C:\\input\\episode.mkv', '--out=srt', '--no-progress-bar', '-o', 'C:\\temp\\captions.srt',
+    '--out=srt', '--no-progress-bar', 'C:\\input\\episode.mkv', '-o', 'C:\\temp\\captions.srt',
   ]);
 });
 

@@ -258,6 +258,10 @@ export type EncodeProgressPhase =
   | 'queue-failed'
   | 'queue-cancelled';
 
+export type EncodeLiveOutputEntry =
+  | { kind: 'command'; command: string[] }
+  | { kind: 'message'; level: 'INFO' | 'WARN' | 'ERROR'; message: string };
+
 export type EncodeProgress = {
   phase: EncodeProgressPhase;
   jobIndex: number;
@@ -272,6 +276,7 @@ export type EncodeProgress = {
   speed: string;
   command?: string[];
   message?: string;
+  liveOutput?: Extract<EncodeLiveOutputEntry, { kind: 'message' }>;
 };
 
 export type EncodeStartResult = {
