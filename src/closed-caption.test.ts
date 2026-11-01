@@ -1,6 +1,12 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { ccextractorArguments, injectClosedCaptionInput } from './closed-caption.ts';
+import { ccextractorArguments, injectClosedCaptionInput, isCeaCaptionStream } from './closed-caption.ts';
+
+test('recognizes CEA-608 and CEA-708 streams as caption extraction sources', () => {
+  assert.equal(isCeaCaptionStream({ codec: 'eia_608' }), true);
+  assert.equal(isCeaCaptionStream({ codec: 'EIA_708' }), true);
+  assert.equal(isCeaCaptionStream({ codec: 'subrip' }), false);
+});
 
 test('builds a CCExtractor SRT command without a shell', () => {
   assert.deepEqual(ccextractorArguments('C:\\input\\episode.mkv', 'C:\\temp\\captions.srt'), [

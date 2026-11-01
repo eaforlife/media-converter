@@ -20,6 +20,7 @@ import {
 } from './encoder-controls';
 import type { EncoderSpeed } from './encoder-controls';
 import { isValidCustomPresetName } from './custom-presets';
+import { isCeaCaptionStream } from './closed-caption';
 import { externalSubtitleInputArguments, subtitleInputSpecifier } from './external-subtitles';
 import { aspectPreservingDimensions, cuvidCropMargins, detectedCrop } from './video-crop';
 import {
@@ -473,9 +474,13 @@ const applyMusicVideoPreset = (source: SourceFile) => {
     pixelFormat10Bit: defaultMain10,
     dynamicRangeCompression: preset.dynamicRangeCompression,
   };
+  for (const track of source.media?.subtitles ?? []) {
+    if (isCeaCaptionStream(track)) settings.subtitles[track.index].enabled = true;
+  }
   for (const track of source.media?.audio ?? []) {
+    const audioCodec: AudioCodec = preset.audioCodec === 'opus' ? 'libopus' : 'libfdk_aac';
     settings.audio[track.index] = {
-      enabled: true, codec: 'libfdk_aac', bitrate: audioBitrateFor(preset.name, 'libfdk_aac', track.isStereo),
+      enabled: true, codec: audioCodec, bitrate: audioBitrateFor(preset.name, audioCodec, track.isStereo),
       flags: { ...track.flags },
       metadata: settings.audio[track.index]?.metadata ?? copyMetadata(track.language, track.flags),
     };
@@ -1265,7 +1270,7 @@ const getCommandArguments = (source: SourceFile, requestedOutputPath?: string, f
   let subtitleOutputIndex = 0;
   if (settings.processing.subtitles) orderByFlags(subtitleTracks, (track) => settings.subtitles[track.index]?.flags ?? track.flags).forEach((track) => {
     const subtitle = settings.subtitles[track.index];
-    if (!subtitle?.enabled) return;
+    if (!subtitle?.enabled || isMusicVideoWorkflow(source) && isCeaCaptionStream(track)) return;
     if (settings.format === 'mp4' && !mp4SubtitleConvertible(track)) return;
     args.push('-map', subtitleInputSpecifier(track, subtitleTracks), `-c:s:${subtitleOutputIndex}`, settings.format === 'mp4' ? 'mov_text' : subtitle.codec);
     args.push(`-metadata:s:s:${subtitleOutputIndex}`, `language=${subtitle.metadata.language}`);
@@ -1334,19 +1339,20 @@ const createEncodeJob = (source: SourceFile, queueIndex: number): EncodeJob | nu
     duration: source.media?.duration ?? null,
     args,
     ...(softwareDecodeFallbackArgs ? { softwareDecodeFallbackArgs } : {}),
-    ...(isMusicVideoWorkflow(source) && settings.processing.subtitles && APP_CONFIG.musicVideoWorkflow.extractClosedCaptions && runtimeState?.ccextractorAvailable
+    ...(isMusicVideoWorkflow(source) && APP_CONFIG.musicVideoWorkflow.extractClosedCaptions
       ? {
         closedCaptionFormat: settings.format === 'mp4'
           ? 'mov_text' as const
           : settings.format === 'webm' ? 'webvtt' as const : 'subrip' as const,
         closedCaptionMetadata: (() => {
-          const selected = Object.values(settings.subtitles).find((subtitle) => subtitle.enabled);
+          const captionTrack = (source.media?.subtitles ?? []).find(isCeaCaptionStream);
+          const selected = captionTrack ? settings.subtitles[captionTrack.index] : undefined;
           return selected ? { language: selected.metadata.language, flags: selected.flags } : {
             language: 'und',
             flags: { default: false, forced: false, hearingImpaired: false },
           };
         })(),
-        optionalClosedCaptions: true,
+        optionalClosedCaptions: !(source.media?.subtitles ?? []).some(isCeaCaptionStream),
       }
       : {}),
     ...(passthrough ? { passthrough: true } : {}),
@@ -2175,18 +2181,22 @@ const renderSubtitleSettings = (source: SourceFile, settings: JobSettings) => {
     : '';
   const importButton = `<button class="secondary-button import-subtitles" id="import-subtitles">${icon('captions', 16)} Import UTF-8 subtitles</button>`;
   if (!tracks.length) return `<div class="track-stack">${renderProcessingToggle('subtitles', processing, 'Encode selected subtitle streams')}${captionExtraction}<section class="empty-panel"><div class="empty-panel-icon">CC</div><span>SUBTITLES</span><h3>No separate subtitle tracks detected</h3><p>${isMusicVideoWorkflow(source) ? 'Embedded captions are checked automatically. You can also import UTF-8 subtitle files.' : 'No subtitle streams were reported by FFprobe. Import SRT, ASS, SSA, or WebVTT files here.'}</p>${importButton}</section></div>`;
-  return `<div class="track-stack">${renderProcessingToggle('subtitles', processing, 'Encode selected subtitle streams')}${captionExtraction}<div class="track-intro"><div><span>SUBTITLE OUTPUT</span><h3>${tracks.length} detected track${tracks.length === 1 ? '' : 's'}</h3></div><div class="track-guidance"><p>${metadataOnly ? 'Embedded tracks are copied and imported UTF-8 files are added during source replacement.' : processing ? settings.format === 'mp4' ? 'MP4 converts text subtitles to mov_text.' : 'Text subtitles can be converted to SRT or WebVTT.' : 'Enable subtitle processing to include imported files.'}</p>${importButton}</div></div>${tracks.map((track, position) => renderSubtitleTrack(track, position, settings, processing, metadataOnly)).join('')}</div>`;
+  return `<div class="track-stack">${renderProcessingToggle('subtitles', processing, 'Encode selected subtitle streams')}${captionExtraction}<div class="track-intro"><div><span>SUBTITLE OUTPUT</span><h3>${tracks.length} detected track${tracks.length === 1 ? '' : 's'}</h3></div><div class="track-guidance"><p>${metadataOnly ? 'Embedded tracks are copied and imported UTF-8 files are added during source replacement.' : processing ? settings.format === 'mp4' ? 'MP4 converts text subtitles to mov_text.' : 'Text subtitles can be converted to SRT or WebVTT.' : 'Enable subtitle processing to include imported files.'}</p>${importButton}</div></div>${tracks.map((track, position) => renderSubtitleTrack(source, track, position, settings, processing, metadataOnly)).join('')}</div>`;
 };
-const renderSubtitleTrack = (track: SubtitleStreamInfo, position: number, settings: JobSettings, processing: boolean, metadataOnly: boolean) => {
-  const setting = settings.subtitles[track.index], mp4 = settings.format === 'mp4', imageBlocked = track.kind === 'image' && mp4;
-  const options = track.kind === 'image'
+const renderSubtitleTrack = (source: SourceFile, track: SubtitleStreamInfo, position: number, settings: JobSettings, processing: boolean, metadataOnly: boolean) => {
+  const setting = settings.subtitles[track.index], mp4 = settings.format === 'mp4';
+  const captionCarrier = isMusicVideoWorkflow(source) && isCeaCaptionStream(track);
+  const imageBlocked = track.kind === 'image' && mp4 && !captionCarrier;
+  const options = captionCarrier
+    ? `<option value="${settings.format}">Extract to ${settings.format === 'mp4' ? 'MOV text' : settings.format === 'webm' ? 'WebVTT' : 'SRT'}</option>`
+    : track.kind === 'image'
     ? '<option value="copy">Preserve image subtitle</option>'
     : mp4
       ? '<option value="mov_text">MOV text (required by MP4)</option>'
       : `<option value="subrip"${selected(setting.codec === 'subrip')}>SRT (SubRip)</option><option value="webvtt"${selected(setting.codec === 'webvtt')}>WebVTT</option>`;
-  return `<section class="track-card ${processing && !imageBlocked || metadataOnly ? '' : 'track-disabled'}"><div class="track-heading"><div><span>TRACK ${position + 1}</span><h3>${position + 1}. Track ${position + 1}: ${escapeHtml(mediaLanguageName(setting.metadata.language))}</h3></div><span class="track-badge ${track.kind}">${escapeHtml(track.codecLabel)}</span></div>
-    <div class="track-meta"><span>${track.kind === 'text' ? 'Text-based' : 'Image-based'}</span><span>${track.isUtf8 ? 'UTF-8' : 'Binary image'}</span><span>${escapeHtml(flagsLabel(setting.flags))}</span></div>${processing && imageBlocked ? '<div class="downmix-notice warning">Image subtitles cannot be converted to mov_text and will be excluded from MP4.</div>' : ''}
-    <fieldset class="processing-fieldset"${processing ? '' : ' disabled'}><div class="subtitle-controls"><label class="check-label"><input type="checkbox" data-subtitle-enabled="${track.index}"${checked(setting.enabled && !imageBlocked)}${imageBlocked ? ' disabled' : ''}/> Include track</label><label>Output format<select data-subtitle-codec="${track.index}"${mp4 || track.kind === 'image' ? ' disabled' : ''}>${options}</select></label></div>${renderDispositionControls('subtitle', track.index, setting.flags, imageBlocked || !setting.enabled)}</fieldset>${renderMetadataEditor('subtitle', track.index, setting.metadata, metadataOnly || processing && setting.enabled && !imageBlocked, metadataOnly)}</section>`;
+  return `<section class="track-card ${processing && !imageBlocked || metadataOnly || captionCarrier ? '' : 'track-disabled'}"><div class="track-heading"><div><span>TRACK ${position + 1}</span><h3>${position + 1}. Track ${position + 1}: ${escapeHtml(mediaLanguageName(setting.metadata.language))}</h3></div><span class="track-badge ${track.kind}">${escapeHtml(track.codecLabel)}</span></div>
+    <div class="track-meta"><span>${captionCarrier ? 'CEA caption source' : track.kind === 'text' ? 'Text-based' : 'Image-based'}</span><span>${captionCarrier ? 'Extracted as UTF-8' : track.isUtf8 ? 'UTF-8' : 'Binary image'}</span><span>${escapeHtml(flagsLabel(setting.flags))}</span></div>${processing && imageBlocked ? '<div class="downmix-notice warning">Image subtitles cannot be converted to mov_text and will be excluded from MP4.</div>' : ''}
+    <fieldset class="processing-fieldset"${processing || captionCarrier ? '' : ' disabled'}><div class="subtitle-controls"><label class="check-label"><input type="checkbox" data-subtitle-enabled="${track.index}"${checked(setting.enabled && !imageBlocked)}${captionCarrier || imageBlocked ? ' disabled' : ''}/> ${captionCarrier ? 'Extract captions' : 'Include track'}</label><label>Output format<select data-subtitle-codec="${track.index}"${captionCarrier || mp4 || track.kind === 'image' ? ' disabled' : ''}>${options}</select></label></div>${renderDispositionControls('subtitle', track.index, setting.flags, imageBlocked || !setting.enabled)}</fieldset>${renderMetadataEditor('subtitle', track.index, setting.metadata, metadataOnly || captionCarrier || processing && setting.enabled && !imageBlocked, metadataOnly)}</section>`;
 };
 
 const updateCommand = () => {

@@ -25,8 +25,10 @@ test('named presets own their audio codec rates and compressor defaults', () => 
   assert.equal(presets.Archive.dynamicRangeCompression, false);
 });
 
-test('music video audio uses libfdk AAC at 224 kbit/s', () => {
-  assert.equal(presets['Music Video'].audioRates.aac.stereo, '224k');
+test('music video audio defaults to Opus at 128 kbit/s', () => {
+  assert.equal(presets['Music Video'].audioCodec, 'opus');
+  assert.equal(presets['Music Video'].audioRates.opus.stereo, '128k');
+  assert.equal(presets['Music Video'].audioRates.opus.surround, '128k');
 });
 
 test('only high-frequency lossless audio is resampled to 48 kHz', () => {

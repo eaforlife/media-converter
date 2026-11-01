@@ -60,7 +60,10 @@ test('Music Video uses the Streaming video profile with Main10 and NVENC P6', ()
   const advanced = resolvePresetAdvancedVideo(preset, 'HEVC');
   assert.equal(preset.preferredVideoCodec, appConfig.videoDefaults.codec);
   assert.equal(preset.defaultMain10, true);
-  assert.equal(preset.quality.nvenc, parseBuiltInPresets(presetFile).Streaming.quality.nvenc);
+  assert.equal(preset.quality.nvenc, '28');
+  assert.equal(preset.audioCodec, 'opus');
+  assert.equal(preset.audioRates.opus.stereo, '128k');
+  assert.equal(preset.audioRates.opus.surround, '128k');
   assert.equal(preset.outputTierDefaults['4k'].resolution?.[0], '2960');
   assert.equal(preset.outputTierDefaults['1080p'].resolution?.[1], '-2');
   assert.deepEqual(encoderSpeedArguments('hevc_nvenc', preset.encoderSpeed), ['-preset', `p${preset.encoderSpeed}`]);

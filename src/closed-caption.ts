@@ -1,5 +1,8 @@
 export type ClosedCaptionCodec = 'mov_text' | 'subrip' | 'webvtt';
 
+export const isCeaCaptionStream = (track: { codec: string }) =>
+  ['eia_608', 'eia_708'].includes(track.codec.toLocaleLowerCase());
+
 const nextSubtitleIndex = (args: string[]) => {
   const indexes = args.flatMap((argument) => {
     const match = argument.match(/^-c:s:(\d+)$/);
