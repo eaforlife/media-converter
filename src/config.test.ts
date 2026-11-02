@@ -20,6 +20,8 @@ test('loads app defaults from config.ini', () => {
   assert.deepEqual(configuration.mediaExtensions.video, configValue('Media Extensions', 'video').split(','));
   assert.equal(configuration.videoDefaults.outputProfiles['4k'].maxRate,
     Number(configSections.get('Video Output: 4k')?.get('h264_max_rate')));
+  assert.equal(configuration.videoDefaults.main10Advanced.streamingSpatialAq,
+    Number(configSections.get('Main10 Defaults')?.get('streaming_spatial_aq')));
   assert.deepEqual(configuration.videoDefaults.codecRateMultipliers, {
     hevc: Number(configSections.get('Video Codec Rate Multipliers')?.get('hevc')),
     hevcMain10: Number(configSections.get('Video Codec Rate Multipliers')?.get('hevc_main10')),

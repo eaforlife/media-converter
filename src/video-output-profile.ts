@@ -39,6 +39,14 @@ export const scaleDimensionsFor = (
   ? null
   : videoOutputProfile(height, scale, profiles, cellular).scale;
 
+export const musicVideoScaleDimensionsFor = (
+  height: number,
+  scale: ScaleMode,
+  fourKScale: readonly [string, string],
+): readonly [string, string] | null => scale !== 'disabled' && height > 1080
+  ? fourKScale
+  : null;
+
 export const bufferSizeFor = (maxRate: number, multiplier: number) =>
   Math.max(0, maxRate) * Math.max(0, multiplier);
 

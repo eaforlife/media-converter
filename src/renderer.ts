@@ -12,7 +12,7 @@ import {
   resolvePresetAdvancedVideo, resolvePresetOutputDefaults,
 } from './presets';
 import type { BuiltInPresetConfiguration, BuiltInPresetDefinition, BuiltInPresetName, EncoderFamily, PreferredVideoCodec, PresetAudioCodec, PresetFrameRate } from './presets';
-import { advancedVideoArguments, supportedAdvancedVideoFields } from './advanced-video-settings';
+import { advancedVideoArguments, main10SpatialAqForPreset, supportedAdvancedVideoFields } from './advanced-video-settings';
 import type { AdvancedVideoField } from './advanced-video-settings';
 import {
   encoderBackendLabel, encoderSpeedArguments, encoderSpeedDisplay, encoderSpeedLabel, encoderTuneArguments, encoderTuneOptions,
@@ -27,7 +27,7 @@ import {
   cudaCropBridgeFilters, cudaHardwareDecodeArguments, cudaScaleFilter, cuvidDecoderArguments, cuvidDecoderCropArguments, cuvidDecoderName, hardwareUploadFilter,
   protectedHardwareDecodeArguments, strictVideoTranscodeArguments,
 } from './video-safety';
-import { bufferSizeFor, resolveVideoOutputRates, scaleDimensionsFor, videoOutputProfile } from './video-output-profile';
+import { bufferSizeFor, musicVideoScaleDimensionsFor, resolveVideoOutputRates, scaleDimensionsFor, videoOutputProfile } from './video-output-profile';
 import { applyEncodeProgress, canFinishEncodeQueue, createEncodeQueueProgress, isQueueTerminal } from './encode-progress-state';
 import type { EncodeJobProgressState, EncodeQueueProgressState } from './encode-progress-state';
 import { formatSessionFfmpegCommand } from './ffmpeg-command-display';
@@ -609,6 +609,13 @@ const applyPreset = (source: SourceFile, preset: string, persist = true) => {
       dynamicRangeCompression: defaults.dynamicRangeCompression,
     }
     : { ...saved!.filters };
+  if (defaults && settings.filters.pixelFormat10Bit) {
+    settings.advancedVideo.spatialAq = main10SpatialAqForPreset(
+      defaults.name,
+      APP_CONFIG.videoDefaults.main10Advanced.spatialAq,
+      APP_CONFIG.videoDefaults.main10Advanced.streamingSpatialAq,
+    );
+  }
   const codec = defaults ? defaults.audioCodec === 'opus' ? 'libopus' : 'libfdk_aac' : saved!.audioCodec;
   const selectedAudio = preferredAudioIndexes(source.media?.audio ?? []);
   for (const track of source.media?.audio ?? []) {
@@ -678,6 +685,13 @@ const applyBuiltInScaleProfile = (
   settings.deliveryMode = profileDefaults.deliveryMode;
   settings.advancedVideo = resolvePresetAdvancedVideo(profileDefaults, preferredCodecForEncoder(encoder), outputProfile.tier);
   settings.filters.pixelFormat10Bit = defaultMain10;
+  if (defaultMain10) {
+    settings.advancedVideo.spatialAq = main10SpatialAqForPreset(
+      defaults.name,
+      APP_CONFIG.videoDefaults.main10Advanced.spatialAq,
+      APP_CONFIG.videoDefaults.main10Advanced.streamingSpatialAq,
+    );
+  }
   for (const track of source.media?.audio ?? []) {
     const audio = settings.audio[track.index];
     if (audio && audio.codec !== 'copy') {
@@ -998,9 +1012,11 @@ const hardwareScaleDimensions = (source: SourceFile, settings: JobSettings): [st
   const video = source.media?.video;
   if (!video) return null;
   const dimensions = isMusicVideoWorkflow(source)
-    ? settings.filters.scale !== 'disabled' && video.height > 1080
-      ? APP_CONFIG.videoDefaults.outputProfiles['1080p'].scale
-      : null
+    ? musicVideoScaleDimensionsFor(
+      video.height,
+      settings.filters.scale,
+      requiredBuiltInPreset('Music Video').outputTierDefaults['4k'].resolution!,
+    )
     : scaleDimensionsFor(
       video.height,
       settings.filters.scale,
@@ -2130,7 +2146,7 @@ const renderFilterSettings = (source: SourceFile, settings: JobSettings) => {
   const crop = detectedCropForSource(source);
   const cropDetail = crop ? `Detected ${crop.filter}` : 'No crop detected; full frame will be retained';
   const musicVideoScale = isMusicVideoWorkflow(source)
-    ? APP_CONFIG.videoDefaults.outputProfiles['1080p'].scale.join(':')
+    ? requiredBuiltInPreset('Music Video').outputTierDefaults['4k'].resolution!.join(':')
     : '';
   return `<div class="filter-layout"><fieldset class="settings-card processing-fieldset ${settings.processing.video ? '' : 'processing-disabled'}"${settings.processing.video ? '' : ' disabled'}><div class="card-title"><div><span>PICTURE FILTERS</span><h3>Automatic processing</h3></div>${icon('sliders', 22)}</div>
     <div class="filter-options"><button type="button" class="toggle-row" role="switch" data-filter="autoCrop"${switchState(settings.filters.autoCrop)}><span><strong>Auto Crop</strong><small>${escapeHtml(cropDetail)}</small></span><i aria-hidden="true"></i></button>
@@ -2422,7 +2438,11 @@ const bindContentEvents = () => {
       settings.bufferSize = String(bufferSizeFor(Number(settings.maxRate), APP_CONFIG.videoDefaults.bufferMultiplier));
       if (settings.filters.pixelFormat10Bit) {
         settings.advancedVideo.bFrames = APP_CONFIG.videoDefaults.main10Advanced.bFrames;
-        settings.advancedVideo.spatialAq = APP_CONFIG.videoDefaults.main10Advanced.spatialAq;
+        settings.advancedVideo.spatialAq = main10SpatialAqForPreset(
+          preset.name,
+          APP_CONFIG.videoDefaults.main10Advanced.spatialAq,
+          APP_CONFIG.videoDefaults.main10Advanced.streamingSpatialAq,
+        );
       } else {
         settings.advancedVideo = resolvePresetAdvancedVideo(preset, preferredCodecForEncoder(settings.encoder), outputProfile.tier);
       }

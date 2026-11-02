@@ -4,7 +4,7 @@ import { test } from 'node:test';
 import { parseAppConfiguration } from './config.ts';
 import { parseBuiltInPresetConfiguration, resolvePresetOutputDefaults } from './presets.ts';
 import {
-  bufferSizeFor, resolveVideoOutputRates, scaleDimensionsFor, videoOutputProfile,
+  bufferSizeFor, musicVideoScaleDimensionsFor, resolveVideoOutputRates, scaleDimensionsFor, videoOutputProfile,
 } from './video-output-profile.ts';
 
 const presetConfiguration = parseBuiltInPresetConfiguration(
@@ -62,6 +62,15 @@ test('resolves Cellular delivery and Music Video tier overrides from presets.ini
   equal(music1080.encoderSpeed, configuration.presets['Music Video'].encoderSpeed);
   equal(music1080.maxRate, profiles['1080p'].maxRate);
   deepStrictEqual(music1080.resolution, ['-2', '-2']);
+});
+
+test('Music Video keeps sources through 1080p unchanged and uses its 4K scale above 1080p', () => {
+  const fourKScale = configuration.presets['Music Video'].outputTierDefaults['4k'].resolution!;
+  equal(musicVideoScaleDimensionsFor(1080, 'auto', fourKScale), null);
+  equal(musicVideoScaleDimensionsFor(720, 'auto', fourKScale), null);
+  deepStrictEqual(musicVideoScaleDimensionsFor(1081, 'auto', fourKScale), fourKScale);
+  deepStrictEqual(musicVideoScaleDimensionsFor(2160, 'auto', fourKScale), fourKScale);
+  equal(musicVideoScaleDimensionsFor(2160, 'disabled', fourKScale), null);
 });
 
 test('resolves preset profiles and speed tiers independently from configured rates', () => {

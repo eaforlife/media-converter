@@ -2,6 +2,12 @@ import type { AdvancedVideoSettings } from './shared-types';
 
 export type AdvancedVideoField = keyof AdvancedVideoSettings;
 
+export const main10SpatialAqForPreset = (
+  preset: string,
+  defaultSpatialAq: number,
+  streamingSpatialAq: number,
+) => preset === 'Streaming' ? streamingSpatialAq : defaultSpatialAq;
+
 export const supportedAdvancedVideoFields = (encoder: string): readonly AdvancedVideoField[] => {
   if (encoder === 'av1_nvenc') {
     return ['multipass', 'bRefMode', 'adaptiveBFrames', 'sceneCutDetection', 'rcLookahead', 'nonReferenceP', 'spatialAq', 'temporalAq'];

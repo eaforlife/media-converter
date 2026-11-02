@@ -1,12 +1,17 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { advancedVideoArguments, supportedAdvancedVideoFields } from './advanced-video-settings.ts';
+import { advancedVideoArguments, main10SpatialAqForPreset, supportedAdvancedVideoFields } from './advanced-video-settings.ts';
 import type { AdvancedVideoSettings } from './shared-types.ts';
 
 const settings: AdvancedVideoSettings = {
   bFrames: true, multipass: 2, bRefMode: 'middle', adaptiveBFrames: true,
   sceneCutDetection: true, rcLookahead: 27, nonReferenceP: true, spatialAq: 10, temporalAq: true,
 };
+
+test('uses Streaming Main10 spatial AQ only for Streaming', () => {
+  assert.equal(main10SpatialAqForPreset('Streaming', 6, 8), 8);
+  assert.equal(main10SpatialAqForPreset('Music Video', 6, 8), 6);
+});
 
 test('maps every requested advanced setting to NVENC options', () => {
   assert.deepEqual(advancedVideoArguments('hevc_nvenc', settings), [

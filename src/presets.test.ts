@@ -55,12 +55,13 @@ test('automatically exposes new predefined sections while keeping Music Video wo
   assert.equal(presets.Cinema.quality.nvenc, presets.Regular.quality.nvenc);
 });
 
-test('Music Video uses the Streaming video profile with Main10 and NVENC P6', () => {
+test('Music Video uses the Streaming video profile with Main10 and NVENC P7', () => {
   const preset = parseBuiltInPresets(presetFile)['Music Video'];
   const advanced = resolvePresetAdvancedVideo(preset, 'HEVC');
   assert.equal(preset.preferredVideoCodec, appConfig.videoDefaults.codec);
   assert.equal(preset.defaultMain10, true);
-  assert.equal(preset.quality.nvenc, '28');
+  assert.equal(preset.quality.nvenc, '26');
+  assert.equal(preset.encoderSpeed, 7);
   assert.equal(preset.audioCodec, 'opus');
   assert.equal(preset.audioRates.opus.stereo, '128k');
   assert.equal(preset.audioRates.opus.surround, '128k');

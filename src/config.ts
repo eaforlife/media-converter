@@ -33,7 +33,7 @@ export type AppConfiguration = {
       maxRate: number;
     }>>;
     codecRateMultipliers: Readonly<{ hevc: number; hevcMain10: number; av1: number; av1TenBit: number }>;
-    main10Advanced: Readonly<{ spatialAq: number; bFrames: boolean }>;
+    main10Advanced: Readonly<{ spatialAq: number; streamingSpatialAq: number; bFrames: boolean }>;
     bufferMultiplier: number;
   };
   encodeConcurrency: { minimumFpsPerJob: number };
@@ -170,6 +170,7 @@ export const parseAppConfiguration = (ini: string): AppConfiguration => {
       }),
       main10Advanced: Object.freeze({
         spatialAq: numberValue(requireValue(main10Advanced, 'Main10 Defaults', 'spatial_aq'), '[Main10 Defaults] spatial_aq', 0, 15),
+        streamingSpatialAq: numberValue(requireValue(main10Advanced, 'Main10 Defaults', 'streaming_spatial_aq'), '[Main10 Defaults] streaming_spatial_aq', 0, 15),
         bFrames: booleanValue(requireValue(main10Advanced, 'Main10 Defaults', 'b_frames'), '[Main10 Defaults] b_frames'),
       }),
       bufferMultiplier: numberValue(requireValue(videoBehavior, 'Video Behavior', 'buffer_multiplier'), '[Video Behavior] buffer_multiplier', 1, 10),
@@ -260,7 +261,7 @@ export const EMPTY_APP_CONFIGURATION: AppConfiguration = Object.freeze({
     preset: '', codec: 'H.264', main10: false,
     outputProfiles: Object.freeze({}) as AppConfiguration['videoDefaults']['outputProfiles'],
     codecRateMultipliers: Object.freeze({ hevc: 1, hevcMain10: 1, av1: 1, av1TenBit: 1 }),
-    main10Advanced: Object.freeze({ spatialAq: 0, bFrames: false }),
+    main10Advanced: Object.freeze({ spatialAq: 0, streamingSpatialAq: 0, bFrames: false }),
     bufferMultiplier: 1,
   }),
   encodeConcurrency: Object.freeze({ minimumFpsPerJob: 0 }),
