@@ -46,7 +46,7 @@ export type AppConfiguration = {
     capabilities: HardwareCapabilities;
   }> | null;
   personalizedDefaults: PersonalizedDefaults;
-  audioBitrates: { aac: readonly string[]; opus: readonly string[] };
+  audioBitrates: { aac: readonly string[]; aacMultichannelBase: readonly string[]; opus: readonly string[] };
   audioFilters: {
     timestampResample: string;
     downmix71: string;
@@ -66,6 +66,13 @@ export type AppConfiguration = {
 };
 
 const commaList = (value: string) => value.split(',').map((item) => item.trim()).filter(Boolean);
+const bitrateList = (value: string, label: string) => {
+  const values = commaList(value);
+  if (!values.length || values.some((item) => !/^\d+k$/i.test(item) || Number.parseInt(item, 10) < 1)) {
+    throw new Error(`${label} must be a comma-separated list of positive kbit/s values`);
+  }
+  return values;
+};
 const numberValue = (value: string, label: string, minimum: number, maximum: number) => {
   const parsed = Number(value);
   if (!Number.isInteger(parsed) || parsed < minimum || parsed > maximum) {
@@ -214,8 +221,9 @@ export const parseAppConfiguration = (ini: string): AppConfiguration => {
     })(),
     personalizedDefaults: Object.freeze(parsePersonalizedDefaults(sections.get('Personalized Defaults'))),
     audioBitrates: Object.freeze({
-      aac: Object.freeze(commaList(requireValue(audioBitrates, 'Audio Bitrates', 'aac'))),
-      opus: Object.freeze(commaList(requireValue(audioBitrates, 'Audio Bitrates', 'opus'))),
+      aac: Object.freeze(bitrateList(requireValue(audioBitrates, 'Audio Bitrates', 'aac'), '[Audio Bitrates] aac')),
+      aacMultichannelBase: Object.freeze(bitrateList(requireValue(audioBitrates, 'Audio Bitrates', 'aac_multichannel_base'), '[Audio Bitrates] aac_multichannel_base')),
+      opus: Object.freeze(bitrateList(requireValue(audioBitrates, 'Audio Bitrates', 'opus'), '[Audio Bitrates] opus')),
     }),
     audioFilters: Object.freeze({
       timestampResample: requireValue(audioFilters, 'Audio Filters', 'timestamp_resample'),
@@ -281,7 +289,7 @@ export const EMPTY_APP_CONFIGURATION: AppConfiguration = Object.freeze({
     smartFileNaming: false, lastPreset: '', lastSourceDirectory: '',
     workingPreset: null, separateAudioDirectory: false,
   }),
-  audioBitrates: Object.freeze({ aac: Object.freeze([]), opus: Object.freeze([]) }),
+  audioBitrates: Object.freeze({ aac: Object.freeze([]), aacMultichannelBase: Object.freeze([]), opus: Object.freeze([]) }),
   audioFilters: Object.freeze({
     timestampResample: 'aresample={rate_prefix}async=1',
     downmix71: '',

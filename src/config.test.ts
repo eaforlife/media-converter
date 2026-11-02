@@ -2,10 +2,12 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import test from 'node:test';
 import { parseAppConfiguration } from './config.ts';
+import { multichannelAacBitrateOptions } from './audio-bitrate.ts';
 import { parseIniSections } from './presets.ts';
 
 const configFile = fs.readFileSync(new URL('../config.ini', import.meta.url), 'utf8');
 const configSections = parseIniSections(configFile);
+const appPackage = JSON.parse(fs.readFileSync(new URL('../package.json', import.meta.url), 'utf8')) as { version: string };
 const configValue = (section: string, key: string) => {
   const value = configSections.get(section)?.get(key);
   assert.notEqual(value, undefined, `[${section}] ${key} should exist in config.ini`);
@@ -64,6 +66,9 @@ test('requires every job behavior default in config.ini', () => {
 
 test('loads app-level audio choices and filters from config.ini', () => {
   const configuration = parseAppConfiguration(configFile);
+  assert.deepEqual(configuration.audioBitrates.aac, configValue('Audio Bitrates', 'aac').split(','));
+  assert.deepEqual(configuration.audioBitrates.aacMultichannelBase,
+    configValue('Audio Bitrates', 'aac_multichannel_base').split(','));
   assert.deepEqual(configuration.audioBitrates.opus, configValue('Audio Bitrates', 'opus').split(','));
   assert.doesNotMatch(configFile, /\[Audio Preset:/);
   assert.equal(configuration.audioFilters.downmix51, configValue('Audio Filters', 'downmix_5_1'));
@@ -72,6 +77,25 @@ test('loads app-level audio choices and filters from config.ini', () => {
   assert.equal(configuration.musicVideoWorkflow.extractClosedCaptions,
     configValue('Music Video Workflow', 'extract_closed_captions') === '1');
   assert.equal(configuration.videoFilters.cudaTonemap, configValue('Video Filters', 'cuda_tonemap'));
+});
+
+test('rejects malformed configured audio bitrate choices', () => {
+  assert.throws(() => parseAppConfiguration(configFile.replace('aac_multichannel_base=32k,', 'aac_multichannel_base=bad,')),
+    /\[Audio Bitrates\] aac_multichannel_base must be a comma-separated list of positive kbit\/s values/);
+});
+
+test('configured AAC bitrate range scales to the expected six- and eight-channel limits', () => {
+  const configured = parseAppConfiguration(configFile).audioBitrates.aacMultichannelBase;
+  const sixChannel = multichannelAacBitrateOptions(configured, 6);
+  const eightChannel = multichannelAacBitrateOptions(configured, 8);
+  assert.deepEqual([sixChannel[0], sixChannel.at(-1)], ['96k', '768k']);
+  assert.deepEqual([eightChannel[0], eightChannel.at(-1)], ['128k', '1024k']);
+});
+
+test('urgent update policy requires the packaged release version', () => {
+  const policy = fs.readFileSync(new URL('../updatepolicy', import.meta.url), 'utf8');
+  assert.match(policy, /^urgentUpdate=1$/m);
+  assert.match(policy, new RegExp(`^minVersion=${appPackage.version.replaceAll('.', '\\.')}$`, 'm'));
 });
 
 test('loads available encoders from config.ini', () => {
