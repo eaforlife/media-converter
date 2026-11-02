@@ -1,10 +1,11 @@
-import type { AdvancedVideoSettings, ScaleMode } from './shared-types';
+import type { AdvancedVideoSettings, JobBehaviorDefaults, ScaleMode } from './shared-types';
 import type { OutputTier, VideoOutputProfiles } from './video-output-profile';
 import { iniVersion } from './ini-version.ts';
 
 export const MUSIC_VIDEO_PRESET_NAME = 'Music Video';
 export const REQUIRED_BUILT_IN_PRESET_NAMES = ['Archive', 'Regular', 'Streaming', 'Cellular', MUSIC_VIDEO_PRESET_NAME] as const;
 export type BuiltInPresetName = typeof REQUIRED_BUILT_IN_PRESET_NAMES[number];
+export type PresetJobBehavior = Partial<JobBehaviorDefaults>;
 export type PreferredVideoCodec = 'H.264' | 'HEVC' | 'AV1';
 export type PresetAudioCodec = 'aac' | 'opus';
 export type PresetFrameRate = 'passthrough' | number;
@@ -19,6 +20,7 @@ type AudioRates = Record<PresetAudioCodec, { stereo: string; surround: string }>
 type OutputTierDefaults = {
   preferredVideoCodec?: PreferredVideoCodec;
   encoderSpeed?: number;
+  maxRate?: number;
   resolution?: readonly [string, string];
   deliveryPreset?: string;
   multipass?: AdvancedVideoSettings['multipass'];
@@ -32,6 +34,7 @@ export type BuiltInPresetDefinition = {
   format: 'mp4' | 'mkv';
   preferredVideoCodec: PreferredVideoCodec;
   defaultMain10: boolean;
+  jobBehavior: PresetJobBehavior;
   encoderSpeed: number;
   encoderProfile: Partial<Record<PreferredVideoCodec, string>>;
   outputTierDefaults: Record<OutputTier, OutputTierDefaults>;
@@ -169,6 +172,13 @@ export const parseBuiltInPresetConfiguration = (ini: string): BuiltInPresetConfi
       format: enumValue(get('format'), ['mp4', 'mkv'], label('format')),
       preferredVideoCodec: enumValue(get('preferred_video_codec'), ['H.264', 'HEVC', 'AV1'], label('preferred_video_codec')),
       defaultMain10: optionalBooleanValue('default_main10') ?? false,
+      jobBehavior: {
+        ...(optionalBooleanValue('remux_audio') === undefined ? {} : { remuxAudio: optionalBooleanValue('remux_audio') }),
+        ...(optionalBooleanValue('remux_subtitles') === undefined ? {} : { remuxSubtitles: optionalBooleanValue('remux_subtitles') }),
+        ...(optionalBooleanValue('strip_metadata') === undefined ? {} : { stripMetadata: optionalBooleanValue('strip_metadata') }),
+        ...(optionalBooleanValue('do_not_replace_audio') === undefined ? {} : { doNotReplaceAudio: optionalBooleanValue('do_not_replace_audio') }),
+        ...(optionalBooleanValue('downmix_to_stereo') === undefined ? {} : { downmixToStereo: optionalBooleanValue('downmix_to_stereo') }),
+      },
       encoderSpeed: numberValue(get('encoder_speed'), label('encoder_speed'), 1, 7),
       encoderProfile: {},
       outputTierDefaults: Object.fromEntries(OUTPUT_TIERS.map((tier) => [tier, {
@@ -176,6 +186,7 @@ export const parseBuiltInPresetConfiguration = (ini: string): BuiltInPresetConfi
           ? enumValue(optional(`preferred_video_codec_${tier}`), ['H.264', 'HEVC', 'AV1'], label(`preferred_video_codec_${tier}`))
           : undefined,
         encoderSpeed: optionalNumberValue(optional(`encoder_speed_${tier}`), label(`encoder_speed_${tier}`), 1, 7),
+        maxRate: optionalNumberValue(optional(`h264_max_rate_${tier}`), label(`h264_max_rate_${tier}`), 1, 1_000_000),
         resolution: optional(`resolution_${tier}`)
           ? resolutionValue(optional(`resolution_${tier}`), label(`resolution_${tier}`))
           : undefined,
@@ -275,6 +286,11 @@ export const resolvePresetOutputDefaults = (
     resolution: overrides.resolution ?? outputProfile.scale,
     quality: overrides.quality[family] ?? deliveryPreset.quality[family],
     videoBitrate: outputProfile.videoBitrate,
-    maxRate: outputProfile.maxRate,
+    maxRate: overrides.maxRate ?? outputProfile.maxRate,
   };
 };
+
+export const resolvePresetJobBehavior = (
+  preset: BuiltInPresetDefinition,
+  defaults: JobBehaviorDefaults,
+): JobBehaviorDefaults => ({ ...defaults, ...preset.jobBehavior });

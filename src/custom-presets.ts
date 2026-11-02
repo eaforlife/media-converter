@@ -1,5 +1,5 @@
 import { booleanValue, parseIniSections, presetFrameRateValue } from './presets.ts';
-import type { AdvancedVideoSettings, OutputFormat, SavedPreset, ScaleMode } from './shared-types';
+import type { AdvancedVideoSettings, JobBehaviorDefaults, OutputFormat, SavedPreset, ScaleMode } from './shared-types';
 
 const outputFormats: readonly OutputFormat[] = ['mp4', 'mkv', 'webm', 'm4a', 'opus', 'source'];
 const scales: readonly ScaleMode[] = ['auto', '1080p', '720p', '360p', 'disabled'];
@@ -17,7 +17,12 @@ const oneOrZero = (value: boolean) => value ? '1' : '0';
 export const isValidCustomPresetName = (name: string) => Boolean(name.trim())
   && !/[\]\r\n]/.test(name);
 
-export const parseCustomPresets = (ini: string): SavedPreset[] => {
+export const parseCustomPresets = (
+  ini: string,
+  behaviorDefaults: JobBehaviorDefaults = {
+    remuxAudio: true, remuxSubtitles: true, stripMetadata: true, doNotReplaceAudio: false, downmixToStereo: true,
+  },
+): SavedPreset[] => {
   const sections = parseIniSections(ini);
   return [...sections].map(([name, values]) => {
     const get = (key: string, fallback?: string) => {
@@ -76,12 +81,12 @@ export const parseCustomPresets = (ini: string): SavedPreset[] => {
         pixelFormat10Bit: booleanValue(get('pixel_format_10_bit', '0'), label('pixel_format_10_bit')),
         scale,
         scaleLocked: booleanValue(get('scale_locked', '0'), label('scale_locked')),
-        remuxAudio: true,
-        remuxSubtitles: true,
-        stripMetadata: booleanValue(get('strip_metadata', '1'), label('strip_metadata')),
-        doNotReplaceAudio: booleanValue(get('do_not_replace_audio', '0'), label('do_not_replace_audio')),
+        remuxAudio: booleanValue(get('remux_audio', behaviorDefaults.remuxAudio ? '1' : '0'), label('remux_audio')),
+        remuxSubtitles: booleanValue(get('remux_subtitles', behaviorDefaults.remuxSubtitles ? '1' : '0'), label('remux_subtitles')),
+        stripMetadata: booleanValue(get('strip_metadata', behaviorDefaults.stripMetadata ? '1' : '0'), label('strip_metadata')),
+        doNotReplaceAudio: booleanValue(get('do_not_replace_audio', behaviorDefaults.doNotReplaceAudio ? '1' : '0'), label('do_not_replace_audio')),
         extractClosedCaptions: booleanValue(get('extract_closed_captions', '0'), label('extract_closed_captions')),
-        downmixToStereo: booleanValue(get('downmix_to_stereo', '1'), label('downmix_to_stereo')),
+        downmixToStereo: booleanValue(get('downmix_to_stereo', behaviorDefaults.downmixToStereo ? '1' : '0'), label('downmix_to_stereo')),
         dynamicRangeCompression: booleanValue(get('dynamic_range_compression', '1'), label('dynamic_range_compression')),
         resampleLosslessTo48k: booleanValue(get('resample_lossless_to_48k', '1'), label('resample_lossless_to_48k')),
         normalizeAudio: booleanValue(get('normalize_audio', '1'), label('normalize_audio')),
@@ -128,6 +133,8 @@ tone_map_hdr_to_sdr=${oneOrZero(preset.filters.toneMapHdrToSdr)}
 pixel_format_10_bit=${oneOrZero(preset.filters.pixelFormat10Bit)}
 scale=${preset.filters.scale}
 scale_locked=${oneOrZero(preset.filters.scaleLocked)}
+remux_audio=${oneOrZero(preset.filters.remuxAudio)}
+remux_subtitles=${oneOrZero(preset.filters.remuxSubtitles)}
 strip_metadata=${oneOrZero(preset.filters.stripMetadata)}
 do_not_replace_audio=${oneOrZero(preset.filters.doNotReplaceAudio)}
 extract_closed_captions=${oneOrZero(preset.filters.extractClosedCaptions)}

@@ -24,7 +24,7 @@ test('compares preset contents independently of BOM and platform line endings', 
   assert.equal(presetContentsMatch(presetFile, changedPreset), false);
 });
 
-test('current presets inherit app rates and Music Video preserves intentional workflow defaults', () => {
+test('presets inherit app rates unless a tier override is specified and preserve workflow defaults', () => {
   const { presets } = parseBuiltInPresetConfiguration(presetFile);
   const config = parseAppConfiguration(configFile);
   for (const tier of ['4k', '1080p', '720p', '360p'] as const) {
@@ -34,8 +34,8 @@ test('current presets inherit app rates and Music Video preserves intentional wo
   assert.equal(presets['Music Video'].audioCodec, 'opus');
   assert.equal(presets['Music Video'].audioRates.opus.stereo, '128k');
   assert.equal(presets['Music Video'].defaultMain10, true);
-  assert.equal(presets['Music Video'].advancedVideo.spatialAq, config.videoDefaults.main10Advanced.spatialAq);
-  assert.equal(presets['Music Video'].advancedVideo.bFrames, false);
+  assert.equal(presets['Music Video'].advancedVideo.spatialAq, 8);
+  assert.equal(presets['Music Video'].advancedVideo.bFrames, true);
 });
 
 test('INI version tags normalize minor-only versions and only replace older local data', () => {

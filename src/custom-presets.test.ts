@@ -18,6 +18,8 @@ test('round trips custom presets through integer-based INI values', () => {
   const ini = serializeCustomPresets([preset]);
   assert.match(ini, /delivery_mode=1/);
   assert.match(ini, /dynamic_range_compression=1/);
+  assert.match(ini, /remux_audio=1/);
+  assert.match(ini, /remux_subtitles=1/);
   assert.doesNotMatch(ini, /=true|=false/);
   assert.deepEqual(parseCustomPresets(ini), [preset]);
 });
@@ -35,4 +37,12 @@ test('older custom presets default to frame-rate passthrough and invalid rates a
     () => parseCustomPresets(ini.replace('frame_rate=23.976', 'frame_rate=0')),
     /frame_rate must be passthrough or a number from 1 to 240/,
   );
+});
+
+test('older custom presets inherit missing job behavior from config defaults', () => {
+  const defaults = { remuxAudio: false, remuxSubtitles: false, stripMetadata: false, doNotReplaceAudio: true, downmixToStereo: false };
+  const ini = serializeCustomPresets([preset]).replace(/(?:remux_(?:audio|subtitles)|downmix_to_stereo)=\d+\n/g, '');
+  assert.equal(parseCustomPresets(ini, defaults)[0].filters.remuxAudio, false);
+  assert.equal(parseCustomPresets(ini, defaults)[0].filters.remuxSubtitles, false);
+  assert.equal(parseCustomPresets(ini, defaults)[0].filters.downmixToStereo, false);
 });

@@ -2,12 +2,26 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { parseCustomPresets } from './custom-presets.ts';
 import { DEFAULT_PERSONALIZED_DEFAULTS, parsePersonalizedDefaults, replacePersonalizedDefaults } from './personalized-defaults.ts';
-import { parseIniSections, presetFrameRateValue } from './presets.ts';
-import type { AdvancedVideoSettings, SavedPreset } from './shared-types';
+import { booleanValue, parseIniSections, presetFrameRateValue } from './presets.ts';
+import type { AdvancedVideoSettings, JobBehaviorDefaults, SavedPreset } from './shared-types';
 
 export type CustomPresetMigrationResult = { safeToCleanPrevious: boolean; copiedFrom: string | null };
 
-const legacyPresetFromXml = (xml: string): SavedPreset | null => {
+const jobBehaviorDefaultsFromConfig = (contents: string): JobBehaviorDefaults => {
+  const section = parseIniSections(contents).get('Job Behavior Defaults');
+  const value = (key: string, legacyDefault: boolean) => booleanValue(
+    section?.get(key) ?? (legacyDefault ? '1' : '0'), `[Job Behavior Defaults] ${key}`,
+  );
+  return {
+    remuxAudio: value('remux_audio', true),
+    remuxSubtitles: value('remux_subtitles', true),
+    stripMetadata: value('strip_metadata', true),
+    doNotReplaceAudio: value('do_not_replace_audio', false),
+    downmixToStereo: value('downmix_to_stereo', true),
+  };
+};
+
+const legacyPresetFromXml = (xml: string, behaviorDefaults: JobBehaviorDefaults): SavedPreset | null => {
   const body = xml.match(/<workingPreset>([\s\S]*?)<\/workingPreset>/i)?.[1] ?? '';
   const match = body.match(/<preset\s+name="([^"]*)">([\s\S]*?)<\/preset>/i);
   if (!match) return null;
@@ -55,9 +69,13 @@ const legacyPresetFromXml = (xml: string): SavedPreset | null => {
     filters: {
       autoCrop: bool(filters.autoCrop, true), toneMapHdrToSdr: bool(filters.toneMapHdrToSdr, true),
       pixelFormat10Bit: bool(filters.pixelFormat10Bit, false), scale: scale as SavedPreset['filters']['scale'],
-      scaleLocked: bool(filters.scaleLocked, false), remuxAudio: true, remuxSubtitles: true, stripMetadata: true,
-      doNotReplaceAudio: bool(filters.doNotReplaceAudio, false), extractClosedCaptions: bool(filters.extractClosedCaptions, false),
-      downmixToStereo: bool(filters.downmixToStereo, true), dynamicRangeCompression: bool(filters.dynamicRangeCompression, true),
+      scaleLocked: bool(filters.scaleLocked, false),
+      remuxAudio: bool(filters.remuxAudio, behaviorDefaults.remuxAudio),
+      remuxSubtitles: bool(filters.remuxSubtitles, behaviorDefaults.remuxSubtitles),
+      stripMetadata: bool(filters.stripMetadata, behaviorDefaults.stripMetadata),
+      doNotReplaceAudio: bool(filters.doNotReplaceAudio, behaviorDefaults.doNotReplaceAudio),
+      extractClosedCaptions: bool(filters.extractClosedCaptions, false),
+      downmixToStereo: bool(filters.downmixToStereo, behaviorDefaults.downmixToStereo), dynamicRangeCompression: bool(filters.dynamicRangeCompression, true),
       resampleLosslessTo48k: bool(filters.resampleLosslessTo48k, true), normalizeAudio: bool(filters.normalizeAudio, true),
     },
   };
@@ -69,6 +87,7 @@ export const migratePersonalizedDefaults = async (
   legacyDataDirectories: readonly string[],
 ) => {
   const currentContents = await fs.promises.readFile(currentConfigPath, 'utf8');
+  const behaviorDefaults = jobBehaviorDefaultsFromConfig(currentContents);
   const currentDefaults = parsePersonalizedDefaults(parseIniSections(currentContents).get('Personalized Defaults'));
   if (JSON.stringify(currentDefaults) !== JSON.stringify(DEFAULT_PERSONALIZED_DEFAULTS)) return null;
   const candidates = [
@@ -102,7 +121,7 @@ export const migratePersonalizedDefaults = async (
       smartFileNaming: bool('smartFileNaming', true),
       lastPreset: unescape(read('lastPreset') || 'Streaming'),
       lastSourceDirectory: unescape(read('lastSourceDirectory') || ''),
-      workingPreset: legacyPresetFromXml(xml),
+      workingPreset: legacyPresetFromXml(xml, behaviorDefaults),
       separateAudioDirectory: bool('separateAudioDirectory', true),
     };
     await fs.promises.writeFile(currentConfigPath, replacePersonalizedDefaults(currentContents, imported), 'utf8');

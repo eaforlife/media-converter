@@ -55,12 +55,12 @@ test('resolves Cellular delivery and Music Video tier overrides from presets.ini
 
   const music4k = resolvePresetOutputDefaults(configuration, configuration.presets['Music Video'], '4k', 'nvenc');
   equal(music4k.encoderSpeed, configuration.presets['Music Video'].encoderSpeed);
-  equal(music4k.maxRate, profiles['4k'].maxRate);
+  equal(music4k.maxRate, 11000);
   deepStrictEqual(music4k.resolution, ['2960', '-2']);
 
   const music1080 = resolvePresetOutputDefaults(configuration, configuration.presets['Music Video'], '1080p', 'nvenc');
   equal(music1080.encoderSpeed, configuration.presets['Music Video'].encoderSpeed);
-  equal(music1080.maxRate, profiles['1080p'].maxRate);
+  equal(music1080.maxRate, 9000);
   deepStrictEqual(music1080.resolution, ['-2', '-2']);
 });
 
@@ -93,7 +93,9 @@ test('resolves preset profiles and speed tiers independently from configured rat
     const tierDefaults = preset.outputTierDefaults[expected.tier];
     equal(defaults.encoderProfile, preset.encoderProfile['H.264'] ?? '');
     equal(defaults.encoderSpeed, tierDefaults.encoderSpeed ?? preset.encoderSpeed);
-    equal(defaults.maxRate, profiles[expected.tier].maxRate);
+    equal(defaults.maxRate, expected.preset === 'Music Video' && expected.tier === '1080p'
+      ? 9000
+      : profiles[expected.tier].maxRate);
   }
 
   const streamingHevc = resolvePresetOutputDefaults(

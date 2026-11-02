@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { appStoragePath } from './app-storage';
+import { APP_CONFIG } from './config';
 import { parseCustomPresets, serializeCustomPresets } from './custom-presets';
 import type { SavedPreset } from './shared-types';
 
@@ -8,7 +9,7 @@ export const customPresetFilePath = () => path.join(appStoragePath(), 'custom_pr
 
 export const loadCustomPresets = async () => {
   try {
-    return parseCustomPresets(await fs.promises.readFile(customPresetFilePath(), 'utf8'));
+    return parseCustomPresets(await fs.promises.readFile(customPresetFilePath(), 'utf8'), APP_CONFIG.jobBehaviorDefaults);
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') return [];
     throw error;

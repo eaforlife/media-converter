@@ -7,7 +7,7 @@ import { iniVersion } from './ini-version.ts';
 import { encoderSpeedArguments, encoderTuneArguments } from './encoder-controls.ts';
 import {
   parseBuiltInPresetConfiguration, parseBuiltInPresets, predefinedPresetNames,
-  preferredVideoCodecForPreset, resolvePresetAdvancedVideo,
+  preferredVideoCodecForPreset, resolvePresetAdvancedVideo, resolvePresetJobBehavior,
 } from './presets.ts';
 
 const presetFile = fs.readFileSync(new URL('../presets.ini', import.meta.url), 'utf8');
@@ -55,13 +55,13 @@ test('automatically exposes new predefined sections while keeping Music Video wo
   assert.equal(presets.Cinema.quality.nvenc, presets.Regular.quality.nvenc);
 });
 
-test('Music Video uses the Streaming video profile with Main10 and NVENC P7', () => {
+test('Music Video uses Main10 and NVENC P6 with its tier rate overrides', () => {
   const preset = parseBuiltInPresets(presetFile)['Music Video'];
   const advanced = resolvePresetAdvancedVideo(preset, 'HEVC');
   assert.equal(preset.preferredVideoCodec, appConfig.videoDefaults.codec);
   assert.equal(preset.defaultMain10, true);
   assert.equal(preset.quality.nvenc, '26');
-  assert.equal(preset.encoderSpeed, 7);
+  assert.equal(preset.encoderSpeed, 6);
   assert.equal(preset.audioCodec, 'opus');
   assert.equal(preset.audioRates.opus.stereo, '128k');
   assert.equal(preset.audioRates.opus.surround, '128k');
@@ -69,14 +69,34 @@ test('Music Video uses the Streaming video profile with Main10 and NVENC P7', ()
   assert.equal(preset.outputTierDefaults['1080p'].resolution?.[1], '-2');
   assert.deepEqual(encoderSpeedArguments('hevc_nvenc', preset.encoderSpeed), ['-preset', `p${preset.encoderSpeed}`]);
   assert.deepEqual(encoderTuneArguments('hevc_nvenc', preset.encoderTune.nvenc), ['-tune', 'hq']);
-  assert.equal(preset.advancedVideo.spatialAq, appConfig.videoDefaults.main10Advanced.spatialAq);
-  assert.equal(advanced.bFrames, false);
+  assert.equal(preset.advancedVideo.spatialAq, 8);
+  assert.equal(preset.advancedVideo.sceneCutDetection, false);
+  assert.equal(advanced.bFrames, true);
   assert.deepEqual(advancedVideoArguments('hevc_nvenc', advanced), [
-    '-multipass', String(advanced.multipass), '-bf', '0', '-b_ref_mode', 'middle', '-b_adapt', '1',
-    '-no-scenecut', '0', '-rc-lookahead', '26', '-nonref_p', '0',
+    '-multipass', String(advanced.multipass), '-bf', '5', '-b_ref_mode', 'middle', '-b_adapt', '1',
+    '-no-scenecut', '1', '-rc-lookahead', '26', '-nonref_p', '0',
     '-spatial-aq', '1', '-temporal-aq', '0', '-aq-strength', String(preset.advancedVideo.spatialAq),
   ]);
   assert.equal(preset.bitrateControl, parseBuiltInPresets(presetFile).Streaming.bitrateControl);
+});
+
+test('Streaming uses the requested advanced video values and 4K rate override', () => {
+  const preset = parseBuiltInPresets(presetFile).Streaming;
+  const advanced = resolvePresetAdvancedVideo(preset, 'HEVC');
+  assert.equal(advanced.bFrames, true);
+  assert.equal(advanced.sceneCutDetection, false);
+  assert.equal(advanced.spatialAq, 8);
+  assert.equal(appConfig.videoDefaults.main10Advanced.streamingSpatialAq, 8);
+  assert.equal(preset.outputTierDefaults['4k'].maxRate, 10000);
+});
+
+test('preset job behavior falls back to config.ini and accepts preset-specific values', () => {
+  const preset = parseBuiltInPresets(presetFile).Streaming;
+  assert.deepEqual(resolvePresetJobBehavior(preset, appConfig.jobBehaviorDefaults), appConfig.jobBehaviorDefaults);
+  const override = parseBuiltInPresets(presetFile.replace('[Streaming]', '[Streaming]\nremux_audio=0\nstrip_metadata=1')).Streaming;
+  assert.deepEqual(resolvePresetJobBehavior(override, appConfig.jobBehaviorDefaults), {
+    ...appConfig.jobBehaviorDefaults, remuxAudio: false, stripMetadata: true,
+  });
 });
 
 test('streaming tiers retain their configured speed and advanced settings', () => {
@@ -106,7 +126,8 @@ test('streaming tiers retain their configured speed and advanced settings', () =
 test('preset file contains no obsolete rate, output, tier-quality, or profile settings', () => {
   const presets = parseBuiltInPresets(presetFile);
   assert.doesNotMatch(presetFile, /^\[Output: /m);
-  assert.doesNotMatch(presetFile, /^(?:video_bitrate|(?:h264_)?max_rate(?:_[^=]+)?|buffer_multiplier|bitrate_multiplier_[^=]+|profile_(?:h264|hevc|av1)|encoder_speed_h264_[^=]+|quality_[^=]+_(?:4k|1080p|720p|360p))=/m);
+  assert.doesNotMatch(presetFile, /^(?:video_bitrate|max_rate(?:_[^=]+)?|buffer_multiplier|bitrate_multiplier_[^=]+|profile_(?:h264|hevc|av1)|encoder_speed_h264_[^=]+|quality_[^=]+_(?:4k|1080p|720p|360p))=/m);
+  assert.match(presetFile, /^h264_max_rate_(?:4k|1080p)=\d+$/m);
   assert.deepEqual(presets.Streaming.encoderProfile, {});
   assert.deepEqual(presets['Music Video'].encoderProfile, {});
   assert.equal(presets['Music Video'].scaleLocked, true);

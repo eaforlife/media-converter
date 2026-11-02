@@ -1,5 +1,5 @@
 import { booleanValue, parseIniSections } from './presets.ts';
-import type { HardwareCapabilities, VideoEncoderCapability } from './shared-types';
+import type { HardwareCapabilities, JobBehaviorDefaults, VideoEncoderCapability } from './shared-types';
 import { parsePersonalizedDefaults, type PersonalizedDefaults } from './personalized-defaults.ts';
 
 export const URGENT_UPDATE_SOURCE_URL = 'https://raw.githubusercontent.com/eaforlife/media-converter/main/updatepolicy';
@@ -37,6 +37,7 @@ export type AppConfiguration = {
     bufferMultiplier: number;
   };
   encodeConcurrency: { minimumFpsPerJob: number };
+  jobBehaviorDefaults: JobBehaviorDefaults;
   systemCapabilities: Readonly<{
     cacheTag: string;
     driverVersion: string;
@@ -119,6 +120,7 @@ export const parseAppConfiguration = (ini: string): AppConfiguration => {
   const main10Advanced = requireSection(sections, 'Main10 Defaults');
   const videoBehavior = requireSection(sections, 'Video Behavior');
   const encodeConcurrency = sections.get('Encode Concurrency');
+  const jobBehavior = requireSection(sections, 'Job Behavior Defaults');
   const defaultCodec = requireValue(uiDefaults, 'UI Defaults', 'default_video_codec') as AppConfiguration['videoDefaults']['codec'];
   if (!['H.264', 'HEVC', 'AV1'].includes(defaultCodec)) throw new Error('[UI Defaults] default_video_codec is invalid');
   const audioBitrates = requireSection(sections, 'Audio Bitrates');
@@ -180,6 +182,13 @@ export const parseAppConfiguration = (ini: string): AppConfiguration => {
         encodeConcurrency?.get('minimum_fps_per_job') ?? '0',
         '[Encode Concurrency] minimum_fps_per_job', 0, 100_000,
       ),
+    }),
+    jobBehaviorDefaults: Object.freeze({
+      remuxAudio: booleanValue(requireValue(jobBehavior, 'Job Behavior Defaults', 'remux_audio'), '[Job Behavior Defaults] remux_audio'),
+      remuxSubtitles: booleanValue(requireValue(jobBehavior, 'Job Behavior Defaults', 'remux_subtitles'), '[Job Behavior Defaults] remux_subtitles'),
+      stripMetadata: booleanValue(requireValue(jobBehavior, 'Job Behavior Defaults', 'strip_metadata'), '[Job Behavior Defaults] strip_metadata'),
+      doNotReplaceAudio: booleanValue(requireValue(jobBehavior, 'Job Behavior Defaults', 'do_not_replace_audio'), '[Job Behavior Defaults] do_not_replace_audio'),
+      downmixToStereo: booleanValue(requireValue(jobBehavior, 'Job Behavior Defaults', 'downmix_to_stereo'), '[Job Behavior Defaults] downmix_to_stereo'),
     }),
     systemCapabilities: (() => {
       const cache = sections.get('System Capability Cache');
@@ -265,6 +274,7 @@ export const EMPTY_APP_CONFIGURATION: AppConfiguration = Object.freeze({
     bufferMultiplier: 1,
   }),
   encodeConcurrency: Object.freeze({ minimumFpsPerJob: 0 }),
+  jobBehaviorDefaults: Object.freeze({ remuxAudio: false, remuxSubtitles: false, stripMetadata: false, doNotReplaceAudio: false, downmixToStereo: false }),
   systemCapabilities: null,
   personalizedDefaults: Object.freeze({
     hardwareAcceleration: false, useStableFfmpeg: true, simultaneousEncoding: false,

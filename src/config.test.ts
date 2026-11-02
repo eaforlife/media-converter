@@ -22,6 +22,15 @@ test('loads app defaults from config.ini', () => {
     Number(configSections.get('Video Output: 4k')?.get('h264_max_rate')));
   assert.equal(configuration.videoDefaults.main10Advanced.streamingSpatialAq,
     Number(configSections.get('Main10 Defaults')?.get('streaming_spatial_aq')));
+  assert.equal(configuration.videoDefaults.main10Advanced.spatialAq, 8);
+  assert.equal(configuration.videoDefaults.main10Advanced.bFrames, true);
+  assert.deepEqual(configuration.jobBehaviorDefaults, {
+    remuxAudio: configValue('Job Behavior Defaults', 'remux_audio') === '1',
+    remuxSubtitles: configValue('Job Behavior Defaults', 'remux_subtitles') === '1',
+    stripMetadata: configValue('Job Behavior Defaults', 'strip_metadata') === '1',
+    doNotReplaceAudio: configValue('Job Behavior Defaults', 'do_not_replace_audio') === '1',
+    downmixToStereo: configValue('Job Behavior Defaults', 'downmix_to_stereo') === '1',
+  });
   assert.deepEqual(configuration.videoDefaults.codecRateMultipliers, {
     hevc: Number(configSections.get('Video Codec Rate Multipliers')?.get('hevc')),
     hevcMain10: Number(configSections.get('Video Codec Rate Multipliers')?.get('hevc_main10')),
@@ -44,6 +53,13 @@ test('requires the remote config source to use HTTPS', () => {
     () => parseAppConfiguration(configFile.replace(configValue('App', 'config_source_url'), 'http://example.test/config.ini')),
     /config_source_url must be a valid HTTPS URL/,
   );
+});
+
+test('requires every job behavior default in config.ini', () => {
+  assert.throws(() => parseAppConfiguration(configFile.replace(/\n\[Job Behavior Defaults\][\s\S]*?(?=\n\[)/, '\n')),
+    /config.ini is missing the \[Job Behavior Defaults\] section/);
+  assert.throws(() => parseAppConfiguration(configFile.replace('remux_audio=1\n', '')),
+    /\[Job Behavior Defaults\] is missing remux_audio/);
 });
 
 test('loads app-level audio choices and filters from config.ini', () => {

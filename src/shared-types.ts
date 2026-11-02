@@ -112,8 +112,8 @@ export type FilterSettings = {
   pixelFormat10Bit: boolean;
   scale: ScaleMode;
   scaleLocked: boolean;
-  remuxAudio: true;
-  remuxSubtitles: true;
+  remuxAudio: boolean;
+  remuxSubtitles: boolean;
   stripMetadata: boolean;
   doNotReplaceAudio: boolean;
   extractClosedCaptions: boolean;
@@ -122,6 +122,9 @@ export type FilterSettings = {
   resampleLosslessTo48k: boolean;
   normalizeAudio: boolean;
 };
+
+export type JobBehaviorDefaults = Pick<FilterSettings,
+  'remuxAudio' | 'remuxSubtitles' | 'stripMetadata' | 'doNotReplaceAudio' | 'downmixToStereo'>;
 
 export type VideoEncoderCapability = {
   id: string;
