@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import test from 'node:test';
-import { bitrateForChannels, closestBitrateOption, multichannelAacBitrateOptions } from './audio-bitrate.ts';
+import { bitrateForChannels, closestBitrateOption, maxAudioChannels, multichannelAacBitrateOptions, needsMultichannelAac } from './audio-bitrate.ts';
 import { parseAppConfiguration } from './config.ts';
 
 const stereoChoices = parseAppConfiguration(
@@ -31,4 +31,12 @@ test('selects the closest configured multichannel rate and rejects invalid value
   assert.equal(closestBitrateOption(configuredChoice, choices), configuredChoice);
   assert.throws(() => bitrateForChannels('stereo', 6), /Invalid audio bitrate/);
   assert.throws(() => multichannelAacBitrateOptions(stereoChoices, 2), /require more than two channels/);
+});
+
+test('requires multichannel AAC only when an audio source is left undownmixed', () => {
+  assert.equal(maxAudioChannels([2, 6, 4]), 6);
+  assert.equal(maxAudioChannels([]), 0);
+  assert.equal(needsMultichannelAac(6, false), true);
+  assert.equal(needsMultichannelAac(2, false), false);
+  assert.equal(needsMultichannelAac(6, true), false);
 });

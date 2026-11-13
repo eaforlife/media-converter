@@ -11,6 +11,11 @@ export const bitrateForChannels = (stereoBitrate: string, channels: number) => {
   return `${Math.round(kbpsValue(stereoBitrate) * channels / 2)}k`;
 };
 
+export const needsMultichannelAac = (channels: number, downmixToStereo: boolean) =>
+  channels > 2 && !downmixToStereo;
+
+export const maxAudioChannels = (channelCounts: readonly number[]) => Math.max(0, ...channelCounts);
+
 export const multichannelAacBitrateOptions = (stereoBitrateOptions: readonly string[], channels: number) => {
   if (!Number.isInteger(channels) || channels <= 2) {
     throw new Error('Multichannel AAC bitrate options require more than two channels');

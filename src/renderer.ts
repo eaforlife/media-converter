@@ -3,7 +3,7 @@ import { APP_CODENAME, APP_CONFIG, setAppConfiguration } from './config.ts';
 import { encodedAudioFilter } from './audio-filters';
 import { AUDIO_PRESET_NAMES, shouldResampleLossless } from './audio-workflow';
 import type { AudioPresetName } from './audio-workflow';
-import { bitrateForChannels, closestBitrateOption, multichannelAacBitrateOptions } from './audio-bitrate';
+import { bitrateForChannels, closestBitrateOption, maxAudioChannels, multichannelAacBitrateOptions, needsMultichannelAac } from './audio-bitrate';
 import {
   commonSeriesFolderName, parseEpisodeIdentity, preservedOutputBaseName, sanitizePathSegment,
   smartMovieFolderName, smartSeriesBaseName,
@@ -257,6 +257,14 @@ const audioQualityScore = (track: AudioStreamInfo) => {
   const codecBonus = track.isTrueHd ? 5 : track.isDts ? 4 : track.isAtmos ? 3 : track.isDolbyDigitalPlus ? 2 : track.codec === 'aac' ? 1 : 0;
   return track.channels * 1_000_000_000 + codecBonus * 100_000_000 + (track.bitRate ?? 0);
 };
+const audioWorkflowChannels = (source: SourceFile) => maxAudioChannels((source.media?.audio ?? []).map((track) => track.channels));
+const audioWorkflowNeedsMultichannelAac = (source: SourceFile, settings: JobSettings) =>
+  isAudioWorkflow(source) && needsMultichannelAac(audioWorkflowChannels(source), settings.filters.downmixToStereo);
+const audioWorkflowAacBitrate = (preset: string, source: SourceFile) => {
+  const channels = audioWorkflowChannels(source);
+  const options = multichannelAacBitrateOptions(APP_CONFIG.audioBitrates.aacMultichannelBase, channels);
+  return closestBitrateOption(bitrateForChannels(audioBitrateFor(preset, 'libfdk_aac', true), channels), options);
+};
 const preferredAudioIndexes = (tracks: AudioStreamInfo[]) => {
   const selected = new Set<number>();
   const bestByLanguage = new Map<string, AudioStreamInfo>();
@@ -437,15 +445,18 @@ const applyMetadataChangesToQueue = (originSource: SourceFile) => {
 const initialAudioSettings = (source: SourceFile): JobSettings => {
   const track = source.media?.audio[0];
   const preset = builtInPreset('Streaming')!;
+  const downmixToStereo = defaultFilters(source).downmixToStereo;
+  const codec: AudioCodec = needsMultichannelAac(audioWorkflowChannels(source), downmixToStereo) ? 'libfdk_aac' : preset.audioCodec === 'opus' ? 'libopus' : 'libfdk_aac';
   return {
-    preset: 'Streaming', format: 'opus', encoder: '', encoderSpeed: 4, encoderTune: '', encoderProfile: '', resolution: '', quality: '',
+    preset: 'Streaming', format: codec === 'libopus' ? 'opus' : 'm4a', encoder: '', encoderSpeed: 4, encoderTune: '', encoderProfile: '', resolution: '', quality: '',
     videoBitrate: '0', maxRate: '0', bufferMultiplier: 0, bufferSize: '0', deliveryMode: false,
     frameRate: 'passthrough', frameRateOverride: false,
     advancedVideo: emptyAdvancedVideo(),
     processing: { video: false, audio: true, subtitles: false },
     videoMetadata: copyMetadata('und', { default: false, forced: false, hearingImpaired: false }),
     audio: track ? { [track.index]: {
-      enabled: true, codec: preset.audioCodec === 'opus' ? 'libopus' : 'libfdk_aac', bitrate: audioBitrateFor('Streaming', preset.audioCodec === 'opus' ? 'libopus' : 'libfdk_aac', track.isStereo),
+      enabled: true, codec, bitrate: needsMultichannelAac(audioWorkflowChannels(source), downmixToStereo) && codec === 'libfdk_aac'
+        ? audioWorkflowAacBitrate('Streaming', source) : audioBitrateFor('Streaming', codec, track.isStereo),
       flags: { default: true, forced: false, hearingImpaired: false },
       metadata: copyMetadata(track.language, track.flags),
     } } : {},
@@ -465,9 +476,13 @@ const applyAudioPreset = (source: SourceFile, presetName: string) => {
     settings.format = saved.format;
     settings.processing = { video: false, audio: saved.audioCodec !== 'copy', subtitles: false };
     settings.filters = { ...saved.filters };
+    const multichannelAac = needsMultichannelAac(audioWorkflowChannels(source), settings.filters.downmixToStereo);
+    const codec = multichannelAac && saved.audioCodec === 'libopus' ? 'libfdk_aac' : saved.audioCodec;
+    if (codec !== saved.audioCodec) settings.format = 'm4a';
     for (const track of source.media?.audio ?? []) {
       settings.audio[track.index] = {
-        enabled: true, codec: saved.audioCodec, bitrate: saved.audioBitrate,
+        enabled: true, codec, bitrate: multichannelAac && codec === 'libfdk_aac'
+          ? audioWorkflowAacBitrate(presetName, source) : saved.audioBitrate,
         flags: { default: true, forced: false, hearingImpaired: false },
         metadata: settings.audio[track.index]?.metadata ?? copyMetadata(track.language, track.flags),
       };
@@ -480,7 +495,8 @@ const applyAudioPreset = (source: SourceFile, presetName: string) => {
   const settings = settingsByPath.get(source.path) ?? initialAudioSettings(source);
   const preset = builtInPreset(name);
   const passthrough = name === 'Passthrough';
-  const codec: AudioCodec = passthrough ? 'copy' : preset?.audioCodec === 'opus' ? 'libopus' : 'libfdk_aac';
+  const hasUnmixedSurround = needsMultichannelAac(audioWorkflowChannels(source), jobBehaviorForPreset(preset).downmixToStereo);
+  const codec: AudioCodec = passthrough ? 'copy' : hasUnmixedSurround ? 'libfdk_aac' : preset?.audioCodec === 'opus' ? 'libopus' : 'libfdk_aac';
   settingsByPath.set(source.path, settings);
   settings.preset = name;
   settings.format = passthrough ? 'source' : codec === 'libopus' ? 'opus' : 'm4a';
@@ -494,7 +510,9 @@ const applyAudioPreset = (source: SourceFile, presetName: string) => {
   for (const track of source.media?.audio ?? []) {
     settings.audio[track.index] = {
       enabled: true, codec,
-      bitrate: passthrough ? '' : audioBitrateFor(name, codec, track.isStereo || !settings.filters.downmixToStereo),
+      bitrate: passthrough ? '' : hasUnmixedSurround
+        ? audioWorkflowAacBitrate(name, source)
+        : audioBitrateFor(name, codec, track.isStereo || !settings.filters.downmixToStereo),
       flags: { default: true, forced: false, hearingImpaired: false },
       metadata: settings.audio[track.index]?.metadata ?? copyMetadata(track.language, track.flags),
     };
@@ -2190,8 +2208,11 @@ const renderAudioSettings = (source: SourceFile, settings: JobSettings) => {
     const track = tracks[0];
     const setting = settings.audio[track.index];
     const passthrough = isAudioPassthrough(settings);
-    const codecOptions = `<option value="libfdk_aac"${selected(setting.codec === 'libfdk_aac')}>AAC (libfdk_aac)</option><option value="libopus"${selected(setting.codec === 'libopus')}>Opus</option><option value="copy"${selected(setting.codec === 'copy')}>Passthrough</option>`;
-    return `<div class="track-stack"><section class="track-card ${passthrough ? 'track-disabled' : ''}"><div class="track-heading"><div><span>AUDIO OUTPUT</span><h3>${escapeHtml(track.codecLabel)}</h3></div><span class="track-badge">${escapeHtml(track.channelLayout)}</span></div><div class="track-meta"><span>${track.channels} channel${track.channels === 1 ? '' : 's'}</span><span>${track.sampleRate ? `${track.sampleRate / 1000} kHz` : 'Unknown sample rate'}</span><span>${track.isLossless ? 'Lossless source' : 'Lossy source'}</span></div><fieldset class="processing-fieldset"${passthrough ? ' disabled' : ''}><div class="form-grid"><label>Output codec<select data-audio-codec="${track.index}">${codecOptions}</select></label><label>Bitrate<select data-audio-bitrate="${track.index}">${bitrateOptions(setting.codec, setting.bitrate)}</select></label></div>${!track.isStereo && settings.filters.downmixToStereo ? `<div class="downmix-notice">${icon('audio', 16)} ${escapeHtml(track.channelLayout)} will be downmixed to stereo${track.channels > 2 && settings.filters.dynamicRangeCompression ? ' and dynamically compressed' : ''}.</div>` : ''}</fieldset>${renderMetadataEditor('audio', track.index, setting.metadata, !passthrough, false)}</section><section class="command-card"><div class="command-heading"><div><span>COMMAND PREVIEW</span><strong>${passthrough ? 'No conversion' : 'Audio workflow'}</strong></div><button id="copy-command">${icon('copy', 15)} Copy command</button></div><code id="command-preview">${escapeHtml(getCommand())}</code></section></div>`;
+    const multichannelAac = audioWorkflowNeedsMultichannelAac(source, settings);
+    const codecOptions = `<option value="libfdk_aac"${selected(setting.codec === 'libfdk_aac')}>AAC (libfdk_aac)</option>${multichannelAac ? '' : '<option value="libopus">Opus</option>'}<option value="copy"${selected(setting.codec === 'copy')}>Passthrough</option>`;
+    const channels = audioWorkflowChannels(source);
+    const aacChannels = channels > 2 && setting.codec === 'libfdk_aac' ? channels : undefined;
+    return `<div class="track-stack"><section class="track-card ${passthrough ? 'track-disabled' : ''}"><div class="track-heading"><div><span>AUDIO OUTPUT</span><h3>${escapeHtml(track.codecLabel)}</h3></div><span class="track-badge">${escapeHtml(track.channelLayout)}</span></div><div class="track-meta"><span>${track.channels} channel${track.channels === 1 ? '' : 's'}</span><span>${track.sampleRate ? `${track.sampleRate / 1000} kHz` : 'Unknown sample rate'}</span><span>${track.isLossless ? 'Lossless source' : 'Lossy source'}</span></div><fieldset class="processing-fieldset"${passthrough ? ' disabled' : ''}><div class="form-grid"><label>Output codec<select data-audio-codec="${track.index}">${codecOptions}</select></label><label>Bitrate<select data-audio-bitrate="${track.index}">${bitrateOptions(setting.codec, setting.bitrate, aacChannels)}</select></label></div>${multichannelAac ? `<div class="downmix-notice">${icon('audio', 16)} Multichannel AAC bitrate is scaled for ${channels} source channels.</div>` : !track.isStereo && settings.filters.downmixToStereo ? `<div class="downmix-notice">${icon('audio', 16)} ${escapeHtml(track.channelLayout)} will be downmixed to stereo${track.channels > 2 && settings.filters.dynamicRangeCompression ? ' and dynamically compressed' : ''}.</div>` : ''}</fieldset>${renderMetadataEditor('audio', track.index, setting.metadata, !passthrough, false)}</section><section class="command-card"><div class="command-heading"><div><span>COMMAND PREVIEW</span><strong>${passthrough ? 'No conversion' : 'Audio workflow'}</strong></div><button id="copy-command">${icon('copy', 15)} Copy command</button></div><code id="command-preview">${escapeHtml(getCommand())}</code></section></div>`;
   }
   const constrained = isDeliveryPreset(settings);
   const metadataOnly = isMetadataOnly(settings);
@@ -2450,7 +2471,10 @@ const bindContentEvents = () => {
       settings.format = codec === 'libopus' ? 'opus' : codec === 'libfdk_aac' ? 'm4a' : 'source';
       if (codec === 'copy') appSettings.separateAudioDirectory = false;
     }
-    current.bitrate = settings.filters.doNotReplaceAudio && track && track.channels > 2 && codec === 'libfdk_aac'
+    current.bitrate = isAudioWorkflow(source) && track && codec === 'libfdk_aac'
+      && audioWorkflowNeedsMultichannelAac(source, settings)
+      ? audioWorkflowAacBitrate(settings.preset, source)
+      : settings.filters.doNotReplaceAudio && track && track.channels > 2 && codec === 'libfdk_aac'
       ? closestBitrateOption(
         bitrateForChannels(audioBitrateFor(settings.preset, 'libfdk_aac', true), track.channels),
         multichannelAacBitrateOptions(APP_CONFIG.audioBitrates.aacMultichannelBase, track.channels),
@@ -2597,10 +2621,20 @@ const bindContentEvents = () => {
     const key = control.dataset.audioFilter as 'stripMetadata' | 'downmixToStereo' | 'dynamicRangeCompression' | 'resampleLosslessTo48k' | 'normalizeAudio';
     settings.filters[key] = toggleSwitch(control);
     if (key === 'downmixToStereo') {
+      if (isAudioWorkflow(source) && needsMultichannelAac(audioWorkflowChannels(source), settings.filters.downmixToStereo)) {
+        const track = source.media?.audio[0];
+        const audio = track ? settings.audio[track.index] : undefined;
+        if (audio && audio.codec !== 'copy') {
+          audio.codec = 'libfdk_aac';
+          settings.format = 'm4a';
+        }
+      }
       for (const track of source.media?.audio ?? []) {
         const audio = settings.audio[track.index];
         if (!audio || audio.codec === 'copy') continue;
-        audio.bitrate = audioBitrateFor(audio.codec === 'libopus' ? 'Streaming' : 'Archive', audio.codec, track.isStereo || !settings.filters.downmixToStereo);
+        audio.bitrate = isAudioWorkflow(source) && audio.codec === 'libfdk_aac' && audioWorkflowNeedsMultichannelAac(source, settings)
+          ? audioWorkflowAacBitrate(settings.preset, source)
+          : audioBitrateFor(audio.codec === 'libopus' ? 'Streaming' : 'Archive', audio.codec, track.isStereo || !settings.filters.downmixToStereo);
       }
     }
     markCustom(settings);
