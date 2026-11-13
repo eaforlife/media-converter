@@ -41,7 +41,8 @@ test('explicit scaling uses the configured output profile instead of the source 
 test('resolves every Streaming tier CQ and backend quality from presets.ini', () => {
   const streaming = presetConfiguration.presets.Streaming;
   for (const tier of ['4k', '1080p', '720p', '360p'] as const) {
-    equal(resolvePresetOutputDefaults(configuration, streaming, tier, 'nvenc').quality, streaming.quality.nvenc);
+    equal(resolvePresetOutputDefaults(configuration, streaming, tier, 'nvenc').quality,
+      streaming.outputTierDefaults[tier].quality.nvenc ?? streaming.quality.nvenc);
   }
   for (const family of ['amf', 'qsv', 'vaapi', 'videotoolbox', 'software'] as const) {
     equal(resolvePresetOutputDefaults(configuration, streaming, '1080p', family).quality,

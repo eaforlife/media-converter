@@ -339,18 +339,17 @@ const ensureDownmixSettings = (source: SourceFile, settings: JobSettings) => {
     settings.filters.dynamicRangeCompression = false;
   }
   let defaultAssigned = (source.media?.audio ?? []).some((track) =>
-    !track.isStereo && settings.audio[track.index]?.enabled && settings.audio[track.index]?.downmix?.flags.default);
+    !track.isStereo && settings.audio[track.index]?.downmix?.enabled && settings.audio[track.index]?.downmix?.flags.default);
   for (const track of source.media?.audio ?? []) {
     const audio = settings.audio[track.index];
-    if (!track.isStereo && audio?.enabled && settings.filters.doNotReplaceAudio && settings.processing.audio) {
+    if (!track.isStereo && settings.filters.doNotReplaceAudio && settings.processing.audio) {
       const codec = audio.codec === 'copy' ? settings.format === 'webm' ? 'libopus' : 'libfdk_aac' : audio.codec;
       audio.downmix ??= {
-        enabled: true, codec,
+        enabled: audio.enabled, codec,
         bitrate: audio.codec === 'copy' ? audioBitrateFor(settings.preset, codec, false) : audio.bitrate,
         flags: { default: false, forced: false, hearingImpaired: false },
         metadata: copyMetadata(track.language, track.flags),
       };
-      audio.downmix.enabled = true;
       if (audio.codec === 'libopus') audio.codec = 'libfdk_aac';
       if (audio.codec === 'libfdk_aac') {
         const options = multichannelAacBitrateOptions(APP_CONFIG.audioBitrates.aacMultichannelBase, track.channels);
@@ -361,7 +360,7 @@ const ensureDownmixSettings = (source: SourceFile, settings: JobSettings) => {
           audio.bitrate = closestBitrateOption(bitrateForChannels(baseRate, track.channels), options);
         }
       }
-      if (!defaultAssigned) {
+      if (!defaultAssigned && audio.downmix.enabled) {
         audio.downmix.flags.default = true;
         defaultAssigned = true;
       }
@@ -1315,23 +1314,25 @@ const getCommandArguments = (source: SourceFile, requestedOutputPath?: string, f
   if (!settings.filters.remuxAudio) args.push(...excludedStreamArguments(settings.filters).filter((argument) => argument === '-an'));
   else if (settings.processing.audio) orderByFlags(source.media?.audio ?? [], (track) => settings.audio[track.index]?.flags ?? track.flags).forEach((track) => {
     const audio = settings.audio[track.index];
-    if (!audio?.enabled) return;
-    const originalIndex = audioOutputIndex++;
-    args.push('-map', `0:${track.index}`, `-c:a:${originalIndex}`, audio.codec);
-    if (audio.codec !== 'copy') {
-      args.push(`-b:a:${originalIndex}`, audio.bitrate);
-      addEncodedAudioFilterArguments(
-        args, originalIndex, track, !settings.filters.doNotReplaceAudio && !track.isStereo,
-        settings.filters.dynamicRangeCompression,
-      );
-    }
-    args.push(`-metadata:s:a:${originalIndex}`, `language=${audio.metadata.language}`);
-    const originalFlags = settings.filters.doNotReplaceAudio
-      ? { default: false, forced: false, hearingImpaired: false }
-      : { ...audio.flags, hearingImpaired: false };
-    args.push(`-disposition:a:${originalIndex}`, dispositionValue(originalFlags));
-    if (!isMusicVideoWorkflow(source)) {
-      args.push(`-metadata:s:a:${originalIndex}`, 'title=', `-metadata:s:a:${originalIndex}`, 'handler_name=');
+    if (!audio) return;
+    if (audio.enabled) {
+      const originalIndex = audioOutputIndex++;
+      args.push('-map', `0:${track.index}`, `-c:a:${originalIndex}`, audio.codec);
+      if (audio.codec !== 'copy') {
+        args.push(`-b:a:${originalIndex}`, audio.bitrate);
+        addEncodedAudioFilterArguments(
+          args, originalIndex, track, !settings.filters.doNotReplaceAudio && !track.isStereo,
+          settings.filters.dynamicRangeCompression,
+        );
+      }
+      args.push(`-metadata:s:a:${originalIndex}`, `language=${audio.metadata.language}`);
+      const originalFlags = settings.filters.doNotReplaceAudio
+        ? { default: false, forced: false, hearingImpaired: false }
+        : { ...audio.flags, hearingImpaired: false };
+      args.push(`-disposition:a:${originalIndex}`, dispositionValue(originalFlags));
+      if (!isMusicVideoWorkflow(source)) {
+        args.push(`-metadata:s:a:${originalIndex}`, 'title=', `-metadata:s:a:${originalIndex}`, 'handler_name=');
+      }
     }
 
     if (settings.filters.doNotReplaceAudio && !track.isStereo) {
@@ -2188,9 +2189,9 @@ const renderAudioSettings = (source: SourceFile, settings: JobSettings) => {
   const constrained = isDeliveryPreset(settings);
   const metadataOnly = isMetadataOnly(settings);
   const processing = settings.processing.audio;
-  return `<div class="track-stack">${renderProcessingToggle('audio', processing, 'Encode selected audio streams')}<div class="track-intro"><div><span>AUDIO OUTPUT</span><h3>One setting group per source track</h3></div><p>${metadataOnly ? 'All tracks will be copied; language and disposition metadata can be changed.' : processing ? constrained ? 'Streaming and Cellular allow AAC or Opus only.' : 'Configure the selected output tracks and their languages.' : 'All source audio streams will be copied unchanged.'}</p></div>${processing && settings.filters.doNotReplaceAudio ? '<div class="downmix-notice">Surround tracks are retained. Edit each generated stereo downmix below.</div>' : ''}${tracks.map((track, position) => `${renderAudioTrack(track, position, settings.audio[track.index], constrained, settings.filters.doNotReplaceAudio, processing, metadataOnly, settings.filters.dynamicRangeCompression)}${processing && settings.filters.doNotReplaceAudio && !track.isStereo && settings.audio[track.index]?.enabled ? renderDownmixTrack(track, settings.audio[track.index].downmix!) : ''}`).join('')}</div>`;
+  return `<div class="track-stack">${renderProcessingToggle('audio', processing, 'Encode selected audio streams')}<div class="track-intro"><div><span>AUDIO OUTPUT</span><h3>One setting group per source track</h3></div><p>${metadataOnly ? 'All tracks will be copied; language and disposition metadata can be changed.' : processing ? constrained ? 'Streaming and Cellular allow AAC or Opus only.' : 'Configure the selected output tracks and their languages.' : 'All source audio streams will be copied unchanged.'}</p></div>${processing && settings.filters.doNotReplaceAudio ? '<div class="downmix-notice">Choose independently whether to include each surround source and its stereo downmix.</div>' : ''}${tracks.map((track, position) => `${renderAudioTrack(track, position, settings.audio[track.index], constrained, settings.filters.doNotReplaceAudio, processing, metadataOnly, settings.filters.dynamicRangeCompression)}${processing && settings.filters.doNotReplaceAudio && !track.isStereo && settings.audio[track.index]?.downmix ? renderDownmixTrack(track, settings.audio[track.index].downmix!) : ''}`).join('')}</div>`;
 };
-const renderDownmixTrack = (track: AudioStreamInfo, setting: NonNullable<AudioSetting['downmix']>) => `<section class="track-card generated-audio-track"><div class="track-heading"><div><span>GENERATED STEREO TRACK</span><h3>Stereo downmix from Track ${track.index + 1}</h3></div><span class="track-badge">2 channels</span></div><div class="track-meta"><span>Source: ${escapeHtml(track.channelLayout)}</span><span>${escapeHtml(flagsLabel(setting.flags))}</span></div><fieldset class="processing-fieldset"><div class="form-grid"><label>Output codec<select data-downmix-codec="${track.index}"><option value="libfdk_aac"${selected(setting.codec === 'libfdk_aac')}>AAC</option><option value="libopus"${selected(setting.codec === 'libopus')}>Opus</option></select></label><label>Bitrate<select data-downmix-bitrate="${track.index}">${bitrateOptions(setting.codec, setting.bitrate)}</select></label></div><div class="flag-controls"><span>OUTPUT FLAGS</span>${(['default', 'forced'] as const).map((flag) => `<label><input type="checkbox" data-downmix-flag="${flag}" data-stream-index="${track.index}"${checked(setting.flags[flag])}/> ${flag[0].toUpperCase() + flag.slice(1)}</label>`).join('')}</div></fieldset><div class="stream-metadata-editor"><label>Language<select data-downmix-language="${track.index}">${mediaLanguageOptions(setting.metadata.language).map(([code, label]) => `<option value="${code}"${selected(code === setting.metadata.language)}>${escapeHtml(label)} (${code})</option>`).join('')}</select></label></div></section>`;
+const renderDownmixTrack = (track: AudioStreamInfo, setting: NonNullable<AudioSetting['downmix']>) => `<section class="track-card generated-audio-track ${setting.enabled ? '' : 'track-disabled'}"><div class="track-heading"><div><span>GENERATED STEREO TRACK</span><h3>Stereo downmix from Track ${track.index + 1}</h3></div><span class="track-badge">2 channels</span></div><fieldset class="processing-fieldset"><label class="check-label"><input type="checkbox" data-downmix-enabled="${track.index}"${checked(setting.enabled)}/> Include stereo downmix</label><div class="track-meta"><span>Source: ${escapeHtml(track.channelLayout)}</span><span>${escapeHtml(flagsLabel(setting.flags))}</span></div><div class="form-grid"><label>Output codec<select data-downmix-codec="${track.index}"${setting.enabled ? '' : ' disabled'}><option value="libfdk_aac"${selected(setting.codec === 'libfdk_aac')}>AAC</option><option value="libopus"${selected(setting.codec === 'libopus')}>Opus</option></select></label><label>Bitrate<select data-downmix-bitrate="${track.index}"${setting.enabled ? '' : ' disabled'}>${bitrateOptions(setting.codec, setting.bitrate)}</select></label></div><div class="flag-controls"><span>OUTPUT FLAGS</span>${(['default', 'forced'] as const).map((flag) => `<label><input type="checkbox" data-downmix-flag="${flag}" data-stream-index="${track.index}"${checked(setting.flags[flag])}${setting.enabled ? '' : ' disabled'}/> ${flag[0].toUpperCase() + flag.slice(1)}</label>`).join('')}</div><div class="stream-metadata-editor"><label>Language<select data-downmix-language="${track.index}"${setting.enabled ? '' : ' disabled'}>${mediaLanguageOptions(setting.metadata.language).map(([code, label]) => `<option value="${code}"${selected(code === setting.metadata.language)}>${escapeHtml(label)} (${code})</option>`).join('')}</select></label></div></fieldset></section>`;
 const renderAudioTrack = (track: AudioStreamInfo, position: number, setting: AudioSetting, constrained: boolean, replaceAudio: boolean, processing: boolean, metadataOnly: boolean, dynamicRangeCompression: boolean) => {
   const preserveSurround = replaceAudio && track.channels > 2;
   const codecOptions = `<option value="libfdk_aac"${selected(setting.codec === 'libfdk_aac')}>AAC</option>${preserveSurround ? '' : `<option value="libopus"${selected(setting.codec === 'libopus')}>Opus</option>`}${preserveSurround || !constrained ? `<option value="copy"${selected(setting.codec === 'copy')}>Passthrough</option>` : ''}`;
@@ -2470,6 +2471,17 @@ const bindContentEvents = () => {
       }
     }
     consolidatePrimaryDispositions(settings.audio);
+    markCustom(settings);
+    renderWorkspace();
+  }));
+  document.querySelectorAll<HTMLInputElement>('[data-downmix-enabled]').forEach((control) => control.addEventListener('change', () => {
+    const downmix = settings.audio[Number(control.dataset.downmixEnabled)]?.downmix;
+    if (!downmix) return;
+    downmix.enabled = control.checked;
+    if (!control.checked) downmix.flags.default = false;
+    else if (control.checked && !Object.values(settings.audio).some((audio) => audio.downmix?.enabled && audio.downmix.flags.default)) {
+      downmix.flags.default = true;
+    }
     markCustom(settings);
     renderWorkspace();
   }));

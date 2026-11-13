@@ -88,6 +88,8 @@ test('Streaming uses the requested advanced video values and 4K rate override', 
   assert.equal(advanced.spatialAq, 8);
   assert.equal(appConfig.videoDefaults.main10Advanced.streamingSpatialAq, 8);
   assert.equal(preset.outputTierDefaults['4k'].maxRate, 10000);
+  assert.equal(preset.defaultMain10, true);
+  assert.equal(preset.outputTierDefaults['4k'].quality.nvenc, '33');
 });
 
 test('preset job behavior falls back to config.ini and accepts preset-specific values', () => {
@@ -126,7 +128,7 @@ test('streaming tiers retain their configured speed and advanced settings', () =
 test('preset file contains no obsolete rate, output, tier-quality, or profile settings', () => {
   const presets = parseBuiltInPresets(presetFile);
   assert.doesNotMatch(presetFile, /^\[Output: /m);
-  assert.doesNotMatch(presetFile, /^(?:video_bitrate|max_rate(?:_[^=]+)?|buffer_multiplier|bitrate_multiplier_[^=]+|profile_(?:h264|hevc|av1)|encoder_speed_h264_[^=]+|quality_[^=]+_(?:4k|1080p|720p|360p))=/m);
+  assert.doesNotMatch(presetFile, /^(?:video_bitrate|max_rate(?:_[^=]+)?|buffer_multiplier|bitrate_multiplier_[^=]+|profile_(?:h264|hevc|av1)|encoder_speed_h264_[^=]+)=/m);
   assert.match(presetFile, /^h264_max_rate_(?:4k|1080p)=\d+$/m);
   assert.deepEqual(presets.Streaming.encoderProfile, {});
   assert.deepEqual(presets['Music Video'].encoderProfile, {});

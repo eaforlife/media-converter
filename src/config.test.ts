@@ -26,6 +26,10 @@ test('loads app defaults from config.ini', () => {
     Number(configSections.get('Main10 Defaults')?.get('streaming_spatial_aq')));
   assert.equal(configuration.videoDefaults.main10Advanced.spatialAq, 8);
   assert.equal(configuration.videoDefaults.main10Advanced.bFrames, true);
+  assert.equal(configuration.videoDefaults.main10, configValue('UI Defaults', 'default_main10') === '1');
+  assert.equal(configuration.jobBehaviorDefaults.stripMetadata, true);
+  assert.equal(configuration.videoDefaults.outputProfiles['4k'].scale[0], '2900');
+  assert.equal(configuration.videoDefaults.outputProfiles['1080p'].scale[0], '1890');
   assert.deepEqual(configuration.jobBehaviorDefaults, {
     remuxAudio: configValue('Job Behavior Defaults', 'remux_audio') === '1',
     remuxSubtitles: configValue('Job Behavior Defaults', 'remux_subtitles') === '1',
