@@ -10,11 +10,11 @@ setAppConfiguration(config);
 test('normalizes surround coefficients and guards compressed peaks', () => {
   assert.equal(
     surroundDownmixFilter({ channels: 6, channelLayout: '5.1' }, true),
-    `pan=stereo|c0<c0+0.707*c2+0.707*c4|c1<c1+0.707*c2+0.707*c5,${config.audioFilters.compressor},${config.audioFilters.peakLimiter}`,
+    `${config.audioFilters.downmix51},${config.audioFilters.compressor},${config.audioFilters.peakLimiter}`,
   );
   assert.equal(
     surroundDownmixFilter({ channels: 8, channelLayout: '7.1' }, true),
-    `pan=stereo|c0<c0+0.707*c2+0.707*c4+0.707*c6|c1<c1+0.707*c2+0.707*c5+0.707*c7,${config.audioFilters.compressor},${config.audioFilters.peakLimiter}`,
+    `${config.audioFilters.downmix71},${config.audioFilters.compressor},${config.audioFilters.peakLimiter}`,
   );
 });
 
@@ -30,7 +30,7 @@ test('compresses every surround layout after downmixing but leaves mono and ster
 test('keeps the normalized downmix when compression is disabled', () => {
   assert.equal(
     surroundDownmixFilter({ channels: 6, channelLayout: '5.1' }, false),
-    'pan=stereo|c0<c0+0.707*c2+0.707*c4|c1<c1+0.707*c2+0.707*c5',
+    config.audioFilters.downmix51,
   );
 });
 

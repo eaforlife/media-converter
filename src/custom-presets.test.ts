@@ -5,10 +5,10 @@ import type { SavedPreset } from './shared-types';
 
 const preset: SavedPreset = {
   name: 'Living Room', description: 'Living Room', workflow: 'video', format: 'mp4', encoder: 'hevc_nvenc', resolution: '1920:-2', rateBasis: 'h264',
-  encoderSpeed: 6, encoderTune: 'hq', encoderProfile: 'main', frameRate: 23.976, frameRateOverride: true, quality: '24', videoBitrate: '0', maxRate: '8000',
+  encoderSpeed: 6, encoderTune: 'hq', encoderProfile: 'main', frameRate: 25, frameRateOverride: true, quality: '24', videoBitrate: '0', maxRate: '8000',
   bufferMultiplier: 2, bufferSize: '16000', deliveryMode: true,
   advancedVideo: { bFrames: true, multipass: 2, bRefMode: 'middle', adaptiveBFrames: true, sceneCutDetection: true, rcLookahead: 32, nonReferenceP: true, spatialAq: 8, temporalAq: true },
-  audioCodec: 'libopus', audioBitrate: '96k',
+  audioCodec: 'libopus', audioBitrate: '88k',
   audioSettings: '{"0":{"enabled":true}}', subtitleSettings: '{"1":{"enabled":false}}',
   processingSettings: '{"video":true,"audio":true,"subtitles":false}', videoMetadataSettings: '{"language":"eng"}',
   filters: { autoCrop: true, toneMapHdrToSdr: true, pixelFormat10Bit: false, scale: 'auto', scaleLocked: false, remuxAudio: true, remuxSubtitles: true, stripMetadata: true, doNotReplaceAudio: false, extractClosedCaptions: false, downmixToStereo: true, dynamicRangeCompression: true, resampleLosslessTo48k: true, normalizeAudio: true },
@@ -32,9 +32,9 @@ test('validates INI-safe custom preset names', () => {
 
 test('older custom presets default to frame-rate passthrough and invalid rates are rejected', () => {
   const ini = serializeCustomPresets([preset]);
-  assert.equal(parseCustomPresets(ini.replace('frame_rate=23.976\n', ''))[0].frameRate, 'passthrough');
+  assert.equal(parseCustomPresets(ini.replace(`frame_rate=${preset.frameRate}\n`, ''))[0].frameRate, 'passthrough');
   assert.throws(
-    () => parseCustomPresets(ini.replace('frame_rate=23.976', 'frame_rate=0')),
+    () => parseCustomPresets(ini.replace(`frame_rate=${preset.frameRate}`, 'frame_rate=0')),
     /frame_rate must be passthrough or a number from 1 to 240/,
   );
 });

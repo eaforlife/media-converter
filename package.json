@@ -1,8 +1,8 @@
 {
   "name": "ea-media-tools",
   "productName": "EA Media Tools",
-  "version": "2.10.2",
-  "codename": "jaguar",
+  "version": "3.0.0",
+  "codename": "leopard",
   "description": "A sleek desktop FFmpeg command builder and media transcoder.",
   "repository": {
     "type": "git",

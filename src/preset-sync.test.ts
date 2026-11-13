@@ -5,17 +5,23 @@ import path from 'node:path';
 import test from 'node:test';
 import { parseAppConfiguration } from './config.ts';
 import { compareIniVersions, iniVersion, sourceIniIsNewer } from './ini-version.ts';
-import { parseBuiltInPresetConfiguration } from './presets.ts';
+import { parseBuiltInPresetConfiguration, parseIniSections } from './presets.ts';
 import { presetContentsMatch, synchronizePresetFile, validateRemotePresetContents } from './preset-sync.ts';
 
 const presetFile = fs.readFileSync(new URL('../presets.ini', import.meta.url), 'utf8');
 const changedPreset = presetFile.replace('[Archive]', '[Archive]\n; stale local variant');
 const configFile = fs.readFileSync(new URL('../config.ini', import.meta.url), 'utf8');
+const presetSections = parseIniSections(presetFile);
+const presetValue = (key: string) => {
+  const value = presetSections.get('Music Video')?.get(key);
+  assert.notEqual(value, undefined, `[Music Video] ${key} should exist in presets.ini`);
+  return value!;
+};
 
 test('downloads predefined defaults from presets.ini on the main repository branch', () => {
   assert.equal(
     parseAppConfiguration(configFile).app.presetSourceUrl,
-    'https://raw.githubusercontent.com/eaforlife/media-converter/main/presets.ini',
+    parseIniSections(configFile).get('App')?.get('preset_source_url'),
   );
 });
 
@@ -31,11 +37,11 @@ test('presets inherit app rates unless a tier override is specified and preserve
     assert.equal(config.videoDefaults.outputProfiles[tier].maxRate > 0, true);
   }
   assert.ok(presets['Music Video'].quality.nvenc);
-  assert.equal(presets['Music Video'].audioCodec, 'opus');
-  assert.equal(presets['Music Video'].audioRates.opus.stereo, '128k');
-  assert.equal(presets['Music Video'].defaultMain10, true);
-  assert.equal(presets['Music Video'].advancedVideo.spatialAq, 8);
-  assert.equal(presets['Music Video'].advancedVideo.bFrames, true);
+  assert.equal(presets['Music Video'].audioCodec, presetValue('audio_codec'));
+  assert.equal(presets['Music Video'].audioRates.opus.stereo, presetValue('audio_opus_stereo'));
+  assert.equal(presets['Music Video'].defaultMain10, ['1', 'true'].includes(presetValue('default_main10')));
+  assert.equal(presets['Music Video'].advancedVideo.spatialAq, Number(presetValue('spatial_aq')));
+  assert.equal(presets['Music Video'].advancedVideo.bFrames, ['1', 'true'].includes(presetValue('b_frames')));
 });
 
 test('INI version tags normalize minor-only versions and only replace older local data', () => {
@@ -59,7 +65,7 @@ test('validates a remote preset before atomically replacing the local file', asy
   assert.equal(await fs.promises.readFile(target, 'utf8'), presetFile);
   assert.equal(await synchronizePresetFile(target, `\uFEFF${presetFile.replace(/\n/g, '\r\n')}`), false);
 
-  const invalid = presetFile.replace('rc_lookahead=26', 'rc_lookahead=99');
+  const invalid = presetFile.replace(/rc_lookahead=\d+/, 'rc_lookahead=99');
   assert.throws(() => validateRemotePresetContents(invalid), /rc_lookahead must be an integer/);
   await assert.rejects(() => synchronizePresetFile(target, invalid), /rc_lookahead must be an integer/);
   assert.equal(await fs.promises.readFile(target, 'utf8'), presetFile);

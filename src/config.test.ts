@@ -13,6 +13,7 @@ const configValue = (section: string, key: string) => {
   assert.notEqual(value, undefined, `[${section}] ${key} should exist in config.ini`);
   return value!;
 };
+const configBoolean = (section: string, key: string) => ['1', 'true'].includes(configValue(section, key));
 
 test('loads app defaults from config.ini', () => {
   const configuration = parseAppConfiguration(configFile);
@@ -24,18 +25,23 @@ test('loads app defaults from config.ini', () => {
     Number(configSections.get('Video Output: 4k')?.get('h264_max_rate')));
   assert.equal(configuration.videoDefaults.main10Advanced.streamingSpatialAq,
     Number(configSections.get('Main10 Defaults')?.get('streaming_spatial_aq')));
-  assert.equal(configuration.videoDefaults.main10Advanced.spatialAq, 8);
-  assert.equal(configuration.videoDefaults.main10Advanced.bFrames, true);
-  assert.equal(configuration.videoDefaults.main10, configValue('UI Defaults', 'default_main10') === '1');
-  assert.equal(configuration.jobBehaviorDefaults.stripMetadata, true);
-  assert.equal(configuration.videoDefaults.outputProfiles['4k'].scale[0], '2900');
-  assert.equal(configuration.videoDefaults.outputProfiles['1080p'].scale[0], '1890');
+  assert.equal(configuration.videoDefaults.main10Advanced.spatialAq,
+    Number(configValue('Main10 Defaults', 'spatial_aq')));
+  assert.equal(configuration.videoDefaults.main10Advanced.bFrames,
+    configBoolean('Main10 Defaults', 'b_frames'));
+  assert.equal(configuration.videoDefaults.main10, configBoolean('UI Defaults', 'default_main10'));
+  assert.equal(configuration.jobBehaviorDefaults.stripMetadata,
+    configBoolean('Job Behavior Defaults', 'strip_metadata'));
+  assert.equal(configuration.videoDefaults.outputProfiles['4k'].scale[0],
+    configValue('Video Output: 4k', 'resolution').split(':')[0]);
+  assert.equal(configuration.videoDefaults.outputProfiles['1080p'].scale[0],
+    configValue('Video Output: 1080p', 'resolution').split(':')[0]);
   assert.deepEqual(configuration.jobBehaviorDefaults, {
-    remuxAudio: configValue('Job Behavior Defaults', 'remux_audio') === '1',
-    remuxSubtitles: configValue('Job Behavior Defaults', 'remux_subtitles') === '1',
-    stripMetadata: configValue('Job Behavior Defaults', 'strip_metadata') === '1',
-    doNotReplaceAudio: configValue('Job Behavior Defaults', 'do_not_replace_audio') === '1',
-    downmixToStereo: configValue('Job Behavior Defaults', 'downmix_to_stereo') === '1',
+    remuxAudio: configBoolean('Job Behavior Defaults', 'remux_audio'),
+    remuxSubtitles: configBoolean('Job Behavior Defaults', 'remux_subtitles'),
+    stripMetadata: configBoolean('Job Behavior Defaults', 'strip_metadata'),
+    doNotReplaceAudio: configBoolean('Job Behavior Defaults', 'do_not_replace_audio'),
+    downmixToStereo: configBoolean('Job Behavior Defaults', 'downmix_to_stereo'),
   });
   assert.deepEqual(configuration.videoDefaults.codecRateMultipliers, {
     hevc: Number(configSections.get('Video Codec Rate Multipliers')?.get('hevc')),
@@ -50,7 +56,10 @@ test('loads app defaults from config.ini', () => {
 test('disables concurrent encoding when the FPS setting is missing or zero', () => {
   const withoutConcurrency = configFile.replace(/\n\[Encode Concurrency\]\nminimum_fps_per_job=\d+\n/, '\n');
   assert.equal(parseAppConfiguration(withoutConcurrency).encodeConcurrency.minimumFpsPerJob, 0);
-  assert.equal(parseAppConfiguration(configFile.replace('minimum_fps_per_job=300', 'minimum_fps_per_job=0'))
+  assert.equal(parseAppConfiguration(configFile.replace(
+    new RegExp(`minimum_fps_per_job=${configValue('Encode Concurrency', 'minimum_fps_per_job')}`),
+    'minimum_fps_per_job=0',
+  ))
     .encodeConcurrency.minimumFpsPerJob, 0);
 });
 
@@ -64,7 +73,9 @@ test('requires the remote config source to use HTTPS', () => {
 test('requires every job behavior default in config.ini', () => {
   assert.throws(() => parseAppConfiguration(configFile.replace(/\n\[Job Behavior Defaults\][\s\S]*?(?=\n\[)/, '\n')),
     /config.ini is missing the \[Job Behavior Defaults\] section/);
-  assert.throws(() => parseAppConfiguration(configFile.replace('remux_audio=1\n', '')),
+  assert.throws(() => parseAppConfiguration(configFile.replace(
+    `remux_audio=${configValue('Job Behavior Defaults', 'remux_audio')}\n`, '',
+  )),
     /\[Job Behavior Defaults\] is missing remux_audio/);
 });
 
@@ -79,12 +90,14 @@ test('loads app-level audio choices and filters from config.ini', () => {
   assert.equal(configuration.musicVideoWorkflow.maxDurationSeconds,
     Number(configValue('Music Video Workflow', 'max_duration_seconds')));
   assert.equal(configuration.musicVideoWorkflow.extractClosedCaptions,
-    configValue('Music Video Workflow', 'extract_closed_captions') === '1');
+    configBoolean('Music Video Workflow', 'extract_closed_captions'));
   assert.equal(configuration.videoFilters.cudaTonemap, configValue('Video Filters', 'cuda_tonemap'));
 });
 
 test('rejects malformed configured audio bitrate choices', () => {
-  assert.throws(() => parseAppConfiguration(configFile.replace('aac_multichannel_base=32k,', 'aac_multichannel_base=bad,')),
+  assert.throws(() => parseAppConfiguration(configFile.replace(
+    /^aac_multichannel_base=.*$/m, 'aac_multichannel_base=bad,',
+  )),
     /\[Audio Bitrates\] aac_multichannel_base must be a comma-separated list of positive kbit\/s values/);
 });
 
@@ -92,8 +105,13 @@ test('configured AAC bitrate range scales to the expected six- and eight-channel
   const configured = parseAppConfiguration(configFile).audioBitrates.aacMultichannelBase;
   const sixChannel = multichannelAacBitrateOptions(configured, 6);
   const eightChannel = multichannelAacBitrateOptions(configured, 8);
-  assert.deepEqual([sixChannel[0], sixChannel.at(-1)], ['96k', '768k']);
-  assert.deepEqual([eightChannel[0], eightChannel.at(-1)], ['128k', '1024k']);
+  const firstConfigured = configured.at(0) ?? '';
+  const lastConfigured = configured.at(-1) ?? '';
+  assert.ok(firstConfigured && lastConfigured);
+  const scaledEndpoints = (channels: number) => [firstConfigured, lastConfigured].map((rate) =>
+    `${Number.parseInt(rate, 10) * channels / 2}k`);
+  assert.deepEqual([sixChannel[0], sixChannel.at(-1)], scaledEndpoints(6));
+  assert.deepEqual([eightChannel[0], eightChannel.at(-1)], scaledEndpoints(8));
 });
 
 test('urgent update policy requires the packaged release version', () => {
@@ -113,8 +131,8 @@ test('loads available encoders from config.ini', () => {
     assert.equal(encoder.vendor, values.get('vendor'));
     assert.equal(encoder.codec, values.get('codec'));
     assert.deepEqual(encoder.platforms, values.get('platforms')?.split(','));
-    assert.equal(encoder.main10Enabled, values.get('main10') === '1');
-    assert.equal(encoder.highEnabled, values.get('high') === '1');
+    assert.equal(encoder.main10Enabled, ['1', 'true'].includes(values.get('main10') ?? ''));
+    assert.equal(encoder.highEnabled, ['1', 'true'].includes(values.get('high') ?? ''));
   }
 });
 

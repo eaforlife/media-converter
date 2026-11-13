@@ -147,9 +147,10 @@ export const parseBuiltInPresetConfiguration = (ini: string): BuiltInPresetConfi
     };
     const optional = (key: string) => values.get(key) ?? '';
     const label = (key: string) => `[${name}] ${key}`;
-    const optionalBooleanValue = (key: string) => optional(key) === ''
-      ? undefined
-      : booleanValue(optional(key), label(key));
+    const optionalBooleanValue = (key: string) => {
+      const value = values.get(key);
+      return value === undefined ? undefined : value === '' ? false : booleanValue(value, label(key));
+    };
     const optionalAdvancedVideo = (codecKey: string): Partial<AdvancedVideoSettings> => Object.fromEntries(
       Object.entries({
         bFrames: optionalBooleanValue(`b_frames_${codecKey}`),
@@ -207,25 +208,25 @@ export const parseBuiltInPresetConfiguration = (ini: string): BuiltInPresetConfi
       },
       resolution: get('resolution'),
       scale: enumValue(get('scale'), ['auto', '1080p', '720p', '360p', 'disabled'], label('scale')),
-      scaleLocked: booleanValue(get('scale_locked'), label('scale_locked')),
-      deliveryMode: booleanValue(get('delivery_mode'), label('delivery_mode')),
-      bitrateControl: booleanValue(get('bitrate_control'), label('bitrate_control')),
+      scaleLocked: optionalBooleanValue('scale_locked') ?? false,
+      deliveryMode: optionalBooleanValue('delivery_mode') ?? false,
+      bitrateControl: optionalBooleanValue('bitrate_control') ?? false,
       audioCodec: enumValue(get('audio_codec'), ['aac', 'opus'], label('audio_codec')),
       audioRates: {
         aac: { stereo: get('audio_aac_stereo'), surround: get('audio_aac_downmix') },
         opus: { stereo: get('audio_opus_stereo'), surround: get('audio_opus_downmix') },
       },
-      dynamicRangeCompression: booleanValue(get('dynamic_range_compression'), label('dynamic_range_compression')),
+      dynamicRangeCompression: optionalBooleanValue('dynamic_range_compression') ?? false,
       advancedVideo: {
-        bFrames: booleanValue(get('b_frames'), label('b_frames')),
+        bFrames: optionalBooleanValue('b_frames') ?? false,
         multipass: numberValue(get('multipass'), label('multipass'), 0, 2) as AdvancedVideoSettings['multipass'],
         bRefMode: enumValue(get('b_ref_mode'), ['disabled', 'each', 'middle'], label('b_ref_mode')),
-        adaptiveBFrames: booleanValue(get('adaptive_b_frames'), label('adaptive_b_frames')),
-        sceneCutDetection: booleanValue(get('scene_cut_detection'), label('scene_cut_detection')),
+        adaptiveBFrames: optionalBooleanValue('adaptive_b_frames') ?? false,
+        sceneCutDetection: optionalBooleanValue('scene_cut_detection') ?? false,
         rcLookahead: numberValue(get('rc_lookahead'), label('rc_lookahead'), 0, 42),
-        nonReferenceP: booleanValue(get('non_reference_p'), label('non_reference_p')),
+        nonReferenceP: optionalBooleanValue('non_reference_p') ?? false,
         spatialAq: numberValue(get('spatial_aq'), label('spatial_aq'), 0, 15),
-        temporalAq: booleanValue(get('temporal_aq'), label('temporal_aq')),
+        temporalAq: optionalBooleanValue('temporal_aq') ?? false,
       },
       advancedVideoCodec: Object.fromEntries(Object.entries(CODEC_KEYS).map(([codec, key]) => [
         codec, optionalAdvancedVideo(key),

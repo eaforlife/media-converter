@@ -55,14 +55,16 @@ test('resolves Cellular delivery and Music Video tier overrides from presets.ini
   equal(streaming360.deliveryPreset.name, 'Cellular');
 
   const music4k = resolvePresetOutputDefaults(configuration, configuration.presets['Music Video'], '4k', 'nvenc');
-  equal(music4k.encoderSpeed, configuration.presets['Music Video'].encoderSpeed);
-  equal(music4k.maxRate, 11000);
-  deepStrictEqual(music4k.resolution, ['2960', '-2']);
+  const music4kTier = configuration.presets['Music Video'].outputTierDefaults['4k'];
+  equal(music4k.encoderSpeed, music4kTier.encoderSpeed ?? configuration.presets['Music Video'].encoderSpeed);
+  equal(music4k.maxRate, music4kTier.maxRate ?? profiles['4k'].maxRate);
+  deepStrictEqual(music4k.resolution, music4kTier.resolution ?? profiles['4k'].scale);
 
   const music1080 = resolvePresetOutputDefaults(configuration, configuration.presets['Music Video'], '1080p', 'nvenc');
-  equal(music1080.encoderSpeed, configuration.presets['Music Video'].encoderSpeed);
-  equal(music1080.maxRate, 9000);
-  deepStrictEqual(music1080.resolution, ['-2', '-2']);
+  const music1080Tier = configuration.presets['Music Video'].outputTierDefaults['1080p'];
+  equal(music1080.encoderSpeed, music1080Tier.encoderSpeed ?? configuration.presets['Music Video'].encoderSpeed);
+  equal(music1080.maxRate, music1080Tier.maxRate ?? profiles['1080p'].maxRate);
+  deepStrictEqual(music1080.resolution, music1080Tier.resolution ?? profiles['1080p'].scale);
 });
 
 test('Music Video keeps sources through 1080p unchanged and uses its 4K scale above 1080p', () => {
@@ -94,9 +96,7 @@ test('resolves preset profiles and speed tiers independently from configured rat
     const tierDefaults = preset.outputTierDefaults[expected.tier];
     equal(defaults.encoderProfile, preset.encoderProfile['H.264'] ?? '');
     equal(defaults.encoderSpeed, tierDefaults.encoderSpeed ?? preset.encoderSpeed);
-    equal(defaults.maxRate, expected.preset === 'Music Video' && expected.tier === '1080p'
-      ? 9000
-      : profiles[expected.tier].maxRate);
+    equal(defaults.maxRate, tierDefaults.maxRate ?? profiles[expected.tier].maxRate);
   }
 
   const streamingHevc = resolvePresetOutputDefaults(

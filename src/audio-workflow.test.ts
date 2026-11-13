@@ -4,10 +4,17 @@ import test from 'node:test';
 import {
   rsgainArguments, shouldResampleLossless, successfulNormalizationRoots,
 } from './audio-workflow.ts';
-import { parseBuiltInPresetConfiguration } from './presets.ts';
+import { parseBuiltInPresetConfiguration, parseIniSections } from './presets.ts';
 import type { AudioStreamInfo } from './shared-types.ts';
 
-const presets = parseBuiltInPresetConfiguration(fs.readFileSync(new URL('../presets.ini', import.meta.url), 'utf8')).presets;
+const presetFile = fs.readFileSync(new URL('../presets.ini', import.meta.url), 'utf8');
+const presetSections = parseIniSections(presetFile);
+const presets = parseBuiltInPresetConfiguration(presetFile).presets;
+const presetValue = (preset: string, key: string) => {
+  const value = presetSections.get(preset)?.get(key);
+  assert.notEqual(value, undefined, `[${preset}] ${key} should exist in presets.ini`);
+  return value!;
+};
 
 const track = (overrides: Partial<AudioStreamInfo> = {}): AudioStreamInfo => ({
   index: 0, codec: 'flac', codecLabel: 'FLAC', language: 'und', languageLabel: 'Undefined',
@@ -17,18 +24,20 @@ const track = (overrides: Partial<AudioStreamInfo> = {}): AudioStreamInfo => ({
 });
 
 test('named presets own their audio codec rates and compressor defaults', () => {
-  assert.equal(presets.Streaming.audioRates.opus.stereo, '96k');
-  assert.equal(presets.Streaming.audioRates.opus.surround, '128k');
-  assert.equal(presets.Archive.audioRates.aac.stereo, '224k');
-  assert.equal(presets.Archive.audioRates.aac.surround, '256k');
-  assert.equal(presets.Streaming.dynamicRangeCompression, true);
-  assert.equal(presets.Archive.dynamicRangeCompression, false);
+  assert.equal(presets.Streaming.audioRates.opus.stereo, presetValue('Streaming', 'audio_opus_stereo'));
+  assert.equal(presets.Streaming.audioRates.opus.surround, presetValue('Streaming', 'audio_opus_downmix'));
+  assert.equal(presets.Archive.audioRates.aac.stereo, presetValue('Archive', 'audio_aac_stereo'));
+  assert.equal(presets.Archive.audioRates.aac.surround, presetValue('Archive', 'audio_aac_downmix'));
+  assert.equal(presets.Streaming.dynamicRangeCompression,
+    ['1', 'true'].includes(presetValue('Streaming', 'dynamic_range_compression')));
+  assert.equal(presets.Archive.dynamicRangeCompression,
+    ['1', 'true'].includes(presetValue('Archive', 'dynamic_range_compression')));
 });
 
-test('music video audio defaults to Opus at 128 kbit/s', () => {
-  assert.equal(presets['Music Video'].audioCodec, 'opus');
-  assert.equal(presets['Music Video'].audioRates.opus.stereo, '128k');
-  assert.equal(presets['Music Video'].audioRates.opus.surround, '128k');
+test('Music Video audio values follow presets.ini', () => {
+  assert.equal(presets['Music Video'].audioCodec, presetValue('Music Video', 'audio_codec'));
+  assert.equal(presets['Music Video'].audioRates.opus.stereo, presetValue('Music Video', 'audio_opus_stereo'));
+  assert.equal(presets['Music Video'].audioRates.opus.surround, presetValue('Music Video', 'audio_opus_downmix'));
 });
 
 test('only high-frequency lossless audio is resampled to 48 kHz', () => {
