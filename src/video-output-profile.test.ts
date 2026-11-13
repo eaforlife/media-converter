@@ -4,7 +4,8 @@ import { test } from 'node:test';
 import { parseAppConfiguration } from './config.ts';
 import { parseBuiltInPresetConfiguration, resolvePresetOutputDefaults } from './presets.ts';
 import {
-  bufferSizeFor, musicVideoScaleDimensionsFor, resolveVideoOutputRates, scaleDimensionsFor, videoOutputProfile,
+  bufferSizeFor, musicVideoScaleDimensionsFor, resolveVideoOutputRates, scaleDimensionsFor,
+  videoCodecRateMultiplier, videoOutputProfile,
 } from './video-output-profile.ts';
 
 const presetConfiguration = parseBuiltInPresetConfiguration(
@@ -144,4 +145,21 @@ test('codec rates use config.ini ratios and buffer multiplier', () => {
   const hevcMain10 = resolveVideoOutputRates(profiles[tier], ratio, appConfiguration.videoDefaults.bufferMultiplier);
   equal(hevcMain10.maxRate, Math.round(h264.maxRate * ratio));
   equal(hevcMain10.bufferSize, hevcMain10.maxRate * appConfiguration.videoDefaults.bufferMultiplier);
+});
+
+test('Streaming Main10 defaults use the 10-bit rate and matching buffer on initial output', () => {
+  const streaming = configuration.presets.Streaming;
+  const main10 = streaming.defaultMain10;
+  const multiplier = videoCodecRateMultiplier('HEVC', main10, appConfiguration.videoDefaults.codecRateMultipliers);
+  const presetDefaults = resolvePresetOutputDefaults(configuration, streaming, '4k', 'nvenc');
+  const rates = resolveVideoOutputRates(
+    { ...profiles['4k'], maxRate: presetDefaults.maxRate },
+    multiplier,
+    appConfiguration.videoDefaults.bufferMultiplier,
+  );
+
+  equal(main10, true);
+  equal(multiplier, appConfiguration.videoDefaults.codecRateMultipliers.hevcMain10);
+  equal(rates.maxRate, Math.round(presetDefaults.maxRate * multiplier));
+  equal(rates.bufferSize, rates.maxRate * appConfiguration.videoDefaults.bufferMultiplier);
 });

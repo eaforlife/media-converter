@@ -1,7 +1,7 @@
 {
   "name": "ea-media-tools",
   "productName": "EA Media Tools",
-  "version": "3.0.0",
+  "version": "3.0.1",
   "codename": "leopard",
   "description": "A sleek desktop FFmpeg command builder and media transcoder.",
   "repository": {

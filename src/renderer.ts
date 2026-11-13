@@ -29,7 +29,10 @@ import {
   cudaCropBridgeFilters, cudaHardwareDecodeArguments, cudaScaleFilter, cuvidDecoderArguments, cuvidDecoderCropArguments, cuvidDecoderName, hardwareUploadFilter,
   protectedHardwareDecodeArguments, strictVideoTranscodeArguments,
 } from './video-safety';
-import { bufferSizeFor, musicVideoScaleDimensionsFor, resolveVideoOutputRates, scaleDimensionsFor, videoOutputProfile } from './video-output-profile';
+import {
+  bufferSizeFor, musicVideoScaleDimensionsFor, resolveVideoOutputRates, scaleDimensionsFor,
+  videoCodecRateMultiplier, videoOutputProfile,
+} from './video-output-profile';
 import { applyEncodeProgress, canFinishEncodeQueue, createEncodeQueueProgress, isQueueTerminal } from './encode-progress-state';
 import type { EncodeJobProgressState, EncodeQueueProgressState } from './encode-progress-state';
 import { formatSessionFfmpegCommand } from './ffmpeg-command-display';
@@ -210,15 +213,12 @@ const videoOutputDefaultsFor = (
   preset: BuiltInPresetDefinition,
   tier: ReturnType<typeof videoOutputProfile>['tier'],
   encoder: string,
-  main10 = false,
+  main10: boolean,
 ) => {
   const defaults = outputDefaultsFor(preset, tier, encoder);
   const profile = APP_CONFIG.videoDefaults.outputProfiles[tier];
   const codec = preferredCodecForEncoder(encoder);
-  const multipliers = APP_CONFIG.videoDefaults.codecRateMultipliers;
-  const multiplier = codec === 'H.264' ? 1
-    : codec === 'HEVC' ? main10 ? multipliers.hevcMain10 : multipliers.hevc
-      : main10 ? multipliers.av1TenBit : multipliers.av1;
+  const multiplier = videoCodecRateMultiplier(codec, main10, APP_CONFIG.videoDefaults.codecRateMultipliers);
   return {
     ...defaults,
     ...resolveVideoOutputRates({ ...profile, maxRate: defaults.maxRate }, multiplier, APP_CONFIG.videoDefaults.bufferMultiplier),
@@ -551,7 +551,8 @@ const initialSettings = (source: SourceFile): JobSettings => {
   const preset = requiredBuiltInPreset(APP_CONFIG.videoDefaults.preset as BuiltInPresetName);
   const outputProfile = outputProfileFor(source, preset.scale, preset.name);
   const encoder = hardwareEncoderFor(APP_CONFIG.videoDefaults.codec);
-  const outputDefaults = videoOutputDefaultsFor(preset, outputProfile.tier, encoder);
+  const defaultMain10 = shouldDefaultToMain10(source, preset.name, outputProfile.tier, encoder);
+  const outputDefaults = videoOutputDefaultsFor(preset, outputProfile.tier, encoder, defaultMain10);
   const profilePreset = outputDefaults.deliveryPreset;
   const selectedAudio = preferredAudioIndexes(source.media?.audio ?? []);
   const settings: JobSettings = {
@@ -580,6 +581,7 @@ const initialSettings = (source: SourceFile): JobSettings => {
     filters: {
       ...defaultFilters(source), scale: preset.scale, scaleLocked: preset.scaleLocked,
       ...jobBehaviorForPreset(profilePreset),
+      pixelFormat10Bit: defaultMain10,
       dynamicRangeCompression: preset.dynamicRangeCompression,
     }, deliveryMode: preset.deliveryMode,
   };
@@ -631,7 +633,12 @@ const applyPreset = (source: SourceFile, preset: string, persist = true) => {
     : hardwareCapabilities.encoders.some((item) => item.id === saved!.encoder)
       ? saved!.encoder
       : hardwareEncoderFor(preferredCodecForEncoder(saved!.encoder));
-  const outputDefaults = defaults && outputProfile ? videoOutputDefaultsFor(defaults, outputProfile.tier, encoder) : null;
+  const defaultMain10 = defaults && outputProfile
+    ? shouldDefaultToMain10(source, defaults.name, outputProfile.tier, encoder)
+    : false;
+  const outputDefaults = defaults && outputProfile
+    ? videoOutputDefaultsFor(defaults, outputProfile.tier, encoder, defaultMain10)
+    : null;
   const profileDefaults = outputDefaults?.deliveryPreset ?? null;
   Object.assign(settings, {
     preset,
@@ -665,7 +672,7 @@ const applyPreset = (source: SourceFile, preset: string, persist = true) => {
     ? {
       ...defaultFilters(source), scale: defaults.scale, scaleLocked: defaults.scaleLocked,
       ...jobBehaviorForPreset(profileDefaults ?? defaults),
-      pixelFormat10Bit: shouldDefaultToMain10(source, defaults.name, outputProfile!.tier, encoder),
+      pixelFormat10Bit: defaultMain10,
       dynamicRangeCompression: defaults.dynamicRangeCompression,
     }
     : { ...saved!.filters };

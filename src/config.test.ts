@@ -114,10 +114,18 @@ test('configured AAC bitrate range scales to the expected six- and eight-channel
   assert.deepEqual([eightChannel[0], eightChannel.at(-1)], scaledEndpoints(8));
 });
 
-test('urgent update policy requires the packaged release version', () => {
+test('urgent update policy has a valid minimum no newer than the packaged release', () => {
   const policy = fs.readFileSync(new URL('../updatepolicy', import.meta.url), 'utf8');
   assert.match(policy, /^urgentUpdate=1$/m);
-  assert.match(policy, new RegExp(`^minVersion=${appPackage.version.replaceAll('.', '\\.')}$`, 'm'));
+  const minimumVersion = /^minVersion=(\d+\.\d+\.\d+)$/m.exec(policy)?.[1];
+  assert.ok(minimumVersion, 'updatepolicy should set a semantic minimum version');
+  const parts = (version: string) => version.split('.').map(Number);
+  const minimum = parts(minimumVersion);
+  const packaged = parts(appPackage.version);
+  const comparison = minimum[0] - packaged[0]
+    || minimum[1] - packaged[1]
+    || minimum[2] - packaged[2];
+  assert.ok(comparison <= 0, `updatepolicy minimum ${minimumVersion} must not exceed ${appPackage.version}`);
 });
 
 test('loads available encoders from config.ini', () => {

@@ -1,6 +1,13 @@
 import type { ScaleMode } from './shared-types';
 
 export type OutputTier = '4k' | '1080p' | '720p' | '360p';
+export type VideoCodec = 'H.264' | 'HEVC' | 'AV1';
+export type VideoCodecRateMultipliers = {
+  hevc: number;
+  hevcMain10: number;
+  av1: number;
+  av1TenBit: number;
+};
 
 export type VideoOutputProfile = {
   tier: OutputTier;
@@ -50,6 +57,13 @@ export const musicVideoScaleDimensionsFor = (
 export const bufferSizeFor = (maxRate: number, multiplier: number) =>
   Math.max(0, maxRate) * Math.max(0, multiplier);
 
+export const videoCodecRateMultiplier = (
+  codec: VideoCodec,
+  main10: boolean,
+  multipliers: VideoCodecRateMultipliers,
+) => codec === 'H.264' ? 1
+  : codec === 'HEVC' ? main10 ? multipliers.hevcMain10 : multipliers.hevc
+    : main10 ? multipliers.av1TenBit : multipliers.av1;
 
 export const resolveVideoOutputRates = (
   profile: Pick<VideoOutputProfile, 'videoBitrate' | 'maxRate'>,

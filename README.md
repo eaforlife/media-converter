@@ -2,7 +2,7 @@
 
 EA Media Tools is a desktop video and audio converter powered by Jellyfin FFmpeg. It converts video and audio, processes subtitles and metadata, and can use supported hardware encoders or the CPU.
 
-Version **3.0.0**, codename **leopard**.
+Version **3.0.1**, codename **leopard**.
 
 ## Download
 
@@ -23,7 +23,7 @@ Download the `darwin-arm64` ZIP for Apple silicon or `darwin-x64` for Intel. Ext
 Install the downloaded `.deb` package, for example:
 
 ```bash
-sudo apt install ./ea-media-tools_3.0.0_amd64.deb
+sudo apt install ./ea-media-tools_3.0.1_amd64.deb
 ```
 
 Use the package ending in `arm64.deb` on ARM64 systems. Remove the app with `sudo apt remove ea-media-tools`.
