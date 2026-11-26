@@ -471,6 +471,7 @@ export const startEncodeQueue = async (
   webContents: WebContents,
   simultaneousEncoding = true,
   minimumFpsPerJob = 0,
+  metadataEditJobs = 3,
 ): Promise<EncodeStartResult> => {
   if (queueRunning) return { started: false, message: 'An encoding queue is already running.' };
   if (!ffmpegPath) return { started: false, message: 'FFmpeg is unavailable.' };
@@ -517,7 +518,7 @@ export const startEncodeQueue = async (
   queueFailureMessage = undefined;
   cancelledJobs.clear();
   const queueStartedAt = Date.now();
-  const concurrency = encodeConcurrencyPlan(jobs, simultaneousEncoding, minimumFpsPerJob);
+  const concurrency = encodeConcurrencyPlan(jobs, simultaneousEncoding, minimumFpsPerJob, metadataEditJobs);
   const concurrencyLimit = concurrency.limit;
   const useCooldown = jobs.some((job) => job.args.includes('-c:v'));
   logActivity('INFO', 'ffmpeg.queue.started', {

@@ -4,6 +4,8 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import type { MediaInfo } from './shared-types';
+import { stableCropConsensus } from './video-crop';
+import { APP_CONFIG } from './config';
 
 let previewRoot = '';
 const previewFiles = new Map<string, string>();
@@ -49,14 +51,25 @@ const detectCrop = async (
   ffmpegPath: string,
   sourcePath: string,
   duration: number | null,
+  width: number,
+  height: number,
 ) => {
-  const seek = Math.max(0, (duration ?? 0) * 0.40);
-  const output = await execute(ffmpegPath, [
-    '-hide_banner', '-ss', seek.toFixed(3), '-i', sourcePath, '-frames:v', '100',
-    '-vf', 'cropdetect=limit=24:round=2:reset=0', '-an', '-f', 'null', '-',
-  ]);
-  const matches = [...output.matchAll(/crop=(\d+:\d+:\d+:\d+)/g)];
-  return matches.at(-1)?.[1] ?? null;
+  const sampleCount = APP_CONFIG.videoFilters.autoCropSamples;
+  const framesPerSample = APP_CONFIG.videoFilters.autoCropFrames;
+  const seeks = duration && duration > 1
+    ? Array.from({ length: sampleCount }, (_item, index) => duration * (index + 1) / (sampleCount + 1))
+    : [0];
+  const samples = await Promise.all(seeks.map(async (seek) => {
+    const output = await execute(ffmpegPath, [
+      '-hide_banner', '-ss', Math.max(0, seek).toFixed(3), '-i', sourcePath,
+      '-frames:v', String(framesPerSample), '-vf', 'cropdetect=limit=24:round=2:reset=0', '-an', '-f', 'null', '-',
+    ]);
+    const matches = [...output.matchAll(/crop=(\d+:\d+:\d+:\d+)/g)].map((match) => match[1]);
+    const counts = new Map<string, number>();
+    matches.forEach((crop) => counts.set(crop, (counts.get(crop) ?? 0) + 1));
+    return [...counts.entries()].sort((left, right) => right[1] - left[1])[0]?.[0] ?? null;
+  }));
+  return stableCropConsensus(samples, width, height);
 };
 
 export const analyzeVisual = async (
@@ -66,7 +79,7 @@ export const analyzeVisual = async (
 ) => {
   const [preview, suggestedCrop] = await Promise.all([
     createThumbnail(ffmpegPath, sourcePath, media.duration).catch(() => ({})),
-    detectCrop(ffmpegPath, sourcePath, media.duration).catch(() => null),
+    detectCrop(ffmpegPath, sourcePath, media.duration, media.video?.width ?? 0, media.video?.height ?? 0).catch(() => null),
   ]);
   media.suggestedCrop = suggestedCrop;
   return preview;

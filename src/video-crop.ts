@@ -33,6 +33,21 @@ export const detectedCrop = (
   return { width, height, x, y, filter: `${width}:${height}:${x}:${y}` };
 };
 
+export const stableCropConsensus = (
+  samples: readonly (string | null)[],
+  sourceWidth: number,
+  sourceHeight: number,
+) => {
+  const votes = new Map<string, number>();
+  samples.forEach((sample) => {
+    const crop = detectedCrop(sample, sourceWidth, sourceHeight);
+    if (crop) votes.set(crop.filter, (votes.get(crop.filter) ?? 0) + 1);
+  });
+  const winner = [...votes.entries()].sort((left, right) => right[1] - left[1])[0];
+  if (!winner || winner[1] < Math.ceil(samples.length / 2)) return null;
+  return winner[0];
+};
+
 export const aspectPreservingDimensions = (
   target: readonly [string, string],
   sourceWidth: number,

@@ -63,6 +63,15 @@ test('simultaneous encoding runs audio batches at a fixed safe limit and can be 
   assert.equal(encoderConcurrencyLimit(Array.from({ length: 20 }, () => job('hevc_nvenc')), false), 1);
 });
 
+test('metadata replacements run three at once without adaptive encoder sampling', () => {
+  const metadataJobs = Array.from({ length: 5 }, (_, index): EncodeJob => ({
+    ...job('copy'), outputPath: `C:\\output${index}.mkv`, args: ['-map', '0', '-c', 'copy'],
+    replaceSourcePath: `C:\\source${index}.mkv`,
+  }));
+  assert.deepEqual(encodeConcurrencyPlan(metadataJobs, true, 300, 3), { limit: 3, adaptive: false });
+  assert.deepEqual(encodeConcurrencyPlan(metadataJobs, true, 300, 2), { limit: 2, adaptive: false });
+});
+
 test('the ten-second sample uses each active encode average', () => {
   assert.equal(averageAggregateFps([[700, 720], [195, 205]]), 910);
   assert.equal(averageAggregateFps([[], [0, Number.NaN]]), null);

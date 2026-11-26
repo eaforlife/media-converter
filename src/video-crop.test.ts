@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { aspectPreservingDimensions, cuvidCropMargins, detectedCrop } from './video-crop.ts';
+import { aspectPreservingDimensions, cuvidCropMargins, detectedCrop, stableCropConsensus } from './video-crop.ts';
 
 test('accepts black-bar crops that begin at the top-left edge', () => {
   assert.ok(detectedCrop('1920:800:0:0', 1920, 1080));
@@ -23,4 +23,18 @@ test('rounds asymmetric detected crops to CUVID decoder half margins', () => {
   const crop = detectedCrop('1888:1041:17:19', 1920, 1080);
   assert.ok(crop);
   assert.equal(cuvidCropMargins(crop, 1920, 1080), '10x10x9x8');
+});
+
+test('uses the crop shared by most sampled scene windows', () => {
+  assert.equal(stableCropConsensus([
+    '1920:800:0:140', '1920:800:0:140', '1920:800:0:140',
+    '1920:1080:0:0', '1888:1040:16:20',
+  ], 1920, 1080), '1920:800:0:140');
+});
+
+test('rejects a crop found only in a minority scene window', () => {
+  assert.equal(stableCropConsensus([
+    '1920:800:0:140', '1920:1080:0:0', '1920:1080:0:0',
+    '1920:1080:0:0', '1888:1040:16:20',
+  ], 1920, 1080), null);
 });

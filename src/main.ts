@@ -840,6 +840,7 @@ const registerIpc = () => {
     return startEncodeQueue(
       ffmpegPath, ccextractorPath, rsgainPath, jobs, event.sender,
       simultaneousEncoding, APP_CONFIG.encodeConcurrency.minimumFpsPerJob,
+      APP_CONFIG.encodeConcurrency.metadataEditJobs,
     );
   });
 

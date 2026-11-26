@@ -30,6 +30,8 @@ test('loads app defaults from config.ini', () => {
   assert.equal(configuration.videoDefaults.main10Advanced.bFrames,
     configBoolean('Main10 Defaults', 'b_frames'));
   assert.equal(configuration.videoDefaults.main10, configBoolean('UI Defaults', 'default_main10'));
+  assert.equal(configuration.uiDefaults.applyMetadataChangesToQueue,
+    configBoolean('UI Defaults', 'apply_metadata_changes_to_queue'));
   assert.equal(configuration.jobBehaviorDefaults.stripMetadata,
     configBoolean('Job Behavior Defaults', 'strip_metadata'));
   assert.equal(configuration.videoDefaults.outputProfiles['4k'].scale[0],
@@ -51,10 +53,18 @@ test('loads app defaults from config.ini', () => {
   });
   assert.equal(configuration.encodeConcurrency.minimumFpsPerJob,
     Number(configSections.get('Encode Concurrency')?.get('minimum_fps_per_job')));
+  assert.equal(configuration.encodeConcurrency.metadataEditJobs,
+    Number(configValue('Encode Concurrency', 'metadata_edit_jobs')));
+  assert.equal(configuration.metadataEditDefaults.stripMetadata,
+    configBoolean('Metadata Edit Defaults', 'strip_metadata'));
+  assert.equal(configuration.videoFilters.autoCropSamples,
+    Number(configValue('Video Filters', 'auto_crop_samples')));
+  assert.equal(configuration.videoFilters.autoCropFrames,
+    Number(configValue('Video Filters', 'auto_crop_frames')));
 });
 
 test('disables concurrent encoding when the FPS setting is missing or zero', () => {
-  const withoutConcurrency = configFile.replace(/\n\[Encode Concurrency\]\nminimum_fps_per_job=\d+\n/, '\n');
+  const withoutConcurrency = configFile.replace(/minimum_fps_per_job=\d+\n/, '');
   assert.equal(parseAppConfiguration(withoutConcurrency).encodeConcurrency.minimumFpsPerJob, 0);
   assert.equal(parseAppConfiguration(configFile.replace(
     new RegExp(`minimum_fps_per_job=${configValue('Encode Concurrency', 'minimum_fps_per_job')}`),
@@ -77,6 +87,21 @@ test('requires every job behavior default in config.ini', () => {
     `remux_audio=${configValue('Job Behavior Defaults', 'remux_audio')}\n`, '',
   )),
     /\[Job Behavior Defaults\] is missing remux_audio/);
+});
+
+test('validates metadata edit and auto-crop runtime defaults', () => {
+  assert.throws(() => parseAppConfiguration(configFile.replace(
+    `strip_metadata=${configValue('Metadata Edit Defaults', 'strip_metadata')}`,
+    'strip_metadata=maybe',
+  )), /must be 0 or 1/);
+  assert.throws(() => parseAppConfiguration(configFile.replace(
+    `auto_crop_samples=${configValue('Video Filters', 'auto_crop_samples')}`,
+    'auto_crop_samples=0',
+  )), /auto_crop_samples must be an integer/);
+  assert.throws(() => parseAppConfiguration(configFile.replace(
+    `metadata_edit_jobs=${configValue('Encode Concurrency', 'metadata_edit_jobs')}`,
+    'metadata_edit_jobs=99',
+  )), /metadata_edit_jobs must be an integer/);
 });
 
 test('loads app-level audio choices and filters from config.ini', () => {

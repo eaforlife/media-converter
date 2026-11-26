@@ -2,6 +2,12 @@
 
 All notable changes to EA Media Tools are documented here.
 
+## [3.0.3] - 2026-11-27
+
+- Improve batch metadata editing and source-specific track controls.
+- Fix surround downmix track ordering and make source removal available in the queue.
+- Stabilize automatic crop detection across sampled scenes.
+
 ## [2.8.2] - 2026-09-09
 
 ### Fixed

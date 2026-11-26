@@ -16,7 +16,11 @@ export const encodeConcurrencyPlan = (
   jobs: readonly EncodeJob[],
   simultaneousEncoding = true,
   minimumFpsPerJob = DEFAULT_MINIMUM_JOB_FPS,
+  metadataEditJobs = 3,
 ): { limit: number; adaptive: boolean } => {
+  if (jobs.length && jobs.every((job) => Boolean(job.replaceSourcePath))) {
+    return { limit: Math.min(jobs.length, Math.max(1, Math.floor(metadataEditJobs) || 1)), adaptive: false };
+  }
   if (!simultaneousEncoding || jobs.length <= 1) return { limit: 1, adaptive: false };
   if (!Number.isFinite(minimumFpsPerJob) || minimumFpsPerJob <= 0) return { limit: 1, adaptive: false };
   if (jobs.every(isNvencJob)) {
@@ -32,7 +36,8 @@ export const encoderConcurrencyLimit = (
   jobs: readonly EncodeJob[],
   simultaneousEncoding = true,
   minimumFpsPerJob = DEFAULT_MINIMUM_JOB_FPS,
-) => encodeConcurrencyPlan(jobs, simultaneousEncoding, minimumFpsPerJob).limit;
+  metadataEditJobs = 3,
+) => encodeConcurrencyPlan(jobs, simultaneousEncoding, minimumFpsPerJob, metadataEditJobs).limit;
 
 export const averageAggregateFps = (windows: Iterable<readonly number[]>) => {
   let total = 0;

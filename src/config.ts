@@ -22,6 +22,7 @@ export type AppConfiguration = {
     ccextractorReleaseApi: string;
   };
   mediaExtensions: { video: readonly string[]; audio: readonly string[] };
+  uiDefaults: { applyMetadataChangesToQueue: boolean };
   videoDefaults: {
     preset: string;
     codec: 'H.264' | 'HEVC' | 'AV1';
@@ -36,7 +37,8 @@ export type AppConfiguration = {
     main10Advanced: Readonly<{ spatialAq: number; streamingSpatialAq: number; bFrames: boolean }>;
     bufferMultiplier: number;
   };
-  encodeConcurrency: { minimumFpsPerJob: number };
+  encodeConcurrency: { minimumFpsPerJob: number; metadataEditJobs: number };
+  metadataEditDefaults: { stripMetadata: boolean };
   jobBehaviorDefaults: JobBehaviorDefaults;
   systemCapabilities: Readonly<{
     cacheTag: string;
@@ -61,7 +63,7 @@ export type AppConfiguration = {
     copyAttachedCoverArt: boolean;
     extractClosedCaptions: boolean;
   };
-  videoFilters: { hdrToSdr: string; cudaTonemap: string };
+  videoFilters: { hdrToSdr: string; cudaTonemap: string; autoCropSamples: number; autoCropFrames: number };
   encoders: readonly Readonly<EncoderCandidateConfig>[];
 };
 
@@ -127,6 +129,7 @@ export const parseAppConfiguration = (ini: string): AppConfiguration => {
   const main10Advanced = requireSection(sections, 'Main10 Defaults');
   const videoBehavior = requireSection(sections, 'Video Behavior');
   const encodeConcurrency = sections.get('Encode Concurrency');
+  const metadataEdit = requireSection(sections, 'Metadata Edit Defaults');
   const jobBehavior = requireSection(sections, 'Job Behavior Defaults');
   const defaultCodec = requireValue(uiDefaults, 'UI Defaults', 'default_video_codec') as AppConfiguration['videoDefaults']['codec'];
   if (!['H.264', 'HEVC', 'AV1'].includes(defaultCodec)) throw new Error('[UI Defaults] default_video_codec is invalid');
@@ -168,6 +171,12 @@ export const parseAppConfiguration = (ini: string): AppConfiguration => {
       video: commaList(requireValue(media, 'Media Extensions', 'video')),
       audio: commaList(requireValue(media, 'Media Extensions', 'audio')),
     }),
+    uiDefaults: Object.freeze({
+      applyMetadataChangesToQueue: booleanValue(
+        requireValue(uiDefaults, 'UI Defaults', 'apply_metadata_changes_to_queue'),
+        '[UI Defaults] apply_metadata_changes_to_queue',
+      ),
+    }),
     videoDefaults: Object.freeze({
       preset: requireValue(uiDefaults, 'UI Defaults', 'default_video_preset'),
       codec: defaultCodec,
@@ -189,6 +198,13 @@ export const parseAppConfiguration = (ini: string): AppConfiguration => {
         encodeConcurrency?.get('minimum_fps_per_job') ?? '0',
         '[Encode Concurrency] minimum_fps_per_job', 0, 100_000,
       ),
+      metadataEditJobs: numberValue(
+        requireValue(encodeConcurrency ?? new Map(), 'Encode Concurrency', 'metadata_edit_jobs'),
+        '[Encode Concurrency] metadata_edit_jobs', 1, 8,
+      ),
+    }),
+    metadataEditDefaults: Object.freeze({
+      stripMetadata: booleanValue(requireValue(metadataEdit, 'Metadata Edit Defaults', 'strip_metadata'), '[Metadata Edit Defaults] strip_metadata'),
     }),
     jobBehaviorDefaults: Object.freeze({
       remuxAudio: booleanValue(requireValue(jobBehavior, 'Job Behavior Defaults', 'remux_audio'), '[Job Behavior Defaults] remux_audio'),
@@ -256,6 +272,8 @@ export const parseAppConfiguration = (ini: string): AppConfiguration => {
     videoFilters: Object.freeze({
       hdrToSdr: requireValue(videoFilters, 'Video Filters', 'hdr_to_sdr'),
       cudaTonemap: requireValue(videoFilters, 'Video Filters', 'cuda_tonemap'),
+      autoCropSamples: numberValue(requireValue(videoFilters, 'Video Filters', 'auto_crop_samples'), '[Video Filters] auto_crop_samples', 1, 12),
+      autoCropFrames: numberValue(requireValue(videoFilters, 'Video Filters', 'auto_crop_frames'), '[Video Filters] auto_crop_frames', 1, 100),
     }),
     encoders: Object.freeze(encoders.map((encoder) => Object.freeze(encoder))),
   });
@@ -274,6 +292,7 @@ export const EMPTY_APP_CONFIGURATION: AppConfiguration = Object.freeze({
     ccextractorReleaseApi: '',
   }),
   mediaExtensions: Object.freeze({ video: Object.freeze([]), audio: Object.freeze([]) }),
+  uiDefaults: Object.freeze({ applyMetadataChangesToQueue: true }),
   videoDefaults: Object.freeze({
     preset: '', codec: 'H.264', main10: false,
     outputProfiles: Object.freeze({}) as AppConfiguration['videoDefaults']['outputProfiles'],
@@ -281,7 +300,8 @@ export const EMPTY_APP_CONFIGURATION: AppConfiguration = Object.freeze({
     main10Advanced: Object.freeze({ spatialAq: 0, streamingSpatialAq: 0, bFrames: false }),
     bufferMultiplier: 1,
   }),
-  encodeConcurrency: Object.freeze({ minimumFpsPerJob: 0 }),
+  encodeConcurrency: Object.freeze({ minimumFpsPerJob: 0, metadataEditJobs: 1 }),
+  metadataEditDefaults: Object.freeze({ stripMetadata: false }),
   jobBehaviorDefaults: Object.freeze({ remuxAudio: false, remuxSubtitles: false, stripMetadata: false, doNotReplaceAudio: false, downmixToStereo: false }),
   systemCapabilities: null,
   personalizedDefaults: Object.freeze({
@@ -304,7 +324,7 @@ export const EMPTY_APP_CONFIGURATION: AppConfiguration = Object.freeze({
     copyAttachedCoverArt: false,
     extractClosedCaptions: false,
   }),
-  videoFilters: Object.freeze({ hdrToSdr: '', cudaTonemap: '' }),
+  videoFilters: Object.freeze({ hdrToSdr: '', cudaTonemap: '', autoCropSamples: 1, autoCropFrames: 1 }),
   encoders: Object.freeze([]),
 });
 
