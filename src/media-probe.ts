@@ -7,6 +7,7 @@ import type {
   VideoStreamInfo,
 } from './shared-types';
 import { mediaLanguageName, normalizeMediaLanguage } from './media-language';
+import { subtitleStreamFlags } from './subtitle-tracks';
 
 type ProbeStream = {
   index?: number;
@@ -165,7 +166,7 @@ const subtitleInfo = (stream: ProbeStream): SubtitleStreamInfo => {
     languageLabel: mediaLanguageName(language),
     kind,
     isUtf8: kind === 'text',
-    flags: flagsOf(stream),
+    flags: subtitleStreamFlags(flagsOf(stream), stream.tags),
   };
 };
 

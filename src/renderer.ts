@@ -45,6 +45,7 @@ import {
 } from './media-workflow';
 import { mp4PlaybackArguments } from './mp4-playback';
 import { consolidatePrimaryDispositions, setPrimaryDisposition } from './stream-dispositions';
+import { matchingTrackIndex, matchMetadataTrack, subtitleTracksInSourceOrder } from './subtitle-tracks';
 import type {
   AdvancedVideoSettings, AppSettings, AudioStreamInfo, EncodeJob, EncodeProgress, FilterSettings, HardwareCapabilities, RuntimeState, SavedPreset,
   OutputFormat, ScaleMode, SourceFile, SourceScanProgress, StreamFlags, SubtitleStreamInfo,
@@ -409,21 +410,6 @@ const sourceHasMetadataChanges = (source: SourceFile, settings = getSettings(sou
 };
 const matchingMetadataQueueSources = (origin: SourceFile) => sources.filter((source) =>
   isAudioWorkflow(source) === isAudioWorkflow(origin));
-const matchingMetadataTrack = <T extends { language: string; flags: StreamFlags }>(
-  origin: T,
-  edited: EditableStreamMetadata,
-  candidates: T[],
-  position: number,
-  channels?: (track: T) => number,
-) => candidates.map((track, candidatePosition) => ({
-  track,
-  score: (track.language === edited.language ? 100 : 0)
-    + (track.language === origin.language ? 50 : 0)
-    + (track.flags.hearingImpaired === edited.flags.hearingImpaired ? 20 : 0)
-    + (track.flags.forced === edited.flags.forced ? 10 : 0)
-    + (channels && channels(track) === (channels(origin) ?? -1) ? 30 : 0)
-    + (candidatePosition === position ? 1 : 0),
-})).sort((left, right) => right.score - left.score)[0]?.track;
 const applyMetadataChangesToQueue = (
   originSource: SourceFile,
   outputFlagChange?: { kind: 'audio' | 'downmix' | 'subtitle'; index: number; flag: keyof StreamFlags },
@@ -447,7 +433,7 @@ const applyMetadataChangesToQueue = (
     originAudio.forEach((track, position) => {
       const originMetadata = originSettings.audio[track.index]?.metadata;
       const targetTrack = originMetadata
-        ? matchingMetadataTrack(track, originMetadata, targetAudio.filter((item) => !usedAudioTracks.has(item.index)), position, (item) => item.channels)
+        ? matchMetadataTrack(track, originMetadata, targetAudio.filter((item) => !usedAudioTracks.has(item.index)), position, (item) => item.channels)
         : undefined;
       const targetMetadata = targetTrack && targetSettings.audio[targetTrack.index]?.metadata;
       if (originMetadata && targetMetadata) {
@@ -491,7 +477,7 @@ const applyMetadataChangesToQueue = (
       const originMetadata = originSettings.subtitles[track.index]?.metadata;
       const sameKind = targetSubtitles.filter((candidate) => candidate.kind === track.kind && !usedSubtitleTracks.has(candidate.index));
       const targetTrack = originMetadata
-        ? matchingMetadataTrack(track, originMetadata, sameKind, position)
+        ? matchMetadataTrack(track, originMetadata, sameKind, position)
         : undefined;
       const targetMetadata = targetTrack && targetSettings.subtitles[targetTrack.index]?.metadata;
       if (originMetadata && targetMetadata) {
@@ -879,17 +865,6 @@ const applyBuiltInCodecProfile = (source: SourceFile, settings: JobSettings, enc
   );
   return true;
 };
-const matchingTrackIndex = <T extends { index: number; language: string }>(
-  originTracks: T[],
-  targetTracks: T[],
-  targetIndex: number,
-) => {
-  const target = targetTracks.find((track) => track.index === targetIndex);
-  if (!target) return null;
-  const targetLanguageTracks = targetTracks.filter((track) => track.language === target.language);
-  const ordinal = targetLanguageTracks.findIndex((track) => track.index === targetIndex);
-  return originTracks.filter((track) => track.language === target.language)[ordinal]?.index ?? null;
-};
 const syncBatchTrackSettings = (
   originSource: SourceFile,
   origin: JobSettings,
@@ -916,7 +891,9 @@ const syncBatchTrackSettings = (
   const originSubtitles = originSource.media?.subtitles ?? [];
   const targetSubtitles = targetSource.media?.subtitles ?? [];
   for (const track of targetSubtitles) {
-    const originIndex = matchingTrackIndex(originSubtitles, targetSubtitles, track.index);
+    const originKindTracks = originSubtitles.filter((item) => item.kind === track.kind);
+    const targetKindTracks = targetSubtitles.filter((item) => item.kind === track.kind);
+    const originIndex = matchingTrackIndex(originKindTracks, targetKindTracks, track.index);
     const originTrack = originIndex === null ? null : originSubtitles.find((item) => item.index === originIndex);
     const sourceSetting = originIndex === null ? null : origin.subtitles[originIndex];
     if (!sourceSetting || originTrack?.kind !== track.kind) continue;
@@ -1467,10 +1444,14 @@ const getCommandArguments = (source: SourceFile, requestedOutputPath?: string, f
   }
   let subtitleOutputIndex = 0;
   if (!settings.filters.remuxSubtitles) args.push(...excludedStreamArguments(settings.filters).filter((argument) => argument === '-sn'));
-  else if (settings.processing.subtitles) subtitleTracks.forEach((track) => {
+  else if (settings.processing.subtitles) subtitleTracksInSourceOrder(
+    subtitleTracks,
+    settings.subtitles,
+    (track) => settings.format !== 'mp4' || mp4SubtitleConvertible(track),
+    (track) => isMusicVideoWorkflow(source) && isCeaCaptionStream(track),
+  ).forEach((track) => {
     const subtitle = settings.subtitles[track.index];
-    if (!subtitle?.enabled || isMusicVideoWorkflow(source) && isCeaCaptionStream(track)) return;
-    if (settings.format === 'mp4' && !mp4SubtitleConvertible(track)) return;
+    if (!subtitle) return;
     args.push('-map', subtitleInputSpecifier(track, subtitleTracks), `-c:s:${subtitleOutputIndex}`, settings.format === 'mp4' ? 'mov_text' : subtitle.codec);
     args.push(`-metadata:s:s:${subtitleOutputIndex}`, `language=${subtitle.metadata.language}`);
     args.push(`-disposition:s:${subtitleOutputIndex}`, dispositionValue(subtitle.flags));
