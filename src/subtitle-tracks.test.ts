@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { matchMetadataTrack, matchingTrackIndex, subtitleStreamFlags, subtitleTracksInSourceOrder } from './subtitle-tracks.ts';
+import { matchMetadataTrack, matchSubtitleMetadataTrack, matchingTrackIndex, subtitleStreamFlags, subtitleTracksInSourceOrder } from './subtitle-tracks.ts';
 
 const flags = (defaultFlag = false, forced = false, hearingImpaired = false) => ({
   default: defaultFlag,
@@ -16,7 +16,7 @@ test('detects SDH and hearing-impaired labels from subtitle descriptions and tit
   assert.equal(subtitleStreamFlags(flags(), { description: 'English washed colors' }).hearingImpaired, false);
 });
 
-test('batch metadata matching follows source flags when duplicate language tracks are reordered', () => {
+test('batch metadata matching follows language and SDH identity when duplicate tracks are reordered', () => {
   const source = [
     { index: 3, language: 'eng', flags: flags(true, true) },
     { index: 5, language: 'eng', flags: flags() },
@@ -33,6 +33,40 @@ test('batch metadata matching follows source flags when duplicate language track
 
   const edited = { language: 'jpn', flags: flags(false, true, false) };
   assert.equal(matchMetadataTrack(source[2], edited, target, 0), target[0]);
+});
+
+test('batch subtitle matching never substitutes a different language or SDH variant', () => {
+  const source = [
+    { index: 0, language: 'eng', flags: flags(true, false, false) },
+    { index: 1, language: 'eng', flags: flags(false, false, true) },
+  ];
+  const reorderedTarget = [
+    { index: 8, language: 'eng', flags: flags(false, false, true) },
+    { index: 9, language: 'eng', flags: flags(true, false, false) },
+  ];
+  assert.equal(matchingTrackIndex(source, reorderedTarget, 8, true), 1);
+  assert.equal(matchingTrackIndex(source, reorderedTarget, 9, true), 0);
+  assert.equal(matchingTrackIndex(source, [
+    { index: 8, language: 'eng', flags: flags(true, false, true) },
+  ], 8, true), 1);
+
+  const missingVariant = [
+    { index: 10, language: 'eng', flags: flags(false, false, false) },
+  ];
+  assert.equal(matchSubtitleMetadataTrack(source[1], missingVariant), undefined);
+});
+
+test('batch subtitle identity uses language and SDH even when default and forced flags differ', () => {
+  const origin = [
+    { index: 0, language: 'eng', flags: flags(true, false, false) },
+    { index: 1, language: 'eng', flags: flags(false, false, true) },
+  ];
+  const target = [
+    { index: 4, language: 'eng', flags: flags(false, true, true) },
+    { index: 5, language: 'eng', flags: flags(true, true, false) },
+  ];
+  assert.equal(matchingTrackIndex(origin, target, 4, true), 1);
+  assert.equal(matchingTrackIndex(origin, target, 5, true), 0);
 });
 
 test('subtitle output selection filters without changing source order or adding tracks', () => {

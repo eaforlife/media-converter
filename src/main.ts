@@ -427,7 +427,7 @@ const toSourceFile = async (filePath: string, sourceRoot?: string): Promise<Sour
   }
 };
 
-const inspectSource = async (file: SourceFile, detailedLogging: boolean): Promise<SourceFile | null> => {
+const inspectSource = async (file: SourceFile, detailedLogging: boolean, capabilities?: HardwareCapabilities | null): Promise<SourceFile | null> => {
   const ffprobePath = activeFfprobe();
   const ffmpegPath = activeFfmpeg();
   if (!ffprobePath) {
@@ -438,7 +438,7 @@ const inspectSource = async (file: SourceFile, detailedLogging: boolean): Promis
     if (!media.video && !media.audio.length) return null;
     const workflow = classifyMediaWorkflow(media);
     if (!workflow) return null;
-    const preview = media.video && ffmpegPath ? await analyzeVisual(ffmpegPath, file.path, media) : {};
+    const preview = media.video && ffmpegPath ? await analyzeVisual(ffmpegPath, file.path, media, capabilities) : {};
     if (detailedLogging) {
       logActivity('INFO', 'ffprobe.output', {
         path: file.path,
@@ -475,9 +475,10 @@ const inspectSources = async (
   const audioOnly = files.every((file) => audioExtensions().has(path.extname(file.path).toLowerCase()));
   const concurrency = inspectionConcurrency(files.length, audioOnly, os.availableParallelism());
   const detailedLogging = files.length <= 100;
+  const capabilities = APP_CONFIG.systemCapabilities?.capabilities ?? null;
   logActivity('INFO', 'source.inspection.started', { files: files.length, audioOnly, concurrency });
   const inspected = await boundedMap(
-    files, concurrency, (file) => inspectSource(file, detailedLogging), onProgress,
+    files, concurrency, (file) => inspectSource(file, detailedLogging, capabilities), onProgress,
   );
   const valid = inspected.filter((file): file is SourceFile => file !== null);
   logActivity('INFO', 'source.inspection.completed', { requested: files.length, accepted: valid.length, concurrency });

@@ -45,7 +45,7 @@ import {
 } from './media-workflow';
 import { mp4PlaybackArguments } from './mp4-playback';
 import { consolidatePrimaryDispositions, setPrimaryDisposition } from './stream-dispositions';
-import { matchingTrackIndex, matchMetadataTrack, subtitleTracksInSourceOrder } from './subtitle-tracks';
+import { matchingTrackIndex, matchMetadataTrack, matchSubtitleMetadataTrack, subtitleTracksInSourceOrder } from './subtitle-tracks';
 import type {
   AdvancedVideoSettings, AppSettings, AudioStreamInfo, EncodeJob, EncodeProgress, FilterSettings, HardwareCapabilities, RuntimeState, SavedPreset,
   OutputFormat, ScaleMode, SourceFile, SourceScanProgress, StreamFlags, SubtitleStreamInfo,
@@ -473,11 +473,11 @@ const applyMetadataChangesToQueue = (
     });
     const targetSubtitles = (targetSource.media?.subtitles ?? []).filter((track) => !track.externalPath);
     const usedSubtitleTracks = new Set<number>();
-    originSubtitles.forEach((track, position) => {
+    originSubtitles.forEach((track) => {
       const originMetadata = originSettings.subtitles[track.index]?.metadata;
       const sameKind = targetSubtitles.filter((candidate) => candidate.kind === track.kind && !usedSubtitleTracks.has(candidate.index));
       const targetTrack = originMetadata
-        ? matchMetadataTrack(track, originMetadata, sameKind, position)
+        ? matchSubtitleMetadataTrack(track, sameKind)
         : undefined;
       const targetMetadata = targetTrack && targetSettings.subtitles[targetTrack.index]?.metadata;
       if (originMetadata && targetMetadata) {
@@ -893,7 +893,7 @@ const syncBatchTrackSettings = (
   for (const track of targetSubtitles) {
     const originKindTracks = originSubtitles.filter((item) => item.kind === track.kind);
     const targetKindTracks = targetSubtitles.filter((item) => item.kind === track.kind);
-    const originIndex = matchingTrackIndex(originKindTracks, targetKindTracks, track.index);
+    const originIndex = matchingTrackIndex(originKindTracks, targetKindTracks, track.index, true);
     const originTrack = originIndex === null ? null : originSubtitles.find((item) => item.index === originIndex);
     const sourceSetting = originIndex === null ? null : origin.subtitles[originIndex];
     if (!sourceSetting || originTrack?.kind !== track.kind) continue;
@@ -1084,12 +1084,11 @@ const hardwareInputArguments = (source: SourceFile, settings: JobSettings, force
       cropHandledByDecoder: false, backend: 'vaapi' as const,
     };
   }
-  const requiresUniversalCrop = settings.filters.autoCrop && Boolean(detectedCropForSource(source));
   const canUseCuda = appSettings.hardwareAcceleration
     && settings.encoder.endsWith('_nvenc')
     && hardwareCapabilities.cudaAvailable
     && hardwareCapabilities.nvdecAvailable;
-  if (forceSoftwareDecode || (requiresUniversalCrop && !canUseCuda)) {
+  if (forceSoftwareDecode) {
     return { args: [] as string[], cropHandledByDecoder: false, backend: 'software' as const };
   }
   if (!appSettings.hardwareAcceleration) return { args: [] as string[], cropHandledByDecoder: false, backend: 'software' as const };
@@ -1140,9 +1139,6 @@ const decoderStatus = (source: SourceFile, settings: JobSettings) => {
   }
   if (settings.encoder.endsWith('_nvenc') && hardwareCapabilities.cudaAvailable && hardwareCapabilities.nvdecAvailable) {
     return { label: 'NVIDIA NVDEC', hardware: true };
-  }
-  if (settings.filters.autoCrop && detectedCropForSource(source)) {
-    return { label: 'SOFTWARE', hardware: false };
   }
   if (settings.encoder.endsWith('_amf') && hardwareCapabilities.amfDecodeAvailable) {
     return { label: 'AMD AMF', hardware: true };
@@ -2431,7 +2427,7 @@ const renderSubtitleSettings = (source: SourceFile, settings: JobSettings) => {
 const renderSubtitleTrack = (source: SourceFile, track: SubtitleStreamInfo, position: number, settings: JobSettings, processing: boolean, metadataOnly: boolean) => {
   const setting = settings.subtitles[track.index], mp4 = settings.format === 'mp4';
   const captionCarrier = isMusicVideoWorkflow(source) && isCeaCaptionStream(track);
-  const imageBlocked = track.kind === 'image' && mp4 && !captionCarrier;
+  const imageBlocked = !metadataOnly && track.kind === 'image' && mp4 && !captionCarrier;
   const options = captionCarrier
     ? `<option value="${settings.format}">Extract to ${settings.format === 'mp4' ? 'MOV text' : settings.format === 'webm' ? 'WebVTT' : 'SRT'}</option>`
     : track.kind === 'image'
@@ -2441,7 +2437,7 @@ const renderSubtitleTrack = (source: SourceFile, track: SubtitleStreamInfo, posi
       : `<option value="subrip"${selected(setting.codec === 'subrip')}>SRT (SubRip)</option><option value="webvtt"${selected(setting.codec === 'webvtt')}>WebVTT</option>`;
   return `<section class="track-card ${processing && !imageBlocked || metadataOnly || captionCarrier ? '' : 'track-disabled'}"><div class="track-heading"><div><span>TRACK ${position + 1}</span><h3>${position + 1}. Track ${position + 1}: ${escapeHtml(mediaLanguageName(setting.metadata.language))}</h3></div><span class="track-badge ${track.kind}">${escapeHtml(track.codecLabel)}</span></div>
     <div class="track-meta"><span>${captionCarrier ? 'CEA caption source' : track.kind === 'text' ? 'Text-based' : 'Image-based'}</span><span>${captionCarrier ? 'Extracted as UTF-8' : track.isUtf8 ? 'UTF-8' : 'Binary image'}</span><span>${escapeHtml(flagsLabel(setting.flags))}</span></div>${processing && imageBlocked ? '<div class="downmix-notice warning">Image subtitles cannot be converted to mov_text and will be excluded from MP4.</div>' : ''}
-    <fieldset class="processing-fieldset"${processing || metadataOnly ? '' : ' disabled'}><div class="subtitle-controls"><label class="check-label"><input type="checkbox" data-subtitle-enabled="${track.index}"${checked(setting.enabled && !imageBlocked)}${imageBlocked || captionCarrier && (!processing || !settings.filters.remuxSubtitles) ? ' disabled' : ''}/> ${captionCarrier ? 'Extract captions' : 'Include track'}</label><label>Output format<select data-subtitle-codec="${track.index}"${captionCarrier || mp4 || track.kind === 'image' ? ' disabled' : ''}>${options}</select></label></div>${renderDispositionControls('subtitle', track.index, setting.flags, imageBlocked || !setting.enabled)}</fieldset>${renderMetadataEditor('subtitle', track.index, setting.metadata, metadataOnly || captionCarrier || processing && setting.enabled && !imageBlocked, metadataOnly)}</section>`;
+    <fieldset class="processing-fieldset"${processing || metadataOnly ? '' : ' disabled'}><div class="subtitle-controls"><label class="check-label"><input type="checkbox" data-subtitle-enabled="${track.index}"${checked(setting.enabled && !imageBlocked)}${!metadataOnly && (imageBlocked || captionCarrier && (!processing || !settings.filters.remuxSubtitles)) ? ' disabled' : ''}/> ${metadataOnly ? 'Include track' : captionCarrier ? 'Extract captions' : 'Include track'}</label><label>Output format<select data-subtitle-codec="${track.index}"${captionCarrier || mp4 || track.kind === 'image' ? ' disabled' : ''}>${options}</select></label></div>${renderDispositionControls('subtitle', track.index, setting.flags, imageBlocked || !setting.enabled)}</fieldset>${renderMetadataEditor('subtitle', track.index, setting.metadata, metadataOnly || captionCarrier || processing && setting.enabled && !imageBlocked, metadataOnly)}</section>`;
 };
 
 const updateCommand = () => {

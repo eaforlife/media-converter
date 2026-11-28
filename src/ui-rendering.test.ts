@@ -46,3 +46,10 @@ test('custom switches have no native checkbox state or repaint IPC', () => {
   assert.doesNotMatch(css, /[.]toggle-row input/);
   assert.match(renderer, /class="toggle-row advanced-toggle" role="switch" data-advanced-toggle/);
 });
+
+test('metadata-only subtitle include controls remain enabled for image and caption tracks', () => {
+  const renderer = fs.readFileSync(new URL('./renderer.ts', import.meta.url), 'utf8');
+  assert.match(renderer, /const imageBlocked = !metadataOnly && track[.]kind === 'image' && mp4/);
+  assert.match(renderer, /!metadataOnly && \(imageBlocked \|\| captionCarrier/);
+  assert.match(renderer, /metadataOnly \? 'Include track' : captionCarrier \? 'Extract captions'/);
+});

@@ -2,6 +2,13 @@
 
 All notable changes to EA Media Tools are documented here.
 
+## [3.0.6] - 2026-11-28
+
+- Add individual audio and subtitle inclusion controls to metadata-only edits and propagate choices only to matching batch tracks.
+- Match duplicate-language subtitles by language and hearing-impaired/SDH identity, independent of default or forced flags.
+- Use cached CUDA/NVDEC for source previews and crop analysis when available, with CPU fallback; keep NVENC decode hardware enabled with Auto Crop.
+- Detect missing subtitle hearing-impaired dispositions from SDH description tags.
+
 ## [3.0.3] - 2026-11-27
 
 - Improve batch metadata editing and source-specific track controls.
