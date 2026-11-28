@@ -47,6 +47,36 @@ export const rollingBitrateLabel = (previous: EncodeSizeSample, current: EncodeS
   return `${kilobitsPerSecond >= 100 ? kilobitsPerSecond.toFixed(0) : kilobitsPerSecond.toFixed(1)}kbits/s`;
 };
 
+export const nextEncodeBitrateLabel = (
+  previous: string | null,
+  reported: string | undefined,
+  measured: string | null,
+) => reported && reported !== 'N/A' ? reported : measured ?? previous;
+
+export const estimateEncodePercent = (input: {
+  encodedSeconds: number;
+  durationSeconds: number | null;
+  frame: number;
+  expectedFrames: number | null | undefined;
+  fps: number;
+  elapsedSeconds: number;
+  previousPercent: number | null;
+}) => {
+  const { encodedSeconds, durationSeconds, frame, expectedFrames, fps, elapsedSeconds, previousPercent } = input;
+  const timePercent = durationSeconds && durationSeconds > 0 && encodedSeconds > 0
+    ? encodedSeconds / durationSeconds * 100
+    : null;
+  const framePercent = expectedFrames && expectedFrames > 0 && frame >= 0
+    ? frame / expectedFrames * 100
+    : null;
+  const fpsPercent = expectedFrames && expectedFrames > 0 && fps > 0 && elapsedSeconds > 0
+    ? fps * elapsedSeconds / expectedFrames * 100
+    : null;
+  const estimate = timePercent ?? framePercent ?? fpsPercent;
+  if (estimate === null || !Number.isFinite(estimate)) return previousPercent;
+  return Math.min(99.9, Math.max(previousPercent ?? 0, Math.max(0, estimate)));
+};
+
 export const createEncodeQueueProgress = (jobs: EncodeJob[]): EncodeQueueProgressState => ({
   status: 'running',
   jobs: jobs.map((job, index) => ({

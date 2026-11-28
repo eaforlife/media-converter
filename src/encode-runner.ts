@@ -13,7 +13,7 @@ import {
 } from './encode-concurrency';
 import { rsgainArguments, successfulNormalizationRoots } from './audio-workflow';
 import { replaceSourceWithMetadataOutput } from './metadata-replacement';
-import { rollingBitrateLabel, type EncodeSizeSample } from './encode-progress-state';
+import { estimateEncodePercent, nextEncodeBitrateLabel, rollingBitrateLabel, type EncodeSizeSample } from './encode-progress-state';
 import type { EncodeJob, EncodeProgress, EncodeStartResult } from './shared-types';
 
 const activeProcesses = new Map<number, ChildProcessWithoutNullStreams>();
@@ -313,14 +313,25 @@ const runJob = (
   let block: Record<string, string> = {};
   let settled = false;
   let previousBitrateSample: EncodeSizeSample | null = null;
-  let intervalBitrate: string | null = null;
+  let currentBitrateLabel: string | null = null;
+  let lastKnownPercent: number | null = null;
 
   const status = (phase: EncodeProgress['phase'], message?: string): EncodeProgress => {
     const encodedSeconds = Number(block.out_time_us) > 0
       ? Number(block.out_time_us) / 1_000_000
       : parseClock(block.out_time);
     const duration = job.duration && job.duration > 0 ? job.duration : null;
-    const percent = duration ? Math.min(100, Math.max(0, (encodedSeconds / duration) * 100)) : null;
+    const runTimeSeconds = Math.max(0, (Date.now() - startedAt) / 1000);
+    const percent = phase === 'completed' ? 100 : estimateEncodePercent({
+      encodedSeconds,
+      durationSeconds: duration,
+      frame: Number(block.frame),
+      expectedFrames: job.expectedVideoFrames,
+      fps: Number(block.fps),
+      elapsedSeconds: runTimeSeconds,
+      previousPercent: lastKnownPercent,
+    });
+    if (phase !== 'completed' && percent !== null) lastKnownPercent = percent;
     const speed = numericSpeed(block.speed);
     return {
       phase,
@@ -328,10 +339,10 @@ const runJob = (
       totalJobs,
       sourceName: job.sourceName,
       outputPath: job.replaceSourcePath ?? job.outputPath,
-      percent: phase === 'completed' ? 100 : percent,
-      bitrate: intervalBitrate ?? (block.bitrate && block.bitrate !== 'N/A' ? block.bitrate : '—'),
+      percent,
+      bitrate: currentBitrateLabel ?? (block.bitrate && block.bitrate !== 'N/A' ? block.bitrate : '—'),
       fps: block.fps && block.fps !== 'N/A' ? block.fps : '—',
-      runTimeSeconds: Math.max(0, (Date.now() - startedAt) / 1000),
+      runTimeSeconds,
       etaSeconds: duration && speed ? Math.max(0, (duration - encodedSeconds) / speed) : null,
       speed: block.speed && block.speed !== 'N/A' ? block.speed : '—',
       command: phase === 'starting'
@@ -373,13 +384,15 @@ const runJob = (
             ? Number(block.out_time_us) / 1_000_000
             : parseClock(block.out_time),
         };
+        let measuredBitrate: string | null = null;
         if (Number.isFinite(currentBitrateSample.bytes) && currentBitrateSample.bytes >= 0
           && Number.isFinite(currentBitrateSample.seconds) && currentBitrateSample.seconds >= 0) {
           if (previousBitrateSample) {
-            intervalBitrate = rollingBitrateLabel(previousBitrateSample, currentBitrateSample) ?? intervalBitrate;
+            measuredBitrate = rollingBitrateLabel(previousBitrateSample, currentBitrateSample);
           }
           previousBitrateSample = currentBitrateSample;
         }
+        currentBitrateLabel = nextEncodeBitrateLabel(currentBitrateLabel, block.bitrate, measuredBitrate) ?? null;
         const fps = Number(block.fps);
         if (block.progress !== 'end' && Number.isFinite(fps) && fps > 0) onFps?.(fps);
         emit(webContents, status(block.progress === 'end' ? 'completed' : 'encoding'));

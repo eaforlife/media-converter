@@ -7,23 +7,23 @@ const setting = (defaultFlag: boolean, forced: boolean, hearingImpaired = false)
   flags: { default: defaultFlag, forced, hearingImpaired },
 });
 
-test('keeps the first flagged track and inherits default and forced while retaining SDH independently', () => {
+test('keeps the first default and forced tracks independently while retaining SDH', () => {
   const tracks = {
     2: setting(true, false),
     4: setting(false, true, true),
     6: setting(false, false, true),
   };
   consolidatePrimaryDispositions(tracks);
-  assert.deepEqual(tracks[2].flags, { default: true, forced: true, hearingImpaired: false });
-  assert.deepEqual(tracks[4].flags, { default: false, forced: false, hearingImpaired: true });
+  assert.deepEqual(tracks[2].flags, { default: true, forced: false, hearingImpaired: false });
+  assert.deepEqual(tracks[4].flags, { default: false, forced: true, hearingImpaired: true });
   assert.equal(tracks[6].flags.hearingImpaired, true);
 });
 
-test('moving a primary flag to another track carries its companion flag with it', () => {
+test('moving default or forced changes only that flag and preserves independent dispositions', () => {
   const tracks = { 0: setting(true, true), 1: setting(false, false) };
   setPrimaryDisposition(tracks, 1, 'forced', true);
-  assert.deepEqual(tracks[0].flags, { default: false, forced: false, hearingImpaired: false });
-  assert.deepEqual(tracks[1].flags, { default: true, forced: true, hearingImpaired: false });
+  assert.deepEqual(tracks[0].flags, { default: true, forced: false, hearingImpaired: false });
+  assert.deepEqual(tracks[1].flags, { default: false, forced: true, hearingImpaired: false });
   setPrimaryDisposition(tracks, 1, 'default', false);
   assert.deepEqual(tracks[1].flags, { default: false, forced: true, hearingImpaired: false });
 });

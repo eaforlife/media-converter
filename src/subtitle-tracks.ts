@@ -12,7 +12,7 @@ export const subtitleStreamFlags = (
   return { ...flags, hearingImpaired: flags.hearingImpaired || hearingImpairedLabel };
 };
 
-type TrackIdentity = { language: string; flags: StreamFlags };
+type TrackIdentity = { language: string; flags: StreamFlags; kind?: SubtitleKind };
 
 export const matchMetadataTrack = <T extends TrackIdentity>(
   origin: T,
@@ -35,9 +35,46 @@ export const matchSubtitleMetadataTrack = <T extends TrackIdentity>(
   origin: T,
   candidates: T[],
 ) => candidates.find((track) => track.language === origin.language
-  && track.flags.hearingImpaired === origin.flags.hearingImpaired);
+  && track.flags.hearingImpaired === origin.flags.hearingImpaired
+  && (origin.kind === undefined || track.kind === origin.kind));
 
 type IndexedTrack = TrackIdentity & { index: number };
+
+export const matchingSubtitleTrackIndex = <T extends IndexedTrack>(
+  originTracks: T[],
+  targetTracks: T[],
+  originIndex: number,
+) => {
+  const origin = originTracks.find((track) => track.index === originIndex);
+  if (!origin) return null;
+  const sameIdentity = (track: T) => track.language === origin.language
+    && track.flags.hearingImpaired === origin.flags.hearingImpaired
+    && (!('kind' in track) || !('kind' in origin) || track.kind === origin.kind);
+  const originCandidates = originTracks.filter(sameIdentity);
+  const targetCandidates = targetTracks.filter(sameIdentity);
+  const ordinal = originCandidates.findIndex((track) => track.index === originIndex);
+  return ordinal < 0 ? null : targetCandidates[ordinal]?.index ?? null;
+};
+
+export const applyMatchedSubtitleFlag = <T extends IndexedTrack>(
+  originTracks: T[],
+  targetTracks: T[],
+  originIndex: number,
+  targetSettings: Record<number, { flags: StreamFlags }>,
+  flag: keyof StreamFlags,
+  value: boolean,
+) => {
+  const targetIndex = matchingSubtitleTrackIndex(originTracks, targetTracks, originIndex);
+  if (targetIndex === null || !targetSettings[targetIndex]) return false;
+  if ((flag === 'default' || flag === 'forced') && value) {
+    targetTracks.forEach((track) => {
+      const setting = targetSettings[track.index];
+      if (setting) setting.flags[flag] = false;
+    });
+  }
+  targetSettings[targetIndex].flags[flag] = value;
+  return true;
+};
 
 export const matchingTrackIndex = <T extends IndexedTrack>(
   originTracks: T[],

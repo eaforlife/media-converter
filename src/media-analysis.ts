@@ -4,18 +4,14 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import type { HardwareCapabilities, MediaInfo } from './shared-types';
-import { stableCropConsensus } from './video-crop';
+import { cropAnalysisDimensions, cropSampleTimes, scaleCropFromAnalysis, stableCropConsensus } from './video-crop';
 import { APP_CONFIG } from './config';
+import { createSerialTaskQueue } from './source-scanning';
 
 let previewRoot = '';
 const previewFiles = new Map<string, string>();
-let cropAnalysisQueue = Promise.resolve();
-
-const scheduleCropAnalysis = (task: () => Promise<string | null>) => {
-  const next = cropAnalysisQueue.then(task, task);
-  cropAnalysisQueue = next.then(() => undefined, () => undefined);
-  return next;
-};
+const scheduleCropAnalysis = createSerialTaskQueue();
+const scheduleThumbnailAnalysis = createSerialTaskQueue();
 
 const getPreviewRoot = () => {
   if (!previewRoot) previewRoot = path.join(app.getPath('temp'), 'ea-media-tools-previews');
@@ -74,16 +70,15 @@ const detectCrop = async (
 ) => {
   const sampleCount = APP_CONFIG.videoFilters.autoCropSamples;
   const framesPerSample = APP_CONFIG.videoFilters.autoCropFrames;
+  const [analysisWidth, analysisHeight] = cropAnalysisDimensions(width, height);
   const softwareFormat = /10|p010/i.test(pixelFormat) ? 'p010le' : 'nv12';
-  const seeks = duration && duration > 1
-    ? Array.from({ length: sampleCount }, (_item, index) => duration * (index + 1) / (sampleCount + 1))
-    : [0];
+  const seeks = cropSampleTimes(duration, sampleCount);
   const samples = await Promise.all(seeks.map(async (seek) => {
     const makeArgs = (args: string[], useCuda: boolean) => [
       '-hide_banner', ...args, '-ss', Math.max(0, seek).toFixed(3), '-i', sourcePath,
       '-frames:v', String(framesPerSample), '-vf', useCuda
-        ? `hwdownload,format=${softwareFormat},cropdetect=limit=24:round=2:reset=0`
-        : 'cropdetect=limit=24:round=2:reset=0',
+        ? `scale_cuda=w=${analysisWidth}:h=${analysisHeight},hwdownload,format=${softwareFormat},cropdetect=limit=24:round=2:reset=0`
+        : `scale=w=${analysisWidth}:h=${analysisHeight}:flags=fast_bilinear,format=${softwareFormat},cropdetect=limit=24:round=2:reset=0`,
       '-an', '-f', 'null', '-',
     ];
     let output: string;
@@ -92,7 +87,9 @@ const detectCrop = async (
       if (!hardwareArgs.length) throw error;
       output = await execute(ffmpegPath, makeArgs([], false));
     }
-    const matches = [...output.matchAll(/crop=(\d+:\d+:\d+:\d+)/g)].map((match) => match[1]);
+    const matches = [...output.matchAll(/crop=(\d+:\d+:\d+:\d+)/g)]
+      .map((match) => scaleCropFromAnalysis(match[1], width, height, analysisWidth, analysisHeight))
+      .filter((crop): crop is string => crop !== null);
     const counts = new Map<string, number>();
     matches.forEach((crop) => counts.set(crop, (counts.get(crop) ?? 0) + 1));
     return [...counts.entries()].sort((left, right) => right[1] - left[1])[0]?.[0] ?? null;
@@ -105,8 +102,7 @@ export const analyzeVisual = async (
   sourcePath: string,
   media: MediaInfo,
   capabilities?: HardwareCapabilities | null,
-  onCropDetected?: (suggestedCrop: string | null) => void,
-) => {
+): Promise<{ previewId?: string; previewDataUrl?: string }> => {
   const video = media.video;
   const codecDecoders: Record<string, string> = {
     AVC: 'h264_cuvid', H264: 'h264_cuvid', HEVC: 'hevc_cuvid', H265: 'hevc_cuvid',
@@ -122,18 +118,16 @@ export const analyzeVisual = async (
       '-extra_hw_frames', '64',
     ]
     : [];
-  void scheduleCropAnalysis(() => detectCrop(
+  const [suggestedCrop, preview] = await Promise.all([
+    scheduleCropAnalysis(() => detectCrop(
       ffmpegPath, sourcePath, media.duration, video?.width ?? 0, video?.height ?? 0,
       video?.pixelFormat ?? '', hardwareArgs,
-    )).then((suggestedCrop) => {
-      media.suggestedCrop = suggestedCrop;
-      onCropDetected?.(suggestedCrop);
-    }).catch(() => {
-      media.suggestedCrop = null;
-      onCropDetected?.(null);
-    });
-  const preview = await createThumbnail(ffmpegPath, sourcePath, media.duration, hardwareArgs).catch(() => ({}));
-  return { ...preview, cropAnalysisPending: true };
+    )).catch(() => null),
+    scheduleThumbnailAnalysis(() => createThumbnail(ffmpegPath, sourcePath, media.duration, hardwareArgs))
+      .catch(() => null),
+  ]);
+  media.suggestedCrop = suggestedCrop;
+  return preview ?? {};
 };
 
 export const releasePreviews = async (ids: string[]) => {

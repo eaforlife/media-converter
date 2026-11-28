@@ -1,6 +1,15 @@
 export const AUDIO_INSPECTION_LIMIT = 12;
 export const FILE_INDEX_LIMIT = 32;
 
+export const createSerialTaskQueue = () => {
+  let previousTask = Promise.resolve();
+  return <Output>(task: () => Promise<Output>) => {
+    const result = previousTask.then(task, task);
+    previousTask = result.then(() => undefined, () => undefined);
+    return result;
+  };
+};
+
 export const inspectionConcurrency = (
   fileCount: number,
   audioOnly: boolean,

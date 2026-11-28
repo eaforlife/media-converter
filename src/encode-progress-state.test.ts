@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { applyEncodeProgress, canFinishEncodeQueue, createEncodeQueueProgress, rollingBitrateLabel } from './encode-progress-state.ts';
+import { applyEncodeProgress, canFinishEncodeQueue, createEncodeQueueProgress, estimateEncodePercent, nextEncodeBitrateLabel, rollingBitrateLabel } from './encode-progress-state.ts';
 import type { EncodeJob, EncodeProgress } from './shared-types';
 
 const jobs: EncodeJob[] = [1, 2, 3].map((index) => ({
@@ -111,4 +111,37 @@ test('reports rolling bitrate from consecutive FFmpeg size and timestamp samples
   );
   assert.equal(rollingBitrateLabel({ bytes: 10, seconds: 2 }, { bytes: 9, seconds: 4 }), null);
   assert.equal(rollingBitrateLabel({ bytes: 10, seconds: 2 }, { bytes: 20, seconds: 2 }), null);
+});
+
+test('estimates encode progress from frame counts when FFmpeg omits timestamps', () => {
+  assert.equal(estimateEncodePercent({
+    encodedSeconds: 0, durationSeconds: 100, frame: 600, expectedFrames: 2400,
+    fps: 48, elapsedSeconds: 20, previousPercent: null,
+  }), 25);
+});
+
+test('falls back to elapsed time and current FPS when FFmpeg omits frame and time fields', () => {
+  assert.equal(estimateEncodePercent({
+    encodedSeconds: 0, durationSeconds: 100, frame: Number.NaN, expectedFrames: 2400,
+    fps: 48, elapsedSeconds: 20, previousPercent: null,
+  }), 40);
+});
+
+test('keeps estimated progress monotonic and below completion until FFmpeg exits', () => {
+  assert.equal(estimateEncodePercent({
+    encodedSeconds: 10, durationSeconds: 100, frame: 1200, expectedFrames: 2400,
+    fps: 24, elapsedSeconds: 50, previousPercent: 60,
+  }), 60);
+  assert.equal(estimateEncodePercent({
+    encodedSeconds: 100, durationSeconds: 100, frame: 2400, expectedFrames: 2400,
+    fps: 24, elapsedSeconds: 100, previousPercent: null,
+  }), 99.9);
+});
+
+test('retains the last bitrate label when FFmpeg intermittently omits it and refreshes from size samples', () => {
+  const reported = nextEncodeBitrateLabel(null, '1600kbits/s', null);
+  assert.equal(reported, '1600kbits/s');
+  const recalculated = nextEncodeBitrateLabel(reported, undefined, '1820kbits/s');
+  assert.equal(recalculated, '1820kbits/s');
+  assert.equal(nextEncodeBitrateLabel(recalculated, undefined, null), '1820kbits/s');
 });

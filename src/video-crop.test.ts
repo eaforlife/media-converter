@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { aspectPreservingDimensions, cuvidCropMargins, detectedCrop, stableCropConsensus } from './video-crop.ts';
+import { aspectPreservingDimensions, cropAnalysisDimensions, cropSampleTimes, cuvidCropMargins, detectedCrop, scaleCropFromAnalysis, stableCropConsensus } from './video-crop.ts';
 
 test('accepts black-bar crops that begin at the top-left edge', () => {
   assert.ok(detectedCrop('1920:800:0:0', 1920, 1080));
@@ -37,4 +37,24 @@ test('rejects a crop found only in a minority scene window', () => {
     '1920:800:0:140', '1920:1080:0:0', '1920:1080:0:0',
     '1920:1080:0:0', '1888:1040:16:20',
   ], 1920, 1080), null);
+});
+
+test('maps a low-resolution analysis crop back to the source dimensions', () => {
+  assert.deepEqual(cropAnalysisDimensions(1920, 1080), [320, 180]);
+  assert.deepEqual(cropAnalysisDimensions(640, 480), [320, 240]);
+  assert.equal(scaleCropFromAnalysis('320:134:0:23', 1920, 1080, 320, 180), '1920:804:0:138');
+});
+
+test('places two crop samples at 30 and 70 percent of the source', () => {
+  assert.deepEqual(cropSampleTimes(100, 2), [30, 70]);
+  assert.deepEqual(cropSampleTimes(100, 1), [50]);
+});
+
+test('requires both crop samples to agree when only two samples are configured', () => {
+  assert.equal(stableCropConsensus([
+    '1920:800:0:140', '1920:1080:0:0',
+  ], 1920, 1080), null);
+  assert.equal(stableCropConsensus([
+    '1920:800:0:140', '1920:800:0:140',
+  ], 1920, 1080), '1920:800:0:140');
 });

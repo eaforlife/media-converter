@@ -7,16 +7,10 @@ const activeSettings = (record: Record<number, DispositionSetting>) =>
 
 export const consolidatePrimaryDispositions = (record: Record<number, DispositionSetting>) => {
   const active = activeSettings(record);
-  const anchor = active.find((setting) => setting.flags.default || setting.flags.forced);
-  const hasDefault = active.some((setting) => setting.flags.default);
-  const hasForced = active.some((setting) => setting.flags.forced);
-  Object.values(record).forEach((setting) => {
-    setting.flags.default = false;
-    setting.flags.forced = false;
-  });
-  if (anchor) {
-    anchor.flags.default = hasDefault;
-    anchor.flags.forced = hasForced;
+  for (const flag of ['default', 'forced'] as const) {
+    const anchor = active.find((setting) => setting.flags[flag]);
+    Object.values(record).forEach((setting) => { setting.flags[flag] = false; });
+    if (anchor) anchor.flags[flag] = true;
   }
 };
 
@@ -36,12 +30,6 @@ export const setPrimaryDisposition = (
     selected.flags[flag] = false;
     return;
   }
-  const inheritedFlag = flag === 'default' ? 'forced' : 'default';
-  const inherit = activeSettings(record).some((setting) => setting.flags[inheritedFlag]);
-  Object.values(record).forEach((setting) => {
-    setting.flags.default = false;
-    setting.flags.forced = false;
-  });
+  Object.values(record).forEach((setting) => { setting.flags[flag] = false; });
   selected.flags[flag] = true;
-  selected.flags[inheritedFlag] = inherit;
 };

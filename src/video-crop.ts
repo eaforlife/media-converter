@@ -6,6 +6,45 @@ export type DetectedCrop = {
   filter: string;
 };
 
+export const cropAnalysisDimensions = (width: number, height: number, maximumDimension = 320): [number, number] => {
+  if (width <= 0 || height <= 0) return [maximumDimension, maximumDimension];
+  const scale = Math.min(1, maximumDimension / Math.max(width, height));
+  const even = (value: number) => Math.max(2, Math.round(value / 2) * 2);
+  return [even(width * scale), even(height * scale)];
+};
+
+export const cropSampleTimes = (duration: number | null, sampleCount: number) => {
+  if (!duration || duration <= 1) return [0];
+  const count = Math.max(1, Math.floor(sampleCount));
+  if (count === 1) return [duration * 0.5];
+  return Array.from({ length: count }, (_item, index) => duration * (0.3 + 0.4 * index / (count - 1)));
+};
+
+export const scaleCropFromAnalysis = (
+  value: string,
+  sourceWidth: number,
+  sourceHeight: number,
+  analysisWidth: number,
+  analysisHeight: number,
+) => {
+  const crop = value.split(':').map(Number);
+  if (crop.length !== 4 || crop.some((part) => !Number.isInteger(part))
+    || analysisWidth <= 0 || analysisHeight <= 0) return null;
+  const [width, height, x, y] = crop;
+  if (width <= 0 || height <= 0 || x < 0 || y < 0
+    || x + width > analysisWidth || y + height > analysisHeight) return null;
+  const even = (number: number) => Math.max(0, Math.round(number / 2) * 2);
+  const left = even(x * sourceWidth / analysisWidth);
+  const right = even((analysisWidth - x - width) * sourceWidth / analysisWidth);
+  const top = even(y * sourceHeight / analysisHeight);
+  const bottom = even((analysisHeight - y - height) * sourceHeight / analysisHeight);
+  const scaledWidth = sourceWidth - left - right;
+  const scaledHeight = sourceHeight - top - bottom;
+  return scaledWidth > 0 && scaledHeight > 0
+    ? `${scaledWidth}:${scaledHeight}:${left}:${top}`
+    : null;
+};
+
 export const cuvidCropMargins = (
   crop: DetectedCrop,
   sourceWidth: number,
@@ -44,7 +83,7 @@ export const stableCropConsensus = (
     if (crop) votes.set(crop.filter, (votes.get(crop.filter) ?? 0) + 1);
   });
   const winner = [...votes.entries()].sort((left, right) => right[1] - left[1])[0];
-  if (!winner || winner[1] < Math.ceil(samples.length / 2)) return null;
+  if (!winner || winner[1] < Math.floor(samples.length / 2) + 1) return null;
   return winner[0];
 };
 

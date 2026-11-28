@@ -14,10 +14,7 @@ export type SourceFile = {
   sourceRoot?: string;
   relativePath?: string;
   lyricPaths?: string[];
-  cropAnalysisPending?: boolean;
 };
-
-export type SourceCropResult = { sourcePath: string; suggestedCrop: string | null };
 
 export type VideoStreamInfo = {
   index: number;
@@ -31,6 +28,7 @@ export type VideoStreamInfo = {
   width: number;
   height: number;
   frameRate: string;
+  frameCount?: number | null;
   colorTransfer?: string | null;
   colorPrimaries?: string | null;
   colorSpace?: string | null;
@@ -240,6 +238,7 @@ export type EncodeJob = {
   sourcePath: string;
   outputPath: string;
   duration: number | null;
+  expectedVideoFrames?: number | null;
   args: string[];
   softwareDecodeFallbackArgs?: string[];
   replaceSourcePath?: string;

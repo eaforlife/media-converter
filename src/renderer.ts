@@ -45,10 +45,10 @@ import {
 } from './media-workflow';
 import { mp4PlaybackArguments } from './mp4-playback';
 import { consolidatePrimaryDispositions, setPrimaryDisposition } from './stream-dispositions';
-import { matchingTrackIndex, matchMetadataTrack, matchSubtitleMetadataTrack, subtitleTracksInSourceOrder } from './subtitle-tracks';
+import { applyMatchedSubtitleFlag, matchingTrackIndex, matchMetadataTrack, matchSubtitleMetadataTrack, subtitleTracksInSourceOrder } from './subtitle-tracks';
 import type {
   AdvancedVideoSettings, AppSettings, AudioStreamInfo, EncodeJob, EncodeProgress, FilterSettings, HardwareCapabilities, RuntimeState, SavedPreset,
-  OutputFormat, ScaleMode, SourceCropResult, SourceFile, SourceScanProgress, StreamFlags, SubtitleStreamInfo,
+  OutputFormat, ScaleMode, SourceFile, SourceScanProgress, StreamFlags, SubtitleStreamInfo,
 } from './shared-types';
 
 type IconName = 'app' | 'file' | 'folder' | 'plus' | 'queue' | 'play' | 'chevron' |
@@ -116,14 +116,12 @@ let hardwareCapabilities: HardwareCapabilities = {
   qsvDecoders: [], vaapiAvailable: false, vaapiDevice: null, encoders: [],
 };
 let pickerBusy = false;
-let sourcePickInProgress = false;
 let customPresetDraftName = '';
 let customPresetEditorOpen = false;
 let sourceMode: 'file' | 'folder' | null = null;
 let folderSeriesLayout: FolderSeriesLayout | null = null;
 let appSettings = { ...APP_CONFIG.personalizedDefaults, customPresets: [] as SavedPreset[] } satisfies AppSettings;
 const settingsByPath = new Map<string, JobSettings>();
-const pendingCropResults = new Map<string, string | null>();
 const manualBufferSettings = new WeakSet<JobSettings>();
 let encodeQueueProgress: EncodeQueueProgressState | null = null;
 let encodePageIndex = 0;
@@ -414,7 +412,7 @@ const matchingMetadataQueueSources = (origin: SourceFile) => sources.filter((sou
   isAudioWorkflow(source) === isAudioWorkflow(origin));
 const applyMetadataChangesToQueue = (
   originSource: SourceFile,
-  outputFlagChange?: { kind: 'audio' | 'downmix' | 'subtitle'; index: number; flag: keyof StreamFlags },
+  outputFlagChange?: { kind: 'audio' | 'downmix' | 'subtitle'; index: number; flag: keyof StreamFlags; target?: 'output' | 'metadata' },
 ) => {
   const originSettings = getSettings(originSource);
   const originAudio = originSource.media?.audio ?? [];
@@ -485,22 +483,24 @@ const applyMetadataChangesToQueue = (
       if (originMetadata && targetMetadata) {
         usedSubtitleTracks.add(targetTrack.index);
         updated = applyStreamMetadataPatch(targetMetadata, streamMetadataPatch(track, originMetadata)) || updated;
-        if (outputFlagChange?.kind === 'subtitle') {
-          const originOutputFlags = originSettings.subtitles[track.index].flags;
-          const targetOutputFlags = targetSettings.subtitles[targetTrack.index].flags;
-          const appliesToTrack = outputFlagChange.flag !== 'hearingImpaired' || track.index === outputFlagChange.index;
-          const flags = outputFlagChange.flag === 'hearingImpaired'
-            ? ['hearingImpaired'] as const
-            : ['default', 'forced'] as const;
-          if (appliesToTrack) for (const flag of flags) {
-            if (originOutputFlags[flag] === track.flags[flag]) continue;
-            if (targetOutputFlags[flag] === originOutputFlags[flag]) continue;
-            targetOutputFlags[flag] = originOutputFlags[flag];
-            updated = true;
-          }
-        }
       }
     });
+    if (outputFlagChange?.kind === 'subtitle') {
+      const changedSetting = originSettings.subtitles[outputFlagChange.index];
+      const targetFlags = outputFlagChange.target === 'metadata'
+        ? Object.fromEntries(Object.entries(targetSettings.subtitles).map(([index, setting]) => [index, setting.metadata]))
+        : targetSettings.subtitles;
+      if (changedSetting && applyMatchedSubtitleFlag(
+        originSubtitles,
+        targetSubtitles,
+        outputFlagChange.index,
+        targetFlags,
+        outputFlagChange.flag,
+        outputFlagChange.target === 'metadata'
+          ? changedSetting.metadata.flags[outputFlagChange.flag]
+          : changedSetting.flags[outputFlagChange.flag],
+      )) updated = true;
+    }
     if (updated) updatedSources += 1;
   }
   return updatedSources;
@@ -909,9 +909,8 @@ const syncBatchTrackSettings = (
       target.subtitles[track.index].codec = track.kind === 'text' ? 'webvtt' : 'copy';
     }
   }
-  normalizeStreamDispositions(target);
 };
-const markCustom = (settings: JobSettings) => {
+const markCustom = (settings: JobSettings, syncTrackSettings = true) => {
   const originSource = sources.find((source) => settingsByPath.get(source.path) === settings);
   if (originSource && isMusicVideoWorkflow(originSource)) {
     settings.preset = 'Music Video';
@@ -919,6 +918,10 @@ const markCustom = (settings: JobSettings) => {
     return;
   }
   appSettings.workingPreset = snapshotPreset(settings, settings.preset);
+  if (!syncTrackSettings) {
+    void persistAppSettings();
+    return;
+  }
   for (const source of sources) {
     const target = getSettings(source);
     if (target !== settings) {
@@ -1494,6 +1497,15 @@ const createEncodeJob = (source: SourceFile, queueIndex: number): EncodeJob | nu
   const passthrough = isAudioWorkflow(source) && isAudioPassthrough(getSettings(source));
   if (!args.length && !passthrough) return null;
   const settings = getSettings(source);
+  const sourceVideo = source.media?.video;
+  const outputFrameRate = settings.processing.video && settings.frameRateOverride
+    ? typeof settings.frameRate === 'number' ? settings.frameRate : null
+    : Number.parseFloat(sourceVideo?.frameRate ?? '');
+  const expectedVideoFrames = sourceVideo?.frameCount && !(settings.processing.video && settings.frameRateOverride)
+    ? sourceVideo.frameCount
+    : source.media?.duration && outputFrameRate && Number.isFinite(outputFrameRate)
+      ? source.media.duration * outputFrameRate
+      : null;
   const softwareDecodeFallbackArgs = settings.processing.video && args.includes('-hwaccel')
     ? getCommandArguments(source, outputPath, true) ?? undefined
     : undefined;
@@ -1525,6 +1537,7 @@ const createEncodeJob = (source: SourceFile, queueIndex: number): EncodeJob | nu
     sourcePath: source.path,
     outputPath,
     duration: source.media?.duration ?? null,
+    expectedVideoFrames: expectedVideoFrames && expectedVideoFrames > 0 ? expectedVideoFrames : null,
     args,
     ...(softwareDecodeFallbackArgs ? { softwareDecodeFallbackArgs } : {}),
     ...(extractClosedCaptions
@@ -1822,13 +1835,6 @@ const updateEncodeDialog = (progress: EncodeProgress) => {
 
 const startEncoding = async () => {
   if (encodingActive) return;
-  if (sources.some((source) => {
-    const settings = getSettings(source);
-    return source.cropAnalysisPending && settings.processing.video && settings.filters.autoCrop;
-  })) {
-    showToast('Wait for crop analysis to finish before encoding');
-    return;
-  }
   if (!runtimeState?.ffmpegAvailable) { showToast('FFmpeg is unavailable'); return; }
   const metadataOnlyQueue = sources.every((source) => isMetadataOnly(getSettings(source)));
   const jobSources = metadataOnlyQueue
@@ -2054,49 +2060,24 @@ const requestSources = async (type: 'file' | 'folder') => {
     : await window.mediaAPI.openFolder(appSettings.lastSourceDirectory); }
   finally { setPickerBusy(false); }
 };
-const receiveSourceCropResult = (result: SourceCropResult) => {
-  const source = sources.find((item) => item.path === result.sourcePath);
-  if (!source) {
-    if (sourcePickInProgress) pendingCropResults.set(result.sourcePath, result.suggestedCrop);
-    return;
-  }
-  if (!source.media) return;
-  source.media.suggestedCrop = result.suggestedCrop;
-  source.cropAnalysisPending = false;
-  renderWorkspace();
-};
 const pickSource = async (type: 'file' | 'folder') => {
-  sourcePickInProgress = true;
-  try {
-    const newSources = await requestSources(type);
-    if (!newSources.length) return;
-    await window.mediaAPI.releasePreviews(sources.flatMap((source) => source.previewId ? [source.previewId] : []));
-    sources.forEach((source) => settingsByPath.delete(source.path));
-    sourceMode = type;
-    folderSeriesLayout = type === 'folder' ? detectFolderSeriesLayout(newSources) : null;
-    const workflow = workflowOf(newSources[0]);
-    appSettings.lastPreset = workflow === 'music-video' ? 'Music Video' : 'Streaming';
-    appSettings.workingPreset = null;
-    appSettings.lastSourceDirectory = newSources[0].sourceRoot ?? parentPath(newSources[0].path);
-    if (workflow === 'audio') appSettings.separateAudioDirectory = true;
-    if (workflow === 'audio' || workflow === 'music-video') appSettings.smartFileNaming = false;
-    void persistAppSettings();
-    sources = newSources; selectedIndex = 0; activeTab = 'Summary'; outputDirectoryIsCustom = false;
-    for (const source of sources) {
-      const crop = pendingCropResults.get(source.path);
-      if (crop !== undefined && source.media) {
-        source.media.suggestedCrop = crop;
-        source.cropAnalysisPending = false;
-      }
-      pendingCropResults.delete(source.path);
-      applyPreset(source, appSettings.lastPreset, false);
-    }
-    outputDirectory = makeDefaultOutputDirectory(sources[0]);
-    renderWorkspace();
-  } finally {
-    sourcePickInProgress = false;
-    pendingCropResults.clear();
-  }
+  const newSources = await requestSources(type);
+  if (!newSources.length) return;
+  await window.mediaAPI.releasePreviews(sources.flatMap((source) => source.previewId ? [source.previewId] : []));
+  sources.forEach((source) => settingsByPath.delete(source.path));
+  sourceMode = type;
+  folderSeriesLayout = type === 'folder' ? detectFolderSeriesLayout(newSources) : null;
+  const workflow = workflowOf(newSources[0]);
+  appSettings.lastPreset = workflow === 'music-video' ? 'Music Video' : 'Streaming';
+  appSettings.workingPreset = null;
+  appSettings.lastSourceDirectory = newSources[0].sourceRoot ?? parentPath(newSources[0].path);
+  if (workflow === 'audio') appSettings.separateAudioDirectory = true;
+  if (workflow === 'audio' || workflow === 'music-video') appSettings.smartFileNaming = false;
+  void persistAppSettings();
+  sources = newSources; selectedIndex = 0; activeTab = 'Summary'; outputDirectoryIsCustom = false;
+  for (const source of sources) applyPreset(source, appSettings.lastPreset, false);
+  outputDirectory = makeDefaultOutputDirectory(sources[0]);
+  renderWorkspace();
 };
 const audioSummary = (source: SourceFile) => {
   const tracks = source.media?.audio ?? [];
@@ -2119,10 +2100,6 @@ const renderWorkspace = () => {
   const decoder = decoderStatus(source, settings);
   const metadataOnly = isMetadataOnly(settings);
   const metadataEditCount = sources.filter((item) => isMetadataOnly(getSettings(item)) && sourceHasMetadataChanges(item)).length;
-  const waitingForCropAnalysis = sources.some((item) => {
-    const itemSettings = getSettings(item);
-    return item.cropAnalysisPending && itemSettings.processing.video && itemSettings.filters.autoCrop;
-  });
   const outputFileName = makeOutputFileName(source);
   const audioWorkflow = isAudioWorkflow(source);
   const musicVideo = isMusicVideoWorkflow(source);
@@ -2159,7 +2136,7 @@ const renderWorkspace = () => {
       ${source.probeError ? `<div class="probe-warning">${icon('x', 16)} ${escapeHtml(source.probeError)}</div>` : ''}
       <div class="preset-bar ${metadataOnly ? 'processing-disabled' : ''}"><div class="preset-icon">${icon('gauge', 22)}</div><label class="preset-control"><span>PRESET</span><select id="preset"${metadataOnly || musicVideo ? ' disabled' : ''}>${visiblePresets.map((preset) => `<option${selected(settings.preset === preset)}>${preset}</option>`).join('')}${savedPresets.length ? `<optgroup label="Saved presets">${savedPresets.map((preset) => `<option${selected(settings.preset === preset.name)}>${escapeHtml(preset.name)}</option>`).join('')}</optgroup>` : ''}</select><small class="preset-description">${metadataOnly ? 'Metadata-only mode copies every stream and preserves the source container.' : escapeHtml(presetDescription)}</small></label>${!metadataOnly && !musicVideo ? `<button class="save-preset" id="add-preset">Add preset</button>` : ''}<div class="custom-preset-editor" id="custom-preset-editor"${customPresetEditorOpen && !metadataOnly ? '' : ' hidden'}><label><span>PRESET NAME</span><input id="custom-preset-name" value="${escapeHtml(customPresetDraftName)}" placeholder="My preset" maxlength="80"/></label><button class="save-preset" id="save-preset">Save</button></div></div>
       <nav class="tabs">${tabs.map(([label, tabIcon]) => `<button class="tab ${activeTab === label ? 'active' : ''}" data-tab="${label}">${icon(tabIcon, 17)}${label}${label === 'Audio' ? `<i>${audioOutputTrackCount(source, settings)}</i>` : label === 'Subtitles' ? `<i>${source.media?.subtitles.length ?? 0}</i>` : ''}</button>`).join('')}</nav><div class="tab-content" id="tab-content">${renderTabContent(activeTab, source, settings)}</div></section>
-    <footer class="encode-footer"><div class="destination"><div class="destination-heading"><span>${metadataOnly ? 'SOURCE REPLACEMENT' : passthrough ? 'SOURCE LIBRARY' : 'DESTINATION'}</span></div><div class="destination-controls"><div class="destination-row"><div class="destination-path" title="${escapeHtml(outputDirectoryFor(source))}">${icon('folder', 16)}<span>${escapeHtml(outputDirectoryFor(source))}</span></div><button id="browse-output"${encodingActive || metadataOnly || passthrough ? ' disabled' : ''}>Browse</button></div><div class="destination-options">${destinationToggle}${applyQueueChangesControl}</div></div><small class="destination-output" title="${escapeHtml(makeOutputPath(source))}">${waitingForCropAnalysis ? 'Waiting for crop analysis to finish.' : metadataOnly ? 'The original file will be replaced after a verified stream-copy update.' : passthrough ? 'Source audio is retained; enabled normalization runs in place.' : `Output: ${escapeHtml(outputFileName)}`}</small></div><button class="secondary-button" id="start-new-session"${encodingActive ? ' disabled' : ''}>Start New</button><button class="encode-button ${metadataOnly ? 'metadata-update-button' : ''}" id="start-encode"${encodingActive || waitingForCropAnalysis || metadataOnly && metadataEditCount === 0 ? ' disabled' : ''}>${icon(metadataOnly ? 'check' : 'play', 17)} ${metadataOnly ? metadataEditCount ? `Update metadata (${metadataEditCount})` : 'No metadata changes' : waitingForCropAnalysis ? 'Analyzing crops…' : `${passthrough ? 'Process' : 'Encode'} ${sources.length} ${workflowLabel}${sources.length === 1 ? '' : ' files'}`}</button></footer></main>`;
+    <footer class="encode-footer"><div class="destination"><div class="destination-heading"><span>${metadataOnly ? 'SOURCE REPLACEMENT' : passthrough ? 'SOURCE LIBRARY' : 'DESTINATION'}</span></div><div class="destination-controls"><div class="destination-row"><div class="destination-path" title="${escapeHtml(outputDirectoryFor(source))}">${icon('folder', 16)}<span>${escapeHtml(outputDirectoryFor(source))}</span></div><button id="browse-output"${encodingActive || metadataOnly || passthrough ? ' disabled' : ''}>Browse</button></div><div class="destination-options">${destinationToggle}${applyQueueChangesControl}</div></div><small class="destination-output" title="${escapeHtml(makeOutputPath(source))}">${metadataOnly ? 'The original file will be replaced after a verified stream-copy update.' : passthrough ? 'Source audio is retained; enabled normalization runs in place.' : `Output: ${escapeHtml(outputFileName)}`}</small></div><button class="secondary-button" id="start-new-session"${encodingActive ? ' disabled' : ''}>Start New</button><button class="encode-button ${metadataOnly ? 'metadata-update-button' : ''}" id="start-encode"${encodingActive || metadataOnly && metadataEditCount === 0 ? ' disabled' : ''}>${icon(metadataOnly ? 'check' : 'play', 17)} ${metadataOnly ? metadataEditCount ? `Update metadata (${metadataEditCount})` : 'No metadata changes' : `${passthrough ? 'Process' : 'Encode'} ${sources.length} ${workflowLabel}${sources.length === 1 ? '' : ' files'}`}</button></footer></main>`;
   bindWorkspaceEvents();
   const workArea = document.querySelector<HTMLElement>('.work-area');
   if (workArea) workArea.scrollTop = previousScrollTop;
@@ -2709,7 +2686,7 @@ const bindContentEvents = () => {
     const flag = control.dataset.streamFlag as keyof StreamFlags;
     const record = kind === 'audio' ? settings.audio : settings.subtitles;
     setPrimaryDisposition(record, index, flag, control.checked);
-    markCustom(settings);
+    markCustom(settings, false);
     if (applyQueueTrackChanges && matchingMetadataQueueSources(source).length > 1) applyMetadataChangesToQueue(source, { kind, index, flag });
     renderWorkspace();
   }));
@@ -2740,7 +2717,10 @@ const bindContentEvents = () => {
       const record = kind === 'audio' ? settings.audio : settings.subtitles;
       setPrimaryDisposition(metadataDispositionRecord(record), index, flag, control.checked);
     }
-    if (applyQueueTrackChanges && matchingMetadataQueueSources(source).length > 1) applyMetadataChangesToQueue(source);
+    if (applyQueueTrackChanges && matchingMetadataQueueSources(source).length > 1) {
+      if (kind === 'subtitle') applyMetadataChangesToQueue(source, { kind, index, flag, target: 'metadata' });
+      else applyMetadataChangesToQueue(source);
+    }
     renderWorkspace();
   }));
   document.querySelectorAll<HTMLButtonElement>('[data-filter]').forEach((control) => control.addEventListener('click', () => {
@@ -2946,7 +2926,6 @@ const addSources = async () => {
 const startApplication = async () => {
   window.mediaAPI.onEncodeProgress(updateEncodeDialog);
   window.mediaAPI.onSourceScanProgress(updatePickerProgress);
-  window.mediaAPI.onSourceCropResult(receiveSourceCropResult);
   renderBootstrap();
   const removeProgressListener = window.mediaAPI.onRuntimeProgress((state) => { runtimeState = state; renderBootstrap(state); });
   try {

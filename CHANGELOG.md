@@ -2,6 +2,15 @@
 
 All notable changes to EA Media Tools are documented here.
 
+## [Unreleased]
+
+## [3.0.8] - 2026-11-28
+
+- Propagate batch subtitle dispositions by language, subtitle kind, and SDH identity while changing only the selected flag and preserving each file's stream order. Default and forced dispositions remain independent.
+- Sample 15 frames at 30% and 70% of each video for crop detection, scaling to at most 320 pixels and requiring the two samples to agree.
+- Wait for thumbnail and crop analysis to finish before returning selected sources, keeping crop suggestions available as soon as the workspace opens.
+- Estimate encode progress from frame counts and FPS when FFmpeg omits timestamps, retaining and refreshing the bitrate display when FFmpeg reports bitrate intermittently.
+
 ## [3.0.7] - 2026-11-28
 
 - Return scanned sources after stream probing and thumbnail creation while crop suggestions continue in a bounded background queue.

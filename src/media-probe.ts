@@ -26,6 +26,7 @@ type ProbeStream = {
   channel_layout?: string;
   avg_frame_rate?: string;
   r_frame_rate?: string;
+  nb_frames?: string;
   color_transfer?: string;
   color_primaries?: string;
   colorspace?: string;
@@ -66,6 +67,7 @@ const parseFrameRate = (stream: ProbeStream) => {
 };
 
 const videoInfo = (stream: ProbeStream): VideoStreamInfo => {
+  const frameCount = Number(stream.nb_frames);
   const text = searchableText(stream);
   const transfer = (stream.color_transfer ?? '').toLowerCase();
   const hasDolbyVision = /dolby.?vision|dovi|dvhe|dvh1/.test(text);
@@ -91,6 +93,7 @@ const videoInfo = (stream: ProbeStream): VideoStreamInfo => {
     width: stream.width ?? 0,
     height: stream.height ?? 0,
     frameRate: parseFrameRate(stream),
+    frameCount: Number.isSafeInteger(frameCount) && frameCount > 0 ? frameCount : null,
     colorTransfer: stream.color_transfer || null,
     colorPrimaries: stream.color_primaries || null,
     colorSpace: stream.colorspace || null,
