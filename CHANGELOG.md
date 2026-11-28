@@ -2,6 +2,12 @@
 
 All notable changes to EA Media Tools are documented here.
 
+## [3.0.7] - 2026-11-28
+
+- Return scanned sources after stream probing and thumbnail creation while crop suggestions continue in a bounded background queue.
+- Reduce crop analysis to five windows of eight frames and use compatible CUDA scaling/download filters when hardware decoding is available.
+- Prevent encoding with Auto Crop until queued crop analysis has completed.
+
 ## [3.0.6] - 2026-11-28
 
 - Add individual audio and subtitle inclusion controls to metadata-only edits and propagate choices only to matching batch tracks.

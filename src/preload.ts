@@ -1,7 +1,7 @@
 import { contextBridge, ipcRenderer } from 'electron';
 import type {
   AppSettings, EncodeJob, EncodeProgress, EncodeStartResult, HardwareCapabilities, RuntimeState, SavedPreset, SourceFile,
-  SourceScanProgress, SubtitleImportResult,
+  SourceCropResult, SourceScanProgress, SubtitleImportResult,
 } from './shared-types';
 import type { AppConfiguration } from './config';
 import type { BuiltInPresetConfiguration } from './presets';
@@ -58,6 +58,11 @@ contextBridge.exposeInMainWorld('mediaAPI', {
     ipcRenderer.on('source:scan-progress', listener);
     return () => ipcRenderer.removeListener('source:scan-progress', listener);
   },
+  onSourceCropResult: (callback: (result: SourceCropResult) => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, result: SourceCropResult) => callback(result);
+    ipcRenderer.on('source:crop-result', listener);
+    return () => ipcRenderer.removeListener('source:crop-result', listener);
+  },
 });
 
 declare global {
@@ -95,6 +100,7 @@ declare global {
       onEncodeProgress: (callback: (progress: EncodeProgress) => void) => () => void;
       onRuntimeProgress: (callback: (state: RuntimeState) => void) => () => void;
       onSourceScanProgress: (callback: (progress: SourceScanProgress) => void) => () => void;
+      onSourceCropResult: (callback: (result: SourceCropResult) => void) => () => void;
     };
   }
 }

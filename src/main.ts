@@ -34,7 +34,7 @@ import {
 import { shouldDisableUiHardwareAcceleration, uiRenderingCommandLineSwitches } from './ui-rendering';
 import { boundedMap, FILE_INDEX_LIMIT, inspectionConcurrency } from './source-scanning';
 import type {
-  AppSettings, EncodeJob, HardwareCapabilities, RuntimeState, SourceFile, SourceScanProgress, SubtitleImportResult,
+  AppSettings, EncodeJob, HardwareCapabilities, RuntimeState, SourceCropResult, SourceFile, SourceScanProgress, SubtitleImportResult,
 } from './shared-types';
 
 // Electron's UI compositor is independent of FFmpeg's CUDA/NVDEC/NVENC path.
@@ -427,7 +427,12 @@ const toSourceFile = async (filePath: string, sourceRoot?: string): Promise<Sour
   }
 };
 
-const inspectSource = async (file: SourceFile, detailedLogging: boolean, capabilities?: HardwareCapabilities | null): Promise<SourceFile | null> => {
+const inspectSource = async (
+  file: SourceFile,
+  detailedLogging: boolean,
+  capabilities: HardwareCapabilities | null,
+  webContents: WebContents,
+): Promise<SourceFile | null> => {
   const ffprobePath = activeFfprobe();
   const ffmpegPath = activeFfmpeg();
   if (!ffprobePath) {
@@ -438,7 +443,10 @@ const inspectSource = async (file: SourceFile, detailedLogging: boolean, capabil
     if (!media.video && !media.audio.length) return null;
     const workflow = classifyMediaWorkflow(media);
     if (!workflow) return null;
-    const preview = media.video && ffmpegPath ? await analyzeVisual(ffmpegPath, file.path, media, capabilities) : {};
+    const preview = media.video && ffmpegPath ? await analyzeVisual(
+      ffmpegPath, file.path, media, capabilities,
+      (suggestedCrop) => emitSourceCropResult(webContents, { sourcePath: file.path, suggestedCrop }),
+    ) : {};
     if (detailedLogging) {
       logActivity('INFO', 'ffprobe.output', {
         path: file.path,
@@ -470,6 +478,7 @@ const inspectSource = async (file: SourceFile, detailedLogging: boolean, capabil
 
 const inspectSources = async (
   files: SourceFile[],
+  webContents: WebContents,
   onProgress?: (completed: number, total: number, file: SourceFile) => void,
 ) => {
   const audioOnly = files.every((file) => audioExtensions().has(path.extname(file.path).toLowerCase()));
@@ -478,7 +487,7 @@ const inspectSources = async (
   const capabilities = APP_CONFIG.systemCapabilities?.capabilities ?? null;
   logActivity('INFO', 'source.inspection.started', { files: files.length, audioOnly, concurrency });
   const inspected = await boundedMap(
-    files, concurrency, (file) => inspectSource(file, detailedLogging, capabilities), onProgress,
+    files, concurrency, (file) => inspectSource(file, detailedLogging, capabilities, webContents), onProgress,
   );
   const valid = inspected.filter((file): file is SourceFile => file !== null);
   logActivity('INFO', 'source.inspection.completed', { requested: files.length, accepted: valid.length, concurrency });
@@ -555,6 +564,9 @@ const recursivelyFindMedia = async (root: string, onProgress?: (discovered: numb
 
 const emitSourceScanProgress = (webContents: WebContents, progress: SourceScanProgress) => {
   if (!webContents.isDestroyed()) webContents.send('source:scan-progress', progress);
+};
+const emitSourceCropResult = (webContents: WebContents, result: SourceCropResult) => {
+  if (!webContents.isDestroyed()) webContents.send('source:crop-result', result);
 };
 
 const checkForAppUpdate = () => {
@@ -780,7 +792,7 @@ const registerIpc = () => {
       }),
     );
     const files = indexed.filter((file): file is SourceFile => file !== null);
-    const inspected = keepOneWorkflow(await inspectSources(files, (completed, total, file) =>
+    const inspected = keepOneWorkflow(await inspectSources(files, event.sender, (completed, total, file) =>
       emitSourceScanProgress(event.sender, { phase: 'inspecting', completed, total, currentName: file.name })));
     return attachExternalSubtitles(inspected, await subtitlesBeside(result.filePaths));
   });
@@ -812,7 +824,7 @@ const registerIpc = () => {
         }),
       );
       const files = indexed.filter((file): file is SourceFile => file !== null);
-      const inspected = keepOneWorkflow(await inspectSources(files, (completed, total, file) =>
+      const inspected = keepOneWorkflow(await inspectSources(files, event.sender, (completed, total, file) =>
         emitSourceScanProgress(event.sender, { phase: 'inspecting', completed, total, currentName: file.name })));
       return discovered.videos.length ? attachExternalSubtitles(inspected, discovered.subtitles) : inspected;
     } catch {

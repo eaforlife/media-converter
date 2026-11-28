@@ -14,7 +14,10 @@ export type SourceFile = {
   sourceRoot?: string;
   relativePath?: string;
   lyricPaths?: string[];
+  cropAnalysisPending?: boolean;
 };
+
+export type SourceCropResult = { sourcePath: string; suggestedCrop: string | null };
 
 export type VideoStreamInfo = {
   index: number;
